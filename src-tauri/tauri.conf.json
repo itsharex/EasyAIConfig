@@ -51,7 +51,7 @@
       "endpoints": [
         "https://github.com/lmk1010/EasyAIConfig/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk1ODVEOTRGNzYzRDczM0QKUldROWN6MTJUOW1GbGFoTEZnaENKYXVWSTNtNVJ1VXdYZXRha0k3TXFWMjM2OXJRRUlIdVhKQjMK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZEQkRGQjdGOTdBQkI0ClJXUzBxNWQvKzczOUFEbDFSZ1VRTWxIaitBZ3pMU21EekJud0NCRkw1MWIzbXZ6UWtnUUszaUZFCg==",
       "windows": {
         "installMode": "passive"
       }
