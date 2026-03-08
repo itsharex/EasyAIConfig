@@ -324,7 +324,7 @@ function setPage(page = 'quick') {
 
 function populateAboutPanel() {
   const info = state.appUpdate || {};
-  const appVersion = info.currentVersion || '0.1.0';
+  const appVersion = info.currentVersion || '1.0.0';
   el('aboutAppVersion').textContent = appVersion;
   // INFO section: show client version
   el('aboutCodexVersion').textContent = appVersion;
