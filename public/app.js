@@ -3,7 +3,7 @@ const state = {
   backups: [],
   detected: null,
   metaDirty: false,
-  flashTimer: null,
+  claudeCodeState: null,
   providerHealth: {},
   providerSecrets: {},
   apiKeyField: {
@@ -568,12 +568,46 @@ function setBusy(id, busy, text) {
   button.disabled = false;
 }
 
+const TOAST_ICONS = {
+  success: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+  error: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+  info: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+};
+
 function flash(message, type = 'info') {
-  const node = el('flash');
-  node.textContent = message;
-  node.className = `flash ${type}`;
-  clearTimeout(state.flashTimer);
-  state.flashTimer = setTimeout(() => node.classList.add('hide'), 4000);
+  const container = el('toastContainer');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.innerHTML = `
+    <span class="toast-icon">${TOAST_ICONS[type] || TOAST_ICONS.info}</span>
+    <span>${escapeHtml(message)}</span>
+  `;
+
+  // Click to dismiss
+  toast.addEventListener('click', () => dismissToast(toast));
+
+  container.appendChild(toast);
+
+  // Limit max visible toasts
+  while (container.children.length > 5) {
+    dismissToast(container.firstElementChild);
+  }
+
+  // Auto-dismiss
+  const timer = setTimeout(() => dismissToast(toast), 4000);
+  toast._timer = timer;
+}
+
+function dismissToast(toast) {
+  if (!toast || toast._dismissed) return;
+  toast._dismissed = true;
+  clearTimeout(toast._timer);
+  toast.classList.add('toast-exit');
+  toast.addEventListener('animationend', () => toast.remove(), { once: true });
+  // Fallback removal in case animationend doesn't fire
+  setTimeout(() => { if (toast.parentNode) toast.remove(); }, 400);
 }
 
 function closeUpdateDialog(result = false) {
