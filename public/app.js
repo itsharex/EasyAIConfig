@@ -281,7 +281,8 @@ function _restoreToolForm(toolId) {
 
 function setActiveTool(toolId) {
   const tool = state.tools.find(t => t.id === toolId);
-  if (!tool || !tool.supported) return;
+  // Only block if tool is explicitly known to be unsupported
+  if (tool && !tool.supported) return;
   if (toolId === state.activeTool) return; // no-op
 
   // ── Save current tool's form state ──
@@ -291,8 +292,9 @@ function setActiveTool(toolId) {
   updateToolSelector();
 
   // Update launch button
+  const toolDisplayName = tool?.name || { codex: 'Codex', claudecode: 'Claude Code' }[toolId] || toolId;
   const launchBtn = el('launchBtn');
-  if (launchBtn) launchBtn.textContent = `启动 ${tool.name}`;
+  if (launchBtn) launchBtn.textContent = `启动 ${toolDisplayName}`;
 
   // UI elements
   const baseUrlField = el('baseUrlInput')?.closest('.field');
