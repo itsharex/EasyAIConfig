@@ -558,6 +558,13 @@ async function toggleApiKeyVisibility() {
   const input = el('apiKeyInput');
   if (!input) return;
 
+  // Claude Code mode: simple toggle only, never inject Codex keys
+  if (state.activeTool === 'claudecode') {
+    input.type = input.type === 'password' ? 'text' : 'password';
+    syncApiKeyToggle();
+    return;
+  }
+
   if (!state.apiKeyField.hasStored) {
     input.type = input.type === 'password' ? 'text' : 'password';
     syncApiKeyToggle();
