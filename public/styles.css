@@ -3841,6 +3841,38 @@ textarea:focus {
   color: rgba(255, 130, 130, 0.92) !important;
 }
 
+/* ── Tool button busy / spinner ── */
+@keyframes tool-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tool-btn-busy {
+  pointer-events: none;
+  opacity: 0.65;
+  cursor: wait;
+  position: relative;
+}
+
+.tool-btn-busy svg {
+  animation: tool-spin 0.8s linear infinite;
+  opacity: 1;
+}
+
+.tool-action-btn:not(:disabled):not(.tool-btn-busy):active {
+  transform: scale(0.94);
+}
+
+.tool-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 @media (max-width: 700px) {
   .tools-grid {
     grid-template-columns: 1fr;

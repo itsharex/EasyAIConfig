@@ -145,64 +145,86 @@ function renderToolsPage() {
 
 // Generic tool action handler
 async function handleToolAction(toolId, action, btn) {
-  const toolActions = {
-    codex: {
-      update: updateCodex,
-      reinstall: reinstallCodex,
-      uninstall: uninstallCodex,
+  const toolNames = { codex: 'Codex', claudecode: 'Claude Code' };
+  const toolName = toolNames[toolId] || toolId;
+
+  const actionConfig = {
+    update: {
+      api: `/api/${toolId === 'codex' ? 'codex' : 'claudecode'}/update`,
+      busyText: '更新中…',
+      successText: `${toolName} 已更新到最新版`,
+      confirm: null,
     },
-    claudecode: {
-      update: updateClaudeCodeTool,
-      reinstall: reinstallClaudeCodeTool,
-      uninstall: uninstallClaudeCodeTool,
+    reinstall: {
+      api: `/api/${toolId === 'codex' ? 'codex' : 'claudecode'}/reinstall`,
+      busyText: '重装中…',
+      successText: `${toolName} 重装完成`,
+      confirm: {
+        eyebrow: toolName,
+        title: `重装 ${toolName}`,
+        body: `<p>这会重新全局安装当前版本 ${toolName}。</p>`,
+        confirmText: '确认重装',
+        cancelText: '取消',
+      },
+    },
+    uninstall: {
+      api: `/api/${toolId === 'codex' ? 'codex' : 'claudecode'}/uninstall`,
+      busyText: '卸载中…',
+      successText: `${toolName} 已卸载`,
+      confirm: {
+        eyebrow: toolName,
+        title: `卸载 ${toolName}`,
+        body: `<p>卸载后将无法直接从工具里启动 ${toolName}。</p>`,
+        confirmText: '确认卸载',
+        cancelText: '取消',
+        tone: 'danger',
+      },
     },
   };
 
-  const handler = toolActions[toolId]?.[action];
-  if (handler) await handler(btn);
-}
+  const config = actionConfig[action];
+  if (!config) return;
 
-// Claude Code tool actions
-async function updateClaudeCodeTool() {
-  await runToolAction('claudecode', '/api/claudecode/update', '更新中...', 'Claude Code 已更新');
-}
-async function reinstallClaudeCodeTool(btn) {
-  const confirmed = await openUpdateDialog({
-    eyebrow: 'Claude Code',
-    title: '重装 Claude Code',
-    body: '<p>这会重新全局安装当前版本 Claude Code。</p>',
-    confirmText: '确认重装',
-    cancelText: '取消',
-  });
-  if (!confirmed) return;
-  await runToolAction('claudecode', '/api/claudecode/reinstall', '重装中...', 'Claude Code 重装完成');
-}
-async function uninstallClaudeCodeTool(btn) {
-  const confirmed = await openUpdateDialog({
-    eyebrow: 'Claude Code',
-    title: '卸载 Claude Code',
-    body: '<p>卸载后将无法直接从工具里启动 Claude Code。</p>',
-    confirmText: '确认卸载',
-    cancelText: '取消',
-    tone: 'danger',
-  });
-  if (!confirmed) return;
-  await runToolAction('claudecode', '/api/claudecode/uninstall', '卸载中...', 'Claude Code 已卸载');
-}
-
-async function runToolAction(toolId, apiPath, busyText, successText) {
-  try {
-    const json = await api(apiPath, { method: 'POST' });
-    if (!json.ok) {
-      flash(json.error || '操作失败', 'error');
-      return false;
+  // Confirm dialog if needed
+  if (config.confirm) {
+    const confirmed = await openUpdateDialog(config.confirm);
+    if (!confirmed) {
+      flash('操作已取消', 'info');
+      return;
     }
-    if (successText) flash(successText, 'success');
+  }
+
+  // Set button busy state with spinner
+  setToolBtnBusy(btn, true, config.busyText);
+
+  try {
+    const json = await api(config.api, { method: 'POST' });
+    if (!json.ok) {
+      flash(json.error || `${toolName} 操作失败`, 'error');
+      return;
+    }
+    flash(config.successText, 'success');
     loadTools(); // Refresh tool cards
-    return true;
   } catch (e) {
-    flash(e.message || '操作失败', 'error');
-    return false;
+    flash(e.message || `${toolName} 操作失败`, 'error');
+  } finally {
+    setToolBtnBusy(btn, false);
+  }
+}
+
+const SPINNER_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.22-8.56" /></svg>';
+
+function setToolBtnBusy(btn, busy, text) {
+  if (!btn) return;
+  if (busy) {
+    btn._origHTML = btn.innerHTML;
+    btn.innerHTML = `${SPINNER_SVG}<span>${text || '处理中…'}</span>`;
+    btn.classList.add('tool-btn-busy');
+    btn.disabled = true;
+  } else {
+    if (btn._origHTML) btn.innerHTML = btn._origHTML;
+    btn.classList.remove('tool-btn-busy');
+    btn.disabled = false;
   }
 }
 
