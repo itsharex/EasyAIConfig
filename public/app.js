@@ -467,7 +467,7 @@ async function loadClaudeCodeQuickState() {
         parts.push(`Key: ${ev.ANTHROPIC_API_KEY.masked}`);
       }
 
-      heroSubtitle.textContent = parts.join(' · ');
+      heroSubtitle.innerHTML = parts.map(p => `<span>${escapeHtml(p)}</span>`).join('<br>');
     }
 
     // Show binary version
