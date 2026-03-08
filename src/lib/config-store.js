@@ -9,6 +9,99 @@ const APP_HOME_DIRNAME = '.codex-config-ui';
 const BACKUPS_DIRNAME = 'backups';
 const OPENAI_CODEX_PACKAGE = '@openai/codex';
 
+/* ═══════════════  Tool Registry  ═══════════════ */
+const TOOL_REGISTRY = {
+  codex: {
+    id: 'codex',
+    name: 'Codex CLI',
+    description: 'OpenAI 官方 AI 编程助手',
+    configHome: () => process.env.CODEX_HOME?.trim()
+      ? path.resolve(process.env.CODEX_HOME)
+      : path.join(os.homedir(), '.codex'),
+    configFormat: 'toml',
+    configFileName: 'config.toml',
+    envFileName: '.env',
+    binaryName: 'codex',
+    npmPackage: '@openai/codex',
+    installMethod: 'npm',
+    providerKeyField: 'model_provider',
+    projectConfigDir: '.codex',
+    supported: true,
+  },
+  claudecode: {
+    id: 'claudecode',
+    name: 'Claude Code',
+    description: 'Anthropic 终端原生 AI 编程助手',
+    configHome: () => path.join(os.homedir(), '.claude'),
+    configFormat: 'json',
+    configFileName: 'settings.json',
+    envFileName: null,
+    binaryName: 'claude',
+    npmPackage: '@anthropic-ai/claude-code',
+    installMethod: 'npm',
+    providerKeyField: null,
+    projectConfigDir: '.claude',
+    supported: false,
+  },
+  openclaw: {
+    id: 'openclaw',
+    name: 'OpenClaw',
+    description: '开源 AI 编程代理',
+    configHome: () => path.join(os.homedir(), '.openclaw'),
+    configFormat: 'json',
+    configFileName: 'config.json',
+    envFileName: '.env',
+    binaryName: 'openclaw',
+    npmPackage: null,
+    installMethod: 'npm',
+    providerKeyField: 'provider',
+    projectConfigDir: '.openclaw',
+    supported: false,
+  },
+};
+
+function getToolDef(toolId) {
+  return TOOL_REGISTRY[toolId] || TOOL_REGISTRY.codex;
+}
+
+function findToolBinary(toolId) {
+  const tool = getToolDef(toolId);
+  const binaryName = tool.binaryName;
+
+  const whichResult = spawnSync(
+    process.platform === 'win32' ? 'where' : 'which',
+    [binaryName],
+    { encoding: 'utf8' }
+  );
+
+  if (whichResult.status === 0) {
+    const binPath = (whichResult.stdout || '').split(/\r?\n/).find(Boolean) || null;
+    if (binPath) {
+      const versionResult = spawnSync(binPath, ['--version'], { encoding: 'utf8' });
+      return {
+        installed: versionResult.status === 0,
+        version: versionResult.status === 0 ? (versionResult.stdout || versionResult.stderr || '').trim() : null,
+        path: binPath,
+      };
+    }
+  }
+
+  return { installed: false, version: null, path: null };
+}
+
+export function listTools() {
+  return Object.values(TOOL_REGISTRY).map(tool => ({
+    id: tool.id,
+    name: tool.name,
+    description: tool.description,
+    supported: tool.supported,
+    configFormat: tool.configFormat,
+    installMethod: tool.installMethod,
+    npmPackage: tool.npmPackage,
+    binary: findToolBinary(tool.id),
+  }));
+}
+
 function defaultCodexHome() {
   return process.env.CODEX_HOME && process.env.CODEX_HOME.trim()
     ? path.resolve(process.env.CODEX_HOME)

@@ -12,6 +12,7 @@ import {
   installCodex,
   launchCodex,
   listBackups,
+  listTools,
   loadState,
   reinstallCodex,
   restoreBackup,
@@ -42,6 +43,14 @@ export async function startServer() {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
   app.use(express.static(publicDir));
+
+  app.get('/api/tools', async (_req, res) => {
+    try {
+      ok(res, { data: listTools() });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
 
   app.get('/api/setup/check', async (req, res) => {
     try {

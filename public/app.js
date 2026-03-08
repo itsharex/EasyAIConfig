@@ -34,6 +34,9 @@ const state = {
   wizardDetected: null,
   // Theme
   theme: 'dark',
+  // Multi-tool
+  activeTool: 'codex',
+  tools: [],
 };
 
 const el = (id) => document.getElementById(id);
@@ -62,6 +65,101 @@ function toggleTheme() {
 
 // Apply theme before any rendering to prevent flash
 initTheme();
+
+/* ── Multi-tool Support ── */
+async function loadTools() {
+  try {
+    const json = await api('/api/tools');
+    if (json.ok && json.data) {
+      state.tools = json.data;
+      renderToolsPage();
+      updateToolSelector();
+    }
+  } catch { /* silent */ }
+}
+
+function renderToolsPage() {
+  const grid = document.querySelector('.tools-page .tools-grid');
+  if (!grid || !state.tools.length) return;
+
+  grid.innerHTML = state.tools.map(tool => {
+    const isSoon = !tool.supported;
+    const isInstalled = tool.binary?.installed;
+    const version = tool.binary?.version || '';
+
+    return `
+      <div class="tool-card ${isSoon ? 'tool-card-soon' : ''}" data-tool-id="${tool.id}">
+        <div class="tool-card-head">
+          <div class="tool-icon tool-icon-${tool.id}">
+            ${toolIconSvg(tool.id)}
+          </div>
+          <div class="tool-info">
+            <div class="tool-name">${escapeHtml(tool.name)}${isSoon ? ' <span class="tool-soon-tag">即将支持</span>' : ''}</div>
+            <div class="tool-desc">${escapeHtml(tool.description)}</div>
+          </div>
+        </div>
+        <div class="tool-status">
+          <span class="tool-version ${!isInstalled ? 'tool-version-muted' : ''}"${tool.id === 'codex' ? ' id="toolCodexVersion"' : ''}>${isInstalled ? escapeHtml(version) : (isSoon ? '暂未支持' : '未安装')}</span>
+          ${isInstalled ? `<span class="tool-badge tool-badge-ok"${tool.id === 'codex' ? ' id="toolCodexBadge"' : ''}>已安装</span>` : ''}
+        </div>
+        <div class="tool-actions">
+          ${tool.id === 'codex' ? `
+            <button id="updateCodexBtn" class="secondary tool-action-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.36 6.36L3 21M3 12a9 9 0 0 1 15.36-6.36L21 3" /></svg>
+              <span>${isInstalled ? '更新' : '安装'}</span>
+            </button>
+            ${isInstalled ? `
+              <button id="reinstallCodexBtn" class="secondary tool-action-btn">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2v6h6" /><path d="M2.5 8A10 10 0 1 1 4.34 16" /></svg>
+                <span>重装</span>
+              </button>
+              <button id="uninstallCodexBtn" class="secondary tool-action-btn tool-action-danger">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></svg>
+                <span>卸载</span>
+              </button>
+            ` : ''}
+          ` : `<button class="secondary tool-action-btn" disabled>安装</button>`}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Re-bind Codex action buttons after dynamic render
+  el('updateCodexBtn')?.addEventListener('click', updateCodex);
+  el('reinstallCodexBtn')?.addEventListener('click', reinstallCodex);
+  el('uninstallCodexBtn')?.addEventListener('click', uninstallCodex);
+}
+
+function toolIconSvg(toolId) {
+  const icons = {
+    codex: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5v10l-9 5-9-5V7l9-5z" opacity="0.4" /><path d="M12 12l9-5M12 12v10M12 12L3 7" /></svg>',
+    claudecode: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" opacity="0.4" /><path d="M8 12h8M12 8v8" /></svg>',
+    openclaw: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" opacity="0.4" /><path d="M8 14s1.5 2 4 2 4-2 4-2" /><circle cx="9" cy="10" r="1" fill="currentColor" stroke="none" /><circle cx="15" cy="10" r="1" fill="currentColor" stroke="none" /></svg>',
+  };
+  return icons[toolId] || icons.codex;
+}
+
+function updateToolSelector() {
+  document.querySelectorAll('.tool-tab').forEach(tab => {
+    const toolId = tab.dataset.tool;
+    const tool = state.tools.find(t => t.id === toolId);
+    if (tool) {
+      // Update disabled state based on backend
+      tab.disabled = !tool.supported;
+      tab.classList.toggle('active', toolId === state.activeTool);
+    }
+  });
+}
+
+function setActiveTool(toolId) {
+  const tool = state.tools.find(t => t.id === toolId);
+  if (!tool || !tool.supported) return;
+  state.activeTool = toolId;
+  updateToolSelector();
+  // Update launch button text
+  const launchBtn = el('launchBtn');
+  if (launchBtn) launchBtn.textContent = `启动 ${tool.name}`;
+}
 
 const PAGE_META = {
   quick: { eyebrow: 'Quick Setup', title: '一键配置 Codex 工具', subtitle: '输入 URL 和 API Key，剩下交给 EasyAIConfig。' },
@@ -1804,6 +1902,11 @@ function bindEvents() {
   el('editConfigQuickBtn').addEventListener('click', () => setConfigEditorOpen(true));
   el('saveBtn').addEventListener('click', saveConfigOnly);
   el('launchBtn').addEventListener('click', launchCodexOnly);
+  // Tool selector tabs
+  el('toolSelector')?.addEventListener('click', (e) => {
+    const tab = e.target.closest('.tool-tab');
+    if (tab && !tab.disabled) setActiveTool(tab.dataset.tool);
+  });
   el('appUpdateBtn').addEventListener('click', async () => {
     const info = await loadAppUpdateState({ manual: true });
     if (!info) {
@@ -1815,9 +1918,9 @@ function bindEvents() {
     }
     flash(`客户端已是最新版本 v${info.currentVersion || '-'}`, 'success');
   });
-  el('updateCodexBtn').addEventListener('click', updateCodex);
-  el('reinstallCodexBtn').addEventListener('click', reinstallCodex);
-  el('uninstallCodexBtn').addEventListener('click', uninstallCodex);
+  el('updateCodexBtn')?.addEventListener('click', updateCodex);
+  el('reinstallCodexBtn')?.addEventListener('click', reinstallCodex);
+  el('uninstallCodexBtn')?.addEventListener('click', uninstallCodex);
   el('refreshBtn').addEventListener('click', () => loadState({ preserveForm: true }));
   el('reloadBackupsBtn').addEventListener('click', loadBackups);
 
@@ -2066,6 +2169,7 @@ loadState({ preserveForm: false }).then(() => {
 });
 loadBackups();
 loadAppUpdateState();
+loadTools();
 
 /* ── Window drag support ── */
 (function initWindowDrag() {
