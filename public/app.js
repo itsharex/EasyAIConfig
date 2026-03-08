@@ -5,6 +5,16 @@ const state = {
   metaDirty: false,
   flashTimer: null,
   providerHealth: {},
+  providerSecrets: {},
+  apiKeyField: {
+    providerKey: '',
+    baseUrl: '',
+    maskedValue: '',
+    actualValue: '',
+    hasStored: false,
+    revealed: false,
+    dirty: false,
+  },
   providerDropdownOpen: false,
   advancedOpen: false,
   advancedTimer: null,
@@ -40,6 +50,8 @@ function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   const label = el('themeLabel');
   if (label) label.textContent = theme === 'dark' ? '黑夜模式' : '白天模式';
+  // Update range slider fills for new theme colors
+  document.querySelectorAll('.config-range').forEach(updateRangeFill);
 }
 
 function toggleTheme() {
@@ -108,6 +120,122 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function syncApiKeyToggle() {
+  const button = el('apiKeyToggleBtn');
+  const input = el('apiKeyInput');
+  if (!button || !input) return;
+  const revealed = input.type === 'text';
+  state.apiKeyField.revealed = revealed;
+  syncEyeIcon(button, revealed);
+}
+
+function syncEyeIcon(button, revealed) {
+  const open = button.querySelector('.eye-open');
+  const closed = button.querySelector('.eye-closed');
+  if (open) open.style.display = revealed ? 'none' : '';
+  if (closed) closed.style.display = revealed ? '' : 'none';
+  button.title = revealed ? '隐藏 API Key' : '显示 API Key';
+  button.setAttribute('aria-label', revealed ? '隐藏 API Key' : '显示 API Key');
+  button.classList.toggle('active', revealed);
+}
+
+function setApiKeyFieldState(provider) {
+  const input = el('apiKeyInput');
+  if (!input) return;
+  const providerKey = provider?.key || '';
+  const cachedValue = providerKey ? (state.providerSecrets[providerKey] || '') : '';
+  state.apiKeyField = {
+    providerKey,
+    baseUrl: normalizeBaseUrl(provider?.baseUrl || ''),
+    maskedValue: provider?.maskedApiKey || '',
+    actualValue: cachedValue,
+    hasStored: Boolean(provider?.hasApiKey),
+    revealed: false,
+    dirty: false,
+  };
+  input.type = 'password';
+  input.value = '';
+  input.placeholder = state.apiKeyField.maskedValue || 'sk-...';
+  syncApiKeyToggle();
+}
+
+function currentApiKeyContext() {
+  const baseUrl = normalizeBaseUrl(el('baseUrlInput').value);
+  const providerKey = el('providerKeyInput').value.trim() || inferProviderKey(baseUrl);
+  return { baseUrl, providerKey };
+}
+
+function canUseStoredApiKey({ baseUrl, providerKey } = currentApiKeyContext()) {
+  return Boolean(
+    state.apiKeyField.hasStored
+    && providerKey
+    && baseUrl
+    && state.apiKeyField.providerKey === providerKey
+    && state.apiKeyField.baseUrl === baseUrl
+  );
+}
+
+function getApiKeyForSubmit({ baseUrl, providerKey } = currentApiKeyContext()) {
+  const raw = el('apiKeyInput').value.trim();
+  if (canUseStoredApiKey({ baseUrl, providerKey }) && !state.apiKeyField.dirty) {
+    return '';
+  }
+  return raw;
+}
+
+async function toggleApiKeyVisibility() {
+  const input = el('apiKeyInput');
+  if (!input) return;
+
+  if (!state.apiKeyField.hasStored) {
+    input.type = input.type === 'password' ? 'text' : 'password';
+    syncApiKeyToggle();
+    return;
+  }
+
+  if (input.type === 'text') {
+    input.type = 'password';
+    if (!state.apiKeyField.dirty) input.value = '';
+    syncApiKeyToggle();
+    return;
+  }
+
+  if (!state.apiKeyField.actualValue) {
+    const json = await api('/api/provider/secret', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scope: el('scopeSelect').value || 'global',
+        projectPath: el('projectPathInput').value.trim(),
+        codexHome: el('codexHomeInput').value.trim(),
+        providerKey: state.apiKeyField.providerKey,
+      }),
+    });
+    if (!json.ok) {
+      flash(json.error || '读取 API Key 失败', 'error');
+      return;
+    }
+    state.apiKeyField.actualValue = json.data?.apiKey || '';
+    state.apiKeyField.maskedValue = json.data?.maskedApiKey || state.apiKeyField.maskedValue;
+    if (state.apiKeyField.providerKey && state.apiKeyField.actualValue) {
+      state.providerSecrets[state.apiKeyField.providerKey] = state.apiKeyField.actualValue;
+    }
+  }
+
+  input.value = state.apiKeyField.actualValue;
+  input.type = 'text';
+  syncApiKeyToggle();
+}
+
+function toggleSimpleSecretInput(inputId, buttonId) {
+  const input = el(inputId);
+  const button = el(buttonId);
+  if (!input || !button) return;
+  const revealed = input.type === 'password';
+  input.type = revealed ? 'text' : 'password';
+  syncEyeIcon(button, revealed);
 }
 
 function setBusy(id, busy, text) {
@@ -272,6 +400,154 @@ function configValue(path, fallback = '') {
   return path.split('.').reduce((obj, key) => (obj && obj[key] !== undefined ? obj[key] : undefined), state.current?.config) ?? fallback;
 }
 
+const CONFIG_NUMBER_FIELDS = {
+  cfgContextWindowInput: {
+    rangeId: 'cfgContextWindowRange',
+    resetId: 'cfgContextWindowResetBtn',
+    hintId: 'cfgContextWindowHint',
+    min: 32000,
+    max: 512000,
+    step: 1000,
+    defaultValue: () => 272000,
+    defaultPlaceholder: () => '默认 272000',
+    hint: (value, empty) => empty ? '拖动滑杆快速调整，也可直接输入数字。' : `当前设置 ${value}`,
+  },
+  cfgCompactLimitInput: {
+    rangeId: 'cfgCompactLimitRange',
+    resetId: 'cfgCompactLimitResetBtn',
+    hintId: 'cfgCompactLimitHint',
+    min: 16000,
+    max: 512000,
+    step: 1000,
+    defaultValue: () => Math.round((getConfigNumberValue('cfgContextWindowInput') || 272000) * 0.9),
+    defaultPlaceholder: () => `默认 上下文90% ≈ ${Math.round((getConfigNumberValue('cfgContextWindowInput') || 272000) * 0.9)}`,
+    hint: (value, empty) => empty ? '默认使用上下文大小的 90%。' : `当前设置 ${value}`,
+  },
+  cfgToolLimitInput: {
+    rangeId: 'cfgToolLimitRange',
+    resetId: 'cfgToolLimitResetBtn',
+    hintId: 'cfgToolLimitHint',
+    min: 1024,
+    max: 65536,
+    step: 512,
+    defaultValue: () => 8192,
+    defaultPlaceholder: () => '默认 无限制',
+    hint: (value, empty) => empty ? '留空表示不限制；拖动后会写入具体上限。' : `当前设置 ${value}`,
+  },
+};
+
+function sanitizeNumericText(value) {
+  return String(value || '').replace(/[^\d]/g, '');
+}
+
+function getConfigNumberValue(inputId) {
+  const input = el(inputId);
+  if (!input) return null;
+  const clean = sanitizeNumericText(input.value);
+  if (!clean) return null;
+  const parsed = Number(clean);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function clampConfigNumber(value, spec) {
+  return Math.min(spec.max, Math.max(spec.min, value));
+}
+
+function syncConfigNumberField(inputId, source = 'init') {
+  const spec = CONFIG_NUMBER_FIELDS[inputId];
+  if (!spec) return;
+
+  const input = el(inputId);
+  const range = el(spec.rangeId);
+  const hint = el(spec.hintId);
+  if (inputId === 'cfgCompactLimitInput') {
+    const contextLimit = getConfigNumberValue('cfgContextWindowInput') || 272000;
+    range.max = String(Math.max(spec.min, contextLimit));
+  }
+  const runtimeSpec = {
+    ...spec,
+    min: Number(range.min || spec.min),
+    max: Number(range.max || spec.max),
+  };
+  const defaultValue = clampConfigNumber(spec.defaultValue(), runtimeSpec);
+
+  input.placeholder = spec.defaultPlaceholder();
+
+  if (source === 'range') {
+    input.value = String(range.value);
+  } else if (source === 'input') {
+    const clean = sanitizeNumericText(input.value);
+    input.value = clean;
+    if (clean) {
+      range.value = String(clampConfigNumber(Number(clean), runtimeSpec));
+    }
+  }
+
+  const currentValue = getConfigNumberValue(inputId);
+  const isEmpty = currentValue === null;
+  const nextValue = isEmpty ? defaultValue : clampConfigNumber(currentValue, runtimeSpec);
+  if (!isEmpty && currentValue !== nextValue) {
+    input.value = String(nextValue);
+  }
+  range.value = String(nextValue);
+  updateRangeFill(range);
+  if (hint) {
+    hint.textContent = spec.hint(nextValue, isEmpty);
+  }
+}
+
+function updateRangeFill(range) {
+  if (!range) return;
+  const min = Number(range.min) || 0;
+  const max = Number(range.max) || 100;
+  const val = Number(range.value) || 0;
+  const pct = ((val - min) / (max - min)) * 100;
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const fillColor = isDark
+    ? 'linear-gradient(90deg, rgba(141,192,255,0.35), rgba(141,192,255,0.65))'
+    : 'linear-gradient(90deg, rgba(59,130,246,0.35), rgba(59,130,246,0.65))';
+  const trackColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
+  range.style.background = `${fillColor} 0% / ${pct}% 100% no-repeat, ${trackColor}`;
+  range.style.borderRadius = '999px';
+}
+
+function refreshConfigNumberFields() {
+  Object.keys(CONFIG_NUMBER_FIELDS).forEach((inputId) => syncConfigNumberField(inputId, 'refresh'));
+}
+
+function applySqliteHomePreset(mode = 'default') {
+  const input = el('cfgSqliteHomeInput');
+  if (!input) return;
+  if (mode === 'default') {
+    input.value = '';
+    return;
+  }
+  input.value = el('codexHomeInput').value.trim() || state.current?.codexHome || '~/.codex';
+}
+
+async function pickDirectoryPath(targetInputId, { title = '选择目录' } = {}) {
+  if (!tauriInvoke) {
+    flash('Web 模式暂不支持原生目录选择，请手动输入路径', 'error');
+    return;
+  }
+
+  const target = el(targetInputId);
+  if (!target) return;
+
+  const initialPath = target.value.trim() || el('codexHomeInput').value.trim() || state.current?.codexHome || '';
+  const json = await api('/api/path/pick-directory', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, initialPath }),
+  });
+  if (!json.ok) {
+    flash(json.error || '打开目录选择器失败', 'error');
+    return;
+  }
+  if (!json.data?.selected) return;
+  target.value = json.data.path || '';
+}
+
 function populateConfigEditor() {
   el('cfgModelInput').value = configValue('model', '');
   el('cfgProviderInput').value = configValue('model_provider', '');
@@ -285,6 +561,8 @@ function populateConfigEditor() {
   el('cfgCompactLimitInput').value = configValue('model_auto_compact_token_limit', '');
   el('cfgToolLimitInput').value = configValue('tool_output_token_limit', '');
   el('cfgSqliteHomeInput').value = configValue('sqlite_home', '');
+  el('cfgSqliteHomeInput').placeholder = `默认 ${state.current?.codexHome || '~/.codex'}`;
+  el('cfgSqliteHomeUseCodexHomeBtn').title = state.current?.codexHome || '~/.codex';
   el('cfgHideReasoningCheck').checked = Boolean(configValue('hide_agent_reasoning', false));
   el('cfgShowRawReasoningCheck').checked = Boolean(configValue('show_raw_agent_reasoning', false));
   el('cfgDisableStorageCheck').checked = Boolean(configValue('disable_response_storage', false));
@@ -294,10 +572,11 @@ function populateConfigEditor() {
   el('cfgInstructionsTextarea').value = configValue('instructions', '');
   el('cfgBaseInstructionsTextarea').value = configValue('base_instructions', '');
   el('cfgRawTomlTextarea').value = state.current?.configToml || '';
+  refreshConfigNumberFields();
 }
 
 function numOrNull(value) {
-  const text = String(value || '').trim();
+  const text = sanitizeNumericText(value);
   return text ? Number(text) : null;
 }
 
@@ -471,7 +750,7 @@ function currentPayload() {
     providerKey,
     providerLabel: el('providerLabelInput').value.trim() || inferProviderLabel(baseUrl),
     baseUrl,
-    apiKey: el('apiKeyInput').value.trim(),
+    apiKey: getApiKeyForSubmit({ baseUrl, providerKey }),
     envKey: el('envKeyInput').value.trim() || inferEnvKey(providerKey),
     model: el('manualModelInput').value.trim() || el('modelSelect').value,
     approvalPolicy: el('approvalPolicySelect').value,
@@ -611,10 +890,16 @@ async function refreshProviderHealth(force = false) {
     try {
       // Race: API call vs hard timeout so we never stay stuck
       const result = await Promise.race([
-        api('/api/provider/test', {
+        api('/api/provider/test-saved', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ baseUrl: provider.baseUrl, apiKey: provider.envValue, timeoutMs: 6000 }),
+          body: JSON.stringify({
+            scope: el('scopeSelect').value || 'global',
+            projectPath: el('projectPathInput').value.trim(),
+            codexHome: el('codexHomeInput').value.trim(),
+            providerKey: provider.key,
+            timeoutMs: 6000,
+          }),
           timeoutMs: 8000,
         }),
         new Promise(resolve => setTimeout(() => resolve({ ok: false, error: 'timeout' }), 9000)),
@@ -631,7 +916,26 @@ async function refreshProviderHealth(force = false) {
 function toggleProviderDropdown(force) {
   state.providerDropdownOpen = typeof force === 'boolean' ? force : !state.providerDropdownOpen;
   renderCurrentConfig();
-  if (state.providerDropdownOpen) refreshProviderHealth();
+  if (state.providerDropdownOpen) {
+    refreshProviderHealth();
+    positionProviderDropdown();
+  }
+}
+
+function positionProviderDropdown() {
+  const btn = el('providerSwitchBtn');
+  const dropdown = el('providerDropdown');
+  if (!btn || !dropdown || dropdown.classList.contains('hide')) return;
+  const rect = btn.getBoundingClientRect();
+  const dropdownWidth = 380;
+  // Align right edge of dropdown to right edge of button
+  let left = rect.right - dropdownWidth;
+  // Ensure it doesn't go off-screen left
+  if (left < 8) left = 8;
+  // Ensure it doesn't go off-screen right
+  if (left + dropdownWidth > window.innerWidth - 8) left = window.innerWidth - dropdownWidth - 8;
+  dropdown.style.top = (rect.bottom + 6) + 'px';
+  dropdown.style.left = left + 'px';
 }
 
 function renderModelOptions(models = state.detected?.models || [], preferred = '') {
@@ -679,23 +983,28 @@ function fillAdvancedFromState() {
 function fillFromProvider(provider) {
   if (!provider) return;
   el('baseUrlInput').value = provider.baseUrl || '';
-  el('apiKeyInput').value = provider.envValue || '';
   el('providerKeyInput').value = provider.key || '';
   el('providerLabelInput').value = provider.name || '';
   el('envKeyInput').value = provider.resolvedKeyName || provider.envKey || '';
+  setApiKeyFieldState(provider);
   el('manualModelInput').value = provider.isActive ? (state.current?.summary?.model || '') : '';
   state.detected = null;
   state.metaDirty = true;
   renderModelOptions([], el('manualModelInput').value);
   renderQuickSummary();
   renderCurrentConfig();
-  el('detectionMeta').textContent = provider.hasApiKey ? `已载入 ${provider.name || provider.key}` : `已载入 ${provider.name || provider.key}，但未发现 Key`;
+  el('detectionMeta').textContent = provider.hasApiKey
+    ? `已载入 ${provider.name || provider.key}，Key 已保存，可点击右侧眼睛查看`
+    : `已载入 ${provider.name || provider.key}，但未发现 Key`;
 }
 
 async function loadState({ preserveForm = true } = {}) {
   const snapshot = preserveForm ? {
     baseUrl: el('baseUrlInput').value,
     apiKey: el('apiKeyInput').value,
+    apiKeyType: el('apiKeyInput').type,
+    apiKeyPlaceholder: el('apiKeyInput').placeholder,
+    apiKeyField: { ...state.apiKeyField },
     providerKey: el('providerKeyInput').value,
     providerLabel: el('providerLabelInput').value,
     envKey: el('envKeyInput').value,
@@ -717,9 +1026,13 @@ async function loadState({ preserveForm = true } = {}) {
   renderProviders();
   renderQuickSummary();
   renderCurrentConfig();
-  if (snapshot && (snapshot.baseUrl || snapshot.apiKey || snapshot.providerKey)) {
+  if (snapshot && (snapshot.baseUrl || snapshot.apiKey || snapshot.providerKey || snapshot.apiKeyField?.hasStored)) {
     el('baseUrlInput').value = snapshot.baseUrl;
     el('apiKeyInput').value = snapshot.apiKey;
+    el('apiKeyInput').type = snapshot.apiKeyType || 'password';
+    el('apiKeyInput').placeholder = snapshot.apiKeyPlaceholder || 'sk-...';
+    state.apiKeyField = snapshot.apiKeyField || { ...state.apiKeyField };
+    syncApiKeyToggle();
     el('providerKeyInput').value = snapshot.providerKey;
     el('providerLabelInput').value = snapshot.providerLabel;
     el('envKeyInput').value = snapshot.envKey;
@@ -808,12 +1121,21 @@ async function runCodexAction(buttonId, endpoint, busyText, successText) {
 async function detectModels() {
   const payload = currentPayload();
   if (payload.baseUrl && payload.baseUrl !== el('baseUrlInput').value.trim()) el('baseUrlInput').value = payload.baseUrl;
-  if (!payload.baseUrl || !payload.apiKey) return flash('先填 URL 和 API Key', 'error');
+  const useStoredApiKey = canUseStoredApiKey({ baseUrl: payload.baseUrl, providerKey: payload.providerKey }) && !payload.apiKey;
+  if (!payload.baseUrl || (!payload.apiKey && !useStoredApiKey)) return flash('先填 URL 和 API Key', 'error');
   setBusy('detectBtn', true, '检测中...');
-  const json = await api('/api/provider/test', {
+  const json = await api(useStoredApiKey ? '/api/provider/test-saved' : '/api/provider/test', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ baseUrl: payload.baseUrl, apiKey: payload.apiKey }),
+    body: JSON.stringify(useStoredApiKey
+      ? {
+        scope: payload.scope,
+        projectPath: payload.projectPath,
+        codexHome: payload.codexHome,
+        providerKey: payload.providerKey,
+        timeoutMs: 18000,
+      }
+      : { baseUrl: payload.baseUrl, apiKey: payload.apiKey }),
     timeoutMs: 18000,
   });
   setBusy('detectBtn', false);
@@ -836,7 +1158,8 @@ async function detectModels() {
 async function saveConfigOnly() {
   const payload = currentPayload();
   if (payload.baseUrl && payload.baseUrl !== el('baseUrlInput').value.trim()) el('baseUrlInput').value = payload.baseUrl;
-  if (!payload.baseUrl || !payload.apiKey) return flash('先填 URL 和 API Key', 'error');
+  const canReuseStoredKey = canUseStoredApiKey({ baseUrl: payload.baseUrl, providerKey: payload.providerKey });
+  if (!payload.baseUrl || (!payload.apiKey && !canReuseStoredKey)) return flash('先填 URL 和 API Key', 'error');
 
   setBusy('saveBtn', true, '保存中...');
   const saved = await api('/api/config/save', {
@@ -1375,7 +1698,20 @@ async function wizardSaveAndComplete() {
 
     // Sync main form
     el('baseUrlInput').value = baseUrl;
-    el('apiKeyInput').value = apiKey;
+    state.providerSecrets[providerKey] = apiKey;
+    state.apiKeyField = {
+      providerKey,
+      baseUrl,
+      maskedValue: '',
+      actualValue: apiKey,
+      hasStored: true,
+      revealed: false,
+      dirty: false,
+    };
+    el('apiKeyInput').value = '';
+    el('apiKeyInput').type = 'password';
+    el('apiKeyInput').placeholder = '已保存，刷新后显示掩码';
+    syncApiKeyToggle();
     if (model) el('manualModelInput').value = model;
     state.metaDirty = false;
     applyDerivedMeta(true);
@@ -1391,7 +1727,13 @@ async function wizardSaveAndComplete() {
 function bindEvents() {
   el('baseUrlInput').addEventListener('input', () => applyDerivedMeta(false));
   el('baseUrlInput').addEventListener('blur', () => { const value = normalizeBaseUrl(el('baseUrlInput').value); if (value) el('baseUrlInput').value = value; applyDerivedMeta(false); });
-  el('apiKeyInput').addEventListener('input', renderQuickSummary);
+  el('apiKeyInput').addEventListener('input', () => {
+    const raw = el('apiKeyInput').value.trim();
+    const currentActual = state.apiKeyField.actualValue.trim();
+    state.apiKeyField.dirty = Boolean(raw) && (!state.apiKeyField.hasStored || !currentActual || raw !== currentActual);
+    renderQuickSummary();
+  });
+  el('apiKeyToggleBtn').addEventListener('click', toggleApiKeyVisibility);
   el('detectBtn').addEventListener('click', detectModels);
   el('editConfigQuickBtn').addEventListener('click', () => setConfigEditorOpen(true));
   el('saveBtn').addEventListener('click', saveConfigOnly);
@@ -1448,6 +1790,24 @@ function bindEvents() {
   el('applyConfigEditorBtn').addEventListener('click', applyConfigEditor);
   el('saveRawConfigEditorBtn').addEventListener('click', saveRawConfigEditor);
   el('applyRawConfigEditorBtn').addEventListener('click', applyRawConfigEditor);
+  Object.entries(CONFIG_NUMBER_FIELDS).forEach(([inputId, spec]) => {
+    el(inputId).addEventListener('input', () => {
+      syncConfigNumberField(inputId, 'input');
+      if (inputId === 'cfgContextWindowInput') syncConfigNumberField('cfgCompactLimitInput', 'refresh');
+    });
+    el(spec.rangeId).addEventListener('input', () => {
+      syncConfigNumberField(inputId, 'range');
+      if (inputId === 'cfgContextWindowInput') syncConfigNumberField('cfgCompactLimitInput', 'refresh');
+    });
+    el(spec.resetId).addEventListener('click', () => {
+      el(inputId).value = '';
+      syncConfigNumberField(inputId, 'refresh');
+      if (inputId === 'cfgContextWindowInput') syncConfigNumberField('cfgCompactLimitInput', 'refresh');
+    });
+  });
+  el('cfgSqliteHomeBrowseBtn').addEventListener('click', () => pickDirectoryPath('cfgSqliteHomeInput', { title: '选择 SQLite 目录' }));
+  el('cfgSqliteHomeUseCodexHomeBtn').addEventListener('click', () => applySqliteHomePreset('codex-home'));
+  el('cfgSqliteHomeResetBtn').addEventListener('click', () => applySqliteHomePreset('default'));
   el('providerSwitchBtn').addEventListener('click', () => toggleProviderDropdown());
   el('providerRefreshBtn').addEventListener('click', () => refreshProviderHealth(true));
   el('providerDropdown').addEventListener('click', (event) => {
@@ -1458,7 +1818,8 @@ function bindEvents() {
   });
   document.addEventListener('click', (event) => {
     const card = el('currentConfigCard');
-    if (state.providerDropdownOpen && card && !card.contains(event.target)) {
+    const dropdown = el('providerDropdown');
+    if (state.providerDropdownOpen && card && !card.contains(event.target) && (!dropdown || !dropdown.contains(event.target))) {
       toggleProviderDropdown(false);
     }
   });
@@ -1525,6 +1886,7 @@ function bindEvents() {
   el('wizardDetectBtn').addEventListener('click', wizardDetectModels);
   el('wizardBaseUrl').addEventListener('input', wizardUpdateConfigBtn);
   el('wizardApiKey').addEventListener('input', wizardUpdateConfigBtn);
+  el('wizardApiKeyToggleBtn').addEventListener('click', () => toggleSimpleSecretInput('wizardApiKey', 'wizardApiKeyToggleBtn'));
   el('wizardConfigNextBtn').addEventListener('click', wizardSaveAndComplete);
   el('wizardFinishBtn').addEventListener('click', () => {
     closeSetupWizard();
@@ -1661,7 +2023,7 @@ loadAppUpdateState();
       const valSpan = trigger.querySelector('.cs-value');
       if (selectedOpt) {
         valSpan.textContent = selectedOpt.textContent;
-        valSpan.classList.toggle('placeholder', !selectedOpt.value);
+        valSpan.classList.toggle('placeholder', selectEl.dataset.emptyPlaceholder === 'true' && !selectedOpt.value);
       }
     }
 

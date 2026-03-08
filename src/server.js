@@ -7,6 +7,7 @@ import {
 } from './lib/provider-check.js';
 import {
   checkSetupEnvironment,
+  getProviderSecret,
   getCodexReleaseInfo,
   installCodex,
   launchCodex,
@@ -17,6 +18,7 @@ import {
   saveConfig,
   saveRawConfig,
   saveSettings,
+  testSavedProvider,
   uninstallCodex,
   updateCodex,
 } from './lib/config-store.js';
@@ -69,6 +71,22 @@ export async function startServer() {
     try {
       const result = await detectProvider(req.body || {});
       ok(res, { data: result });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/provider/secret', async (req, res) => {
+    try {
+      ok(res, { data: await getProviderSecret(req.body || {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/provider/test-saved', async (req, res) => {
+    try {
+      ok(res, { data: await testSavedProvider(req.body || {}) });
     } catch (error) {
       fail(res, error);
     }

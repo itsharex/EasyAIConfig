@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import TOML from '@iarna/toml';
+import { detectProvider } from './provider-check.js';
 
 const APP_HOME_DIRNAME = '.codex-config-ui';
 const BACKUPS_DIRNAME = 'backups';
@@ -407,23 +408,51 @@ function resolveProviderSecret(provider, envFile, authJson) {
   return candidates[0] || { key: provider.envKey || candidateKeys[0] || null, value: '', source: null, score: 0 };
 }
 
+function maskSecretValue(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.length <= 8) return '*'.repeat(trimmed.length);
+  return `${trimmed.slice(0, 4)}****${trimmed.slice(-4)}`;
+}
+
+function buildProviderBase(config, key, provider = {}) {
+  return {
+    key,
+    name: provider?.name || key,
+    baseUrl: provider?.base_url || '',
+    envKey: provider?.env_key || provider?.temp_env_key || '',
+    wireApi: provider?.wire_api || 'responses',
+    inlineBearerToken: provider?.experimental_bearer_token || '',
+    isActive: config.model_provider === key,
+  };
+}
+
+function resolveSavedProvider(config, envFile, authJson, providerKey) {
+  const provider = config.model_providers?.[providerKey];
+  if (!provider || typeof provider !== 'object') {
+    throw new Error(`未找到 Provider：${providerKey}`);
+  }
+
+  const base = buildProviderBase(config, providerKey, provider);
+  const secret = resolveProviderSecret(base, envFile, authJson);
+  return { base, secret };
+}
+
 function summarizeProviders(config, envFile, authJson) {
   const providers = Object.entries(config.model_providers || {}).map(([key, provider]) => {
-    const base = {
-      key,
-      name: provider?.name || key,
-      baseUrl: provider?.base_url || '',
-      envKey: provider?.env_key || provider?.temp_env_key || '',
-      wireApi: provider?.wire_api || 'responses',
-      inlineBearerToken: provider?.experimental_bearer_token || '',
-      isActive: config.model_provider === key,
-    };
+    const base = buildProviderBase(config, key, provider);
     const secret = resolveProviderSecret(base, envFile, authJson);
     return {
-      ...base,
+      key: base.key,
+      name: base.name,
+      baseUrl: base.baseUrl,
+      envKey: base.envKey,
+      wireApi: base.wireApi,
+      hasInlineBearerToken: Boolean(base.inlineBearerToken),
+      isActive: base.isActive,
       hasApiKey: Boolean(secret.value),
+      maskedApiKey: maskSecretValue(secret.value),
       keySource: secret.source,
-      envValue: secret.value || '',
       resolvedKeyName: secret.key,
     };
   });
@@ -436,6 +465,28 @@ function summarizeProviders(config, envFile, authJson) {
   });
 
   return providers;
+}
+
+async function readScopeState({ scope = 'global', projectPath = '', codexHome = defaultCodexHome() } = {}) {
+  const normalizedCodexHome = path.resolve(codexHome);
+  const paths = scopePaths({ scope, projectPath, codexHome: normalizedCodexHome });
+  await ensureDir(normalizedCodexHome);
+
+  const [configContent, envContent, authJson] = await Promise.all([
+    readText(paths.configPath),
+    readText(paths.envPath),
+    readAuthJson(normalizedCodexHome),
+  ]);
+
+  return {
+    normalizedCodexHome,
+    paths,
+    configContent,
+    envContent,
+    authJson,
+    config: parseToml(configContent),
+    env: parseEnv(envContent),
+  };
 }
 
 async function createBackup({ configPath, envPath, scope }) {
@@ -557,18 +608,11 @@ export async function checkSetupEnvironment({ codexHome = defaultCodexHome() } =
 }
 
 export async function loadState({ scope = 'global', projectPath = '', codexHome = defaultCodexHome() } = {}) {
-  const normalizedCodexHome = path.resolve(codexHome);
-  const paths = scopePaths({ scope, projectPath, codexHome: normalizedCodexHome });
-  await ensureDir(normalizedCodexHome);
-
-  const [configContent, envContent, authJson] = await Promise.all([
-    readText(paths.configPath),
-    readText(paths.envPath),
-    readAuthJson(normalizedCodexHome),
-  ]);
-
-  const config = parseToml(configContent);
-  const env = parseEnv(envContent);
+  const { normalizedCodexHome, paths, configContent, envContent, authJson, config, env } = await readScopeState({
+    scope,
+    projectPath,
+    codexHome,
+  });
   const providers = summarizeProviders(config, env, authJson);
   const activeProvider = providers.find((provider) => provider.isActive) || null;
   const codexBinary = findCodexBinary();
@@ -584,10 +628,8 @@ export async function loadState({ scope = 'global', projectPath = '', codexHome 
     envPath: paths.envPath,
     configExists: Boolean(configContent.trim()),
     envExists: Boolean(envContent.trim()),
-    authJson,
     configToml: configContent,
     config,
-    env,
     providers,
     activeProvider,
     summary: {
@@ -605,6 +647,54 @@ export async function loadState({ scope = 'global', projectPath = '', codexHome 
       ready: codexBinary.installed,
     },
   }
+}
+
+export async function getProviderSecret({ scope = 'global', projectPath = '', codexHome = defaultCodexHome(), providerKey = '' } = {}) {
+  const safeProviderKey = String(providerKey || '').trim();
+  if (!safeProviderKey) {
+    throw new Error('providerKey is required');
+  }
+
+  const { config, env, authJson } = await readScopeState({ scope, projectPath, codexHome });
+  const { base, secret } = resolveSavedProvider(config, env, authJson, safeProviderKey);
+  if (!secret.value) {
+    throw new Error(`Provider ${base.name} 未找到 API Key`);
+  }
+
+  return {
+    providerKey: base.key,
+    providerName: base.name,
+    baseUrl: base.baseUrl,
+    hasApiKey: true,
+    maskedApiKey: maskSecretValue(secret.value),
+    apiKey: secret.value,
+    keySource: secret.source,
+    resolvedKeyName: secret.key,
+  };
+}
+
+export async function testSavedProvider({
+  scope = 'global',
+  projectPath = '',
+  codexHome = defaultCodexHome(),
+  providerKey = '',
+  timeoutMs = 6000,
+} = {}) {
+  const safeProviderKey = String(providerKey || '').trim();
+  if (!safeProviderKey) {
+    throw new Error('providerKey is required');
+  }
+
+  const { config, env, authJson } = await readScopeState({ scope, projectPath, codexHome });
+  const { base, secret } = resolveSavedProvider(config, env, authJson, safeProviderKey);
+  if (!base.baseUrl) {
+    throw new Error(`Provider ${base.name} 未配置 Base URL`);
+  }
+  if (!secret.value) {
+    throw new Error(`Provider ${base.name} 未找到 API Key`);
+  }
+
+  return detectProvider({ baseUrl: base.baseUrl, apiKey: secret.value, timeoutMs });
 }
 
 export async function saveConfig(payload) {

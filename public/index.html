@@ -149,7 +149,24 @@
 
                     <label class="field field-wide">
                       <span>API Key</span>
-                      <input id="apiKeyInput" type="password" placeholder="sk-..." />
+                      <div class="password-field">
+                        <input id="apiKeyInput" type="password" placeholder="sk-..." />
+                        <button id="apiKeyToggleBtn" type="button" class="password-toggle-btn" aria-label="显示 API Key"
+                          title="显示 API Key">
+                          <svg class="eye-open" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                          <svg class="eye-closed" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+                            style="display:none">
+                            <path
+                              d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                            <line x1="1" y1="1" x2="23" y2="23" />
+                          </svg>
+                        </button>
+                      </div>
                     </label>
 
                     <div class="field action-field">
@@ -160,7 +177,7 @@
                     <label class="field field-wide model-field">
                       <span>可用模型</span>
                       <div class="select-wrap">
-                        <select id="modelSelect">
+                        <select id="modelSelect" data-empty-placeholder="true">
                           <option value="">先检测模型</option>
                         </select>
                       </div>
@@ -186,12 +203,27 @@
                       <div id="currentConfigMain" class="current-main">未加载</div>
                     </div>
                     <div class="current-actions">
-                      <button id="configEditorBtn" class="secondary tiny-icon-btn icon-menu-btn"
-                        title="编辑当前配置"></button>
-                      <button id="providerRefreshBtn" class="secondary tiny-icon-btn icon-refresh-btn"
-                        title="手动检测"></button>
-                      <button id="providerSwitchBtn" class="secondary tiny-icon-btn icon-chevron-btn"
-                        aria-expanded="false" title="切换配置"></button>
+                      <button id="configEditorBtn" class="secondary tiny-icon-btn" title="编辑当前配置">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                          stroke-width="1.6" stroke-linecap="round">
+                          <line x1="3" y1="4" x2="13" y2="4" />
+                          <line x1="3" y1="8" x2="13" y2="8" />
+                          <line x1="3" y1="12" x2="13" y2="12" />
+                        </svg>
+                      </button>
+                      <button id="providerRefreshBtn" class="secondary tiny-icon-btn" title="手动检测">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                          stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M2.5 8a5.5 5.5 0 0 1 10-2.5M13.5 8a5.5 5.5 0 0 1-10 2.5" />
+                          <path d="M13 3v2.5H10.5M3 13v-2.5H5.5" />
+                        </svg>
+                      </button>
+                      <button id="providerSwitchBtn" class="secondary tiny-icon-btn" aria-expanded="false" title="切换配置">
+                        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                          stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M4 6l4 4 4-4" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
                   <div id="currentConfigMeta" class="current-meta">当前 Provider 与模型会显示在这里</div>
@@ -451,14 +483,68 @@
                           <option value="xhigh">xhigh</option>
                         </select></div>
                     </label>
-                    <label class="field"><span>上下文大小</span><input id="cfgContextWindowInput" type="number"
-                        placeholder="默认 272000" /></label>
-                    <label class="field"><span>自动压缩阈值</span><input id="cfgCompactLimitInput" type="number"
-                        placeholder="默认 上下文90% ≈ 244800" /></label>
-                    <label class="field"><span>工具输出上限</span><input id="cfgToolLimitInput" type="number"
-                        placeholder="默认 无限制" /></label>
-                    <label class="field"><span>SQLite 目录</span><input id="cfgSqliteHomeInput"
-                        placeholder="默认 ~/.codex" /></label>
+                    <label class="field field-wide"><span>上下文大小</span>
+                      <div class="config-number-control">
+                        <div class="config-number-row">
+                          <input id="cfgContextWindowInput" inputmode="numeric" placeholder="默认 272000" />
+                          <button id="cfgContextWindowResetBtn" type="button" class="secondary tiny-btn">默认</button>
+                        </div>
+                        <input id="cfgContextWindowRange" class="config-range" type="range" min="32000" max="512000"
+                          step="100" />
+                        <div id="cfgContextWindowHint" class="config-field-hint">拖动滑杆快速调整，也可直接输入数字。</div>
+                      </div>
+                    </label>
+                    <label class="field field-wide"><span>自动压缩阈值</span>
+                      <div class="config-number-control">
+                        <div class="config-number-row">
+                          <input id="cfgCompactLimitInput" inputmode="numeric" placeholder="默认 上下文90% ≈ 244800" />
+                          <button id="cfgCompactLimitResetBtn" type="button" class="secondary tiny-btn">默认</button>
+                        </div>
+                        <input id="cfgCompactLimitRange" class="config-range" type="range" min="16000" max="512000"
+                          step="100" />
+                        <div id="cfgCompactLimitHint" class="config-field-hint">默认使用上下文大小的 90%。</div>
+                      </div>
+                    </label>
+                    <label class="field field-wide"><span>工具输出上限</span>
+                      <div class="config-number-control">
+                        <div class="config-number-row">
+                          <input id="cfgToolLimitInput" inputmode="numeric" placeholder="默认 无限制" />
+                          <button id="cfgToolLimitResetBtn" type="button" class="secondary tiny-btn">默认</button>
+                        </div>
+                        <input id="cfgToolLimitRange" class="config-range" type="range" min="1024" max="65536"
+                          step="512" />
+                        <div id="cfgToolLimitHint" class="config-field-hint">留空表示不限制；拖动后会写入具体上限。</div>
+                      </div>
+                    </label>
+                    <label class="field field-wide"><span>SQLite 目录</span>
+                      <div class="path-input-group">
+                        <input id="cfgSqliteHomeInput" placeholder="默认 ~/.codex" />
+                      </div>
+                      <div class="path-actions-row">
+                        <button id="cfgSqliteHomeBrowseBtn" type="button" class="secondary tiny-btn">
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M2 13h12M2 3h5l2 2h5v6H2V3z" />
+                          </svg>
+                          浏览
+                        </button>
+                        <button id="cfgSqliteHomeUseCodexHomeBtn" type="button" class="secondary tiny-btn">
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M2 8l6-5 6 5M3.5 9v4.5h9V9" />
+                          </svg>
+                          Codex Home
+                        </button>
+                        <button id="cfgSqliteHomeResetBtn" type="button" class="secondary tiny-btn">
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M2 8a6 6 0 0 1 11-3M14 8a6 6 0 0 1-11 3" />
+                            <path d="M14 3v2.5h-2.5M2 13v-2.5h2.5" />
+                          </svg>
+                          默认
+                        </button>
+                      </div>
+                    </label>
                   </div>
                   <div class="toggle-grid">
                     <label class="toggle-item"><input id="cfgHideReasoningCheck"
@@ -702,7 +788,24 @@
                 </label>
                 <label class="wizard-field">
                   <span>API Key</span>
-                  <input id="wizardApiKey" type="password" placeholder="sk-..." />
+                  <div class="password-field wizard-password-field">
+                    <input id="wizardApiKey" type="password" placeholder="sk-..." />
+                    <button id="wizardApiKeyToggleBtn" type="button" class="password-toggle-btn" aria-label="显示 API Key"
+                      title="显示 API Key">
+                      <svg class="eye-open" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                      <svg class="eye-closed" width="16" height="16" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+                        style="display:none">
+                        <path
+                          d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                        <line x1="1" y1="1" x2="23" y2="23" />
+                      </svg>
+                    </button>
+                  </div>
                 </label>
                 <div class="wizard-detect-row">
                   <button id="wizardDetectBtn" class="secondary">检测模型</button>
@@ -710,7 +813,7 @@
                 </div>
                 <label class="wizard-field" id="wizardModelField" style="display:none">
                   <span>推荐模型</span>
-                  <div class="select-wrap"><select id="wizardModelSelect">
+                  <div class="select-wrap"><select id="wizardModelSelect" data-empty-placeholder="true">
                       <option value="">先检测模型</option>
                     </select></div>
                 </label>
