@@ -1707,13 +1707,96 @@ function bindEvents() {
   el('launchBtn').addEventListener('click', launchCodexOnly);
   el('appUpdateBtn').addEventListener('click', async () => {
     const info = await loadAppUpdateState({ manual: true });
-    if (info?.available) return handleAppUpdate();
+    if (!info) {
+      flash('检测客户端更新失败，请检查网络连接', 'error');
+      return;
+    }
+    if (info.available) {
+      return handleAppUpdate();
+    }
+    flash(`客户端已是最新版本 v${info.currentVersion || '-'}`, 'success');
   });
   el('updateCodexBtn').addEventListener('click', updateCodex);
   el('reinstallCodexBtn').addEventListener('click', reinstallCodex);
   el('uninstallCodexBtn').addEventListener('click', uninstallCodex);
   el('refreshBtn').addEventListener('click', () => loadState({ preserveForm: true }));
   el('reloadBackupsBtn').addEventListener('click', loadBackups);
+
+  // ── Quick Shortcut buttons ──
+  function applyShortcut(patch, label) {
+    // Apply values to config editor fields
+    if ('model_reasoning_effort' in patch) el('cfgReasoningSelect').value = patch.model_reasoning_effort || '';
+    if ('plan_mode_reasoning_effort' in patch) el('cfgPlanReasoningSelect').value = patch.plan_mode_reasoning_effort || '';
+    if ('service_tier' in patch) el('cfgServiceTierSelect').value = patch.service_tier || '';
+    if ('model_context_window' in patch) {
+      el('cfgContextWindowInput').value = patch.model_context_window || '';
+      el('cfgContextWindowRange').value = patch.model_context_window || 272000;
+    }
+    if ('model_auto_compact_token_limit' in patch) {
+      el('cfgCompactLimitInput').value = patch.model_auto_compact_token_limit || '';
+      el('cfgCompactLimitRange').value = patch.model_auto_compact_token_limit || 244800;
+    }
+    // Update active state
+    document.querySelectorAll('.shortcut-btn').forEach(b => b.classList.remove('active'));
+    const activeBtn = { 'Fast': 'shortcutFast', '1M Token': 'shortcut1M', 'Max': 'shortcutMaxPerf', '默认': 'shortcutReset' }[label];
+    if (activeBtn) el(activeBtn)?.classList.add('active');
+    // Auto-save the config settings
+    saveSettingsFromEditor().then(() => {
+      flash(`已切换到「${label}」模式`, 'success');
+    });
+  }
+
+  async function saveSettingsFromEditor() {
+    const patch = buildSettingsPatch();
+    const payload = {
+      scope: el('scopeSelect').value || 'global',
+      projectPath: el('projectPathInput').value.trim(),
+      codexHome: el('codexHomeInput').value.trim(),
+      patch,
+    };
+    const json = await api('/api/config/patch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!json.ok) flash(json.error || '配置保存失败', 'error');
+    await loadState({ preserveForm: true });
+    populateConfigEditor();
+  }
+
+  el('shortcutFast').addEventListener('click', () => {
+    applyShortcut({
+      model_reasoning_effort: 'minimal',
+      plan_mode_reasoning_effort: 'minimal',
+      service_tier: 'fast',
+    }, 'Fast');
+  });
+
+  el('shortcut1M').addEventListener('click', () => {
+    applyShortcut({
+      model_context_window: 1048576,
+      model_auto_compact_token_limit: 943718,
+    }, '1M Token');
+  });
+
+  el('shortcutMaxPerf').addEventListener('click', () => {
+    applyShortcut({
+      model_reasoning_effort: 'high',
+      plan_mode_reasoning_effort: 'high',
+      model_context_window: 1048576,
+      model_auto_compact_token_limit: 943718,
+    }, 'Max');
+  });
+
+  el('shortcutReset').addEventListener('click', () => {
+    applyShortcut({
+      model_reasoning_effort: '',
+      plan_mode_reasoning_effort: '',
+      service_tier: '',
+      model_context_window: '',
+      model_auto_compact_token_limit: '',
+    }, '默认');
+  });
   el('modelSelect').addEventListener('change', (event) => {
     renderModelOptions(state.detected?.models || [], event.target.value);
   });

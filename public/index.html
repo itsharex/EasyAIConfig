@@ -183,6 +183,44 @@
                   <div id="detectionMeta" class="inline-meta">默认只需要 URL 和 API Key；缺少 http/https 会自动补全。</div>
                   <div id="modelChips" class="chips hide"></div>
 
+                  <div class="quick-shortcuts">
+                    <div class="shortcuts-label">快捷模式</div>
+                    <div class="shortcuts-row">
+                      <button class="shortcut-btn" id="shortcutFast" title="开启 Fast 模式 (minimal reasoning)">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M5 12h14" />
+                          <path d="M13 6l6 6-6 6" />
+                        </svg>
+                        <span>Fast</span>
+                      </button>
+                      <button class="shortcut-btn" id="shortcut1M" title="开启 1M 上下文窗口">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+                        </svg>
+                        <span>1M Token</span>
+                      </button>
+                      <button class="shortcut-btn" id="shortcutMaxPerf" title="最大性能: high reasoning + 1M token">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                          <path
+                            d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+                          <circle cx="12" cy="12" r="4" />
+                        </svg>
+                        <span>Max</span>
+                      </button>
+                      <button class="shortcut-btn" id="shortcutReset" title="恢复默认配置">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M2.5 2v6h6" />
+                          <path d="M2.5 8A10 10 0 1 1 4.34 16" />
+                        </svg>
+                        <span>默认</span>
+                      </button>
+                    </div>
+                  </div>
+
                   <div class="primary-actions">
                     <button id="editConfigQuickBtn" class="secondary">编辑配置</button>
                     <button id="saveBtn" class="secondary">保存配置</button>
@@ -395,8 +433,8 @@
                           <input id="cfgContextWindowInput" inputmode="numeric" placeholder="默认 272000" />
                           <button id="cfgContextWindowResetBtn" type="button" class="secondary tiny-btn">默认</button>
                         </div>
-                        <input id="cfgContextWindowRange" class="config-range" type="range" min="32000" max="512000"
-                          step="100" />
+                        <input id="cfgContextWindowRange" class="config-range" type="range" min="32000" max="1048576"
+                          step="1000" />
                         <div id="cfgContextWindowHint" class="config-field-hint">拖动滑杆快速调整，也可直接输入数字。</div>
                       </div>
                     </label>
@@ -406,8 +444,8 @@
                           <input id="cfgCompactLimitInput" inputmode="numeric" placeholder="默认 上下文90% ≈ 244800" />
                           <button id="cfgCompactLimitResetBtn" type="button" class="secondary tiny-btn">默认</button>
                         </div>
-                        <input id="cfgCompactLimitRange" class="config-range" type="range" min="16000" max="512000"
-                          step="100" />
+                        <input id="cfgCompactLimitRange" class="config-range" type="range" min="16000" max="1048576"
+                          step="1000" />
                         <div id="cfgCompactLimitHint" class="config-field-hint">默认使用上下文大小的 90%。</div>
                       </div>
                     </label>
@@ -603,11 +641,7 @@
       <div class="wizard-container">
         <div class="wizard-header">
           <div class="wizard-brand">
-            <svg width="20" height="20" viewBox="0 0 18 18" fill="none">
-              <rect x="1" y="1" width="16" height="16" rx="4" stroke="rgba(141,192,255,0.5)" stroke-width="1.2" />
-              <path d="M9.5 4L6.5 9.5h5L8.5 14" stroke="rgba(141,192,255,0.7)" stroke-width="1.3" stroke-linecap="round"
-                stroke-linejoin="round" />
-            </svg>
+            <img src="icon.png" width="22" height="22" alt="logo" style="border-radius:5px">
             <span>EasyAIConfig Setup</span>
           </div>
           <button id="wizardCloseBtn" class="wizard-close-btn" title="关闭向导">×</button>
@@ -641,7 +675,12 @@
           <!-- Step 0: Environment Check -->
           <div class="wizard-panel active" data-wizard-panel="0">
             <div class="wp-card">
-              <div class="wp-icon">🔍</div>
+              <div class="wp-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="7" opacity="0.5" />
+                  <circle cx="11" cy="11" r="4" />
+                  <line x1="16.5" y1="16.5" x2="21" y2="21" />
+                </svg></div>
               <h2 class="wp-title">环境诊断</h2>
               <p class="wp-desc">正在检查运行 Codex 所需的环境依赖…</p>
               <div id="wizardEnvChecks" class="wizard-checklist">
@@ -677,7 +716,12 @@
           <!-- Step 1: Install Codex -->
           <div class="wizard-panel" data-wizard-panel="1">
             <div class="wp-card">
-              <div class="wp-icon">📦</div>
+              <div class="wp-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2l9 5v10l-9 5-9-5V7l9-5z" opacity="0.5" />
+                  <path d="M12 12l9-5M12 12v10M12 12L3 7" />
+                  <path d="M7.5 4.5l9 5" />
+                </svg></div>
               <h2 class="wp-title">安装 Codex</h2>
               <p class="wp-desc">将通过 npm 全局安装 <code>@openai/codex</code></p>
               <div id="wizardInstallStatus" class="wizard-install-box">
@@ -702,7 +746,11 @@
           <!-- Step 2: Configure Provider -->
           <div class="wizard-panel" data-wizard-panel="2">
             <div class="wp-card">
-              <div class="wp-icon">⚡</div>
+              <div class="wp-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" opacity="0.5" />
+                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+                </svg></div>
               <h2 class="wp-title">配置 API 连接</h2>
               <p class="wp-desc">填入你的 API Provider 信息，自动检测可用模型</p>
               <div class="wizard-form">
@@ -752,7 +800,11 @@
           <!-- Step 3: Complete -->
           <div class="wizard-panel" data-wizard-panel="3">
             <div class="wp-card wp-complete-card">
-              <div class="wp-icon wp-success-icon">✅</div>
+              <div class="wp-icon wp-success-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" opacity="0.5" />
+                  <path d="M8 12l3 3 5-6" stroke-width="2" />
+                </svg></div>
               <h2 class="wp-title">配置完成！</h2>
               <p class="wp-desc">你的 Codex 已经配置好了，可以开始使用了</p>
               <div id="wizardCompleteSummary" class="wizard-complete-summary"></div>
