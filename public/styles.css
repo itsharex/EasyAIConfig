@@ -2675,11 +2675,15 @@ select {
   padding: 0 4px 10px;
 }
 
-.workspace-actions .subtle-btn {
+.workspace-actions .subtle-btn,
+.workspace-actions button {
   height: 28px;
   padding: 0 11px;
   font-size: 0.74rem;
   border-radius: 7px;
+}
+
+.workspace-actions .subtle-btn {
   background: rgba(255, 255, 255, 0.045);
 }
 
@@ -3592,6 +3596,183 @@ textarea:focus {
   flex: 0 0 auto;
 }
 
+/* ═══════════════  Tools / Install Page  ═══════════════ */
+.tools-page {
+  padding: 8px 12px;
+}
+
+.tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.tool-card {
+  background: rgba(255, 255, 255, 0.028);
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 14px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.tool-card:hover {
+  border-color: rgba(141, 192, 255, 0.12);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+.tool-card-soon {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.tool-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.tool-icon {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tool-icon-codex {
+  background: linear-gradient(135deg, rgba(120, 180, 255, 0.15), rgba(100, 160, 255, 0.08));
+  color: rgba(141, 192, 255, 0.9);
+}
+
+.tool-icon-claude {
+  background: linear-gradient(135deg, rgba(255, 160, 100, 0.15), rgba(255, 140, 80, 0.08));
+  color: rgba(255, 170, 120, 0.9);
+}
+
+.tool-icon-openclaw {
+  background: linear-gradient(135deg, rgba(120, 230, 160, 0.15), rgba(100, 210, 140, 0.08));
+  color: rgba(130, 225, 170, 0.9);
+}
+
+.tool-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.tool-name {
+  font-size: 0.88rem;
+  font-weight: 650;
+  color: rgba(232, 238, 248, 0.92);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tool-desc {
+  font-size: 0.7rem;
+  color: rgba(232, 238, 248, 0.42);
+  line-height: 1.5;
+  margin-top: 3px;
+}
+
+.tool-soon-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: rgba(232, 238, 248, 0.4);
+}
+
+.tool-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.tool-version {
+  font-size: 0.74rem;
+  font-weight: 560;
+  color: rgba(232, 238, 248, 0.72);
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+}
+
+.tool-version-muted {
+  color: rgba(232, 238, 248, 0.32);
+  font-family: inherit;
+}
+
+.tool-badge {
+  font-size: 0.6rem;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 5px;
+}
+
+.tool-badge-ok {
+  color: #7be1b2;
+  background: rgba(123, 225, 178, 0.1);
+  border: 1px solid rgba(123, 225, 178, 0.16);
+}
+
+.tool-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tool-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  font-weight: 560;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+}
+
+.tool-action-btn svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.tool-action-btn:hover svg {
+  opacity: 1;
+}
+
+.tool-action-danger {
+  color: rgba(255, 130, 130, 0.72) !important;
+  border-color: rgba(255, 130, 130, 0.12) !important;
+}
+
+.tool-action-danger:hover {
+  background: rgba(255, 100, 100, 0.1) !important;
+  color: rgba(255, 130, 130, 0.92) !important;
+}
+
+@media (max-width: 700px) {
+  .tools-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ═══════════════  Config editor as page  ═══════════════ */
 .config-editor-page {
   height: 100%;
@@ -3614,23 +3795,37 @@ textarea:focus {
   top: 0;
 }
 
-.page-view[data-page="configEditor"] .config-editor-side .line-panel {
-  background: rgba(255, 255, 255, 0.025);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 14px;
-  padding: 14px;
+/* Flat section without nested card */
+.config-side-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.config-side-section .subline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .page-view[data-page="configEditor"] .raw-config {
   font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
   font-size: 0.72rem;
   line-height: 1.6;
-  background: rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 10px;
-  padding: 12px;
+  padding: 14px;
   resize: vertical;
-  color: rgba(232, 238, 248, 0.7);
+  color: rgba(232, 238, 248, 0.72);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.toml-hint {
+  font-size: 0.66rem;
+  color: rgba(232, 238, 248, 0.32);
+  line-height: 1.5;
 }
 
 /* Select focus in config editor */
@@ -5104,9 +5299,81 @@ textarea:focus {
   color: rgba(30, 40, 60, 0.7) !important;
 }
 
-[data-theme="light"] .config-editor-side .line-panel {
-  background: rgba(0, 0, 0, 0.02) !important;
-  border-color: transparent !important;
+[data-theme="light"] .config-editor-side .config-side-section .raw-config {
+  background: rgba(0, 0, 0, 0.03) !important;
+  border-color: rgba(0, 0, 0, 0.06) !important;
+}
+
+[data-theme="light"] .toml-hint {
+  color: rgba(30, 40, 60, 0.4);
+}
+
+/* ─── Tools page ─── */
+[data-theme="light"] .tool-card {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .tool-card:hover {
+  border-color: rgba(59, 130, 246, 0.2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .tool-name {
+  color: var(--text);
+}
+
+[data-theme="light"] .tool-desc {
+  color: var(--muted);
+}
+
+[data-theme="light"] .tool-version {
+  color: var(--text);
+}
+
+[data-theme="light"] .tool-version-muted {
+  color: var(--muted);
+}
+
+[data-theme="light"] .tool-status {
+  border-top-color: rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .tool-badge-ok {
+  color: #15803d;
+  background: rgba(22, 163, 74, 0.08);
+  border-color: rgba(22, 163, 74, 0.15);
+}
+
+[data-theme="light"] .tool-icon-codex {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(59, 130, 246, 0.05));
+  color: rgba(37, 99, 235, 0.8);
+}
+
+[data-theme="light"] .tool-icon-claude {
+  background: linear-gradient(135deg, rgba(234, 138, 78, 0.12), rgba(234, 138, 78, 0.05));
+  color: rgba(200, 110, 50, 0.8);
+}
+
+[data-theme="light"] .tool-icon-openclaw {
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.12), rgba(34, 197, 94, 0.05));
+  color: rgba(22, 163, 74, 0.8);
+}
+
+[data-theme="light"] .tool-soon-tag {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.06);
+  color: var(--muted);
+}
+
+[data-theme="light"] .tool-action-danger {
+  color: rgba(220, 50, 50, 0.7) !important;
+  border-color: rgba(220, 50, 50, 0.15) !important;
+}
+
+[data-theme="light"] .tool-action-danger:hover {
+  background: rgba(220, 50, 50, 0.08) !important;
+  color: rgba(200, 30, 30, 0.9) !important;
 }
 
 /* ─── Health badge ─── */

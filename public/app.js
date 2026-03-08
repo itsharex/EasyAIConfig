@@ -66,6 +66,7 @@ initTheme();
 const PAGE_META = {
   quick: { eyebrow: 'Quick Setup', title: '一键配置 Codex 工具', subtitle: '输入 URL 和 API Key，剩下交给 EasyAIConfig。' },
   providers: { eyebrow: 'Providers', title: 'Provider 与备份', subtitle: '集中查看已发现配置、检测状态与历史备份。' },
+  tools: { eyebrow: 'Tools', title: '工具安装与管理', subtitle: '安装、更新、重装或卸载 AI 编程工具。' },
   about: { eyebrow: 'About', title: '关于 EasyAIConfig', subtitle: '查看桌面版本、更新源与当前运行信息。' },
   configEditor: { eyebrow: 'Current Config', title: '配置编辑', subtitle: '把常用 config.toml 配置转成高密度表单，右侧可看原始 TOML。' },
 };
@@ -572,6 +573,58 @@ function populateConfigEditor() {
   el('cfgBaseInstructionsTextarea').value = configValue('base_instructions', '');
   el('cfgRawTomlTextarea').value = state.current?.configToml || '';
   refreshConfigNumberFields();
+  syncShortcutActiveState();
+}
+
+/**
+ * Sync shortcut button active state based on current config values.
+ * Determines which preset (if any) matches the loaded configuration.
+ */
+function syncShortcutActiveState() {
+  document.querySelectorAll('.shortcut-btn').forEach(b => b.classList.remove('active'));
+
+  const reasoning = configValue('model_reasoning_effort', '');
+  const planReasoning = configValue('plan_mode_reasoning_effort', '');
+  const serviceTier = configValue('service_tier', '');
+  const ctxWindow = configValue('model_context_window', '');
+  const compactLimit = configValue('model_auto_compact_token_limit', '');
+
+  const ctxNum = ctxWindow ? Number(ctxWindow) : 0;
+  const compactNum = compactLimit ? Number(compactLimit) : 0;
+
+  // Check "Max" first (most specific: high reasoning + 1M window)
+  if (reasoning === 'high' && planReasoning === 'high' && ctxNum >= 1048576) {
+    el('shortcutMaxPerf')?.classList.add('active');
+    return;
+  }
+
+  // Check "Fast" mode: minimal reasoning + fast service tier
+  const isFast = (reasoning === 'minimal' || planReasoning === 'minimal') && serviceTier === 'fast';
+  // Check "1M Token" mode: large context window
+  const is1M = ctxNum >= 1048576;
+
+  if (isFast && is1M) {
+    // Both are on but doesn't match Max – highlight both
+    el('shortcutFast')?.classList.add('active');
+    el('shortcut1M')?.classList.add('active');
+    return;
+  }
+
+  if (isFast) {
+    el('shortcutFast')?.classList.add('active');
+    return;
+  }
+
+  if (is1M) {
+    el('shortcut1M')?.classList.add('active');
+    return;
+  }
+
+  // Check if everything is default (all empty/unset)
+  const allDefault = !reasoning && !planReasoning && !serviceTier && !ctxWindow && !compactLimit;
+  if (allDefault) {
+    el('shortcutReset')?.classList.add('active');
+  }
 }
 
 function numOrNull(value) {
@@ -608,6 +661,7 @@ function buildSettingsPatch() {
 
 async function saveConfigEditor() {
   setBusy('saveConfigEditorBtn', true, '保存中...');
+  // Save form settings
   const json = await api('/api/config/settings-save', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -618,6 +672,20 @@ async function saveConfigEditor() {
       settings: buildSettingsPatch(),
     }),
   });
+  // Also save raw TOML if it was edited
+  const tomlEl = el('cfgRawTomlTextarea');
+  if (tomlEl && tomlEl.value.trim() && tomlEl.value !== (state.current?.configToml || '')) {
+    await api('/api/config/raw-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scope: el('scopeSelect').value,
+        projectPath: el('projectPathInput').value.trim(),
+        codexHome: el('codexHomeInput').value.trim(),
+        configToml: tomlEl.value,
+      }),
+    });
+  }
   setBusy('saveConfigEditorBtn', false);
   if (!json.ok) return flash(json.error || '配置保存失败', 'error');
   flash('当前配置已保存', 'success');
@@ -657,11 +725,25 @@ async function applyConfigEditor() {
       settings: buildSettingsPatch(),
     }),
   });
+  // Also save raw TOML if it was edited
+  const tomlEl = el('cfgRawTomlTextarea');
+  if (tomlEl && tomlEl.value.trim() && tomlEl.value !== (state.current?.configToml || '')) {
+    await api('/api/config/raw-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scope: el('scopeSelect').value,
+        projectPath: el('projectPathInput').value.trim(),
+        codexHome: el('codexHomeInput').value.trim(),
+        configToml: tomlEl.value,
+      }),
+    });
+  }
   setBusy('applyConfigEditorBtn', false);
   if (!json.ok) return flash(json.error || '表单配置保存失败', 'error');
   await loadState({ preserveForm: true });
   populateConfigEditor();
-  await launchCodex('applyConfigEditorBtn', '表单配置已生效并启动 Codex');
+  await launchCodex('applyConfigEditorBtn', '配置已生效并启动 Codex');
 }
 
 async function applyRawConfigEditor() {
@@ -803,17 +885,30 @@ function renderAppUpdateStatus() {
 function renderStatus() {
   renderAppUpdateStatus();
   const codex = state.current?.codexBinary || { installed: false };
+
+  // Sidebar badge
   const pill = el('codexPill');
   pill.className = `badge ${codex.installed ? 'success' : 'warning'}`;
   pill.textContent = codex.installed ? (codex.version || '已安装') : '未安装';
 
+  // Tools page card
+  const versionEl = el('toolCodexVersion');
+  const badgeEl = el('toolCodexBadge');
   const updateBtn = el('updateCodexBtn');
   const reinstallBtn = el('reinstallCodexBtn');
   const uninstallBtn = el('uninstallCodexBtn');
 
-  updateBtn.textContent = codex.installed ? '更新 Codex' : '安装 Codex';
-  reinstallBtn.hidden = !codex.installed;
-  uninstallBtn.hidden = !codex.installed;
+  if (versionEl) {
+    versionEl.textContent = codex.installed ? (codex.version || '已安装') : '未安装';
+    versionEl.classList.toggle('tool-version-muted', !codex.installed);
+  }
+  if (badgeEl) {
+    badgeEl.textContent = codex.installed ? '已安装' : '';
+    badgeEl.className = `tool-badge ${codex.installed ? 'tool-badge-ok' : ''}`;
+  }
+  if (updateBtn) updateBtn.querySelector('span').textContent = codex.installed ? '更新' : '安装';
+  if (reinstallBtn) reinstallBtn.hidden = !codex.installed;
+  if (uninstallBtn) uninstallBtn.hidden = !codex.installed;
 }
 
 function renderQuickSummary() {
@@ -1009,6 +1104,7 @@ async function loadState({ preserveForm = true } = {}) {
     renderModelOptions([], snapshot.selectedModel);
     renderCurrentConfig();
     refreshProviderHealth();
+    syncShortcutActiveState();
     return;
   }
   fillFromProvider(state.current.activeProvider || state.current.providers?.[0]);
@@ -1016,6 +1112,9 @@ async function loadState({ preserveForm = true } = {}) {
 
   // Auto-trigger provider health check so the card doesn't stay "待检测"
   refreshProviderHealth();
+
+  // Sync shortcut active states based on loaded config
+  syncShortcutActiveState();
 }
 
 async function loadBackups() {
@@ -1807,7 +1906,13 @@ function bindEvents() {
   });
   el('savedProviders').addEventListener('click', (event) => {
     const button = event.target.closest('[data-load-provider]');
-    if (button) fillFromProvider((state.current?.providers || []).find((item) => item.key === button.dataset.loadProvider));
+    if (!button) return;
+    const providerKey = button.dataset.loadProvider;
+    fillFromProvider((state.current?.providers || []).find((item) => item.key === providerKey));
+    // Update visual active state on provider cards
+    el('savedProviders').querySelectorAll('.provider-card').forEach(card => card.classList.remove('active'));
+    const card = button.closest('.provider-card');
+    if (card) card.classList.add('active');
   });
   document.querySelectorAll('[data-page-target]').forEach((node) => {
     if (node.dataset.pageTarget === '__wizard__') return; // handled separately
@@ -1830,8 +1935,6 @@ function bindEvents() {
   el('closeConfigEditorBtn').addEventListener('click', () => setConfigEditorOpen(false));
   el('saveConfigEditorBtn').addEventListener('click', saveConfigEditor);
   el('applyConfigEditorBtn').addEventListener('click', applyConfigEditor);
-  el('saveRawConfigEditorBtn').addEventListener('click', saveRawConfigEditor);
-  el('applyRawConfigEditorBtn').addEventListener('click', applyRawConfigEditor);
   Object.entries(CONFIG_NUMBER_FIELDS).forEach(([inputId, spec]) => {
     el(inputId).addEventListener('input', () => {
       syncConfigNumberField(inputId, 'input');
