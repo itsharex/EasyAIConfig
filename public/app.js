@@ -239,11 +239,13 @@ function toolIconSvg(toolId) {
 
 function updateToolSelector() {
   document.querySelectorAll('.tool-tab').forEach(tab => {
-    const toolId = tab.dataset.tool;
-    const tool = state.tools.find(t => t.id === toolId);
+    const tid = tab.dataset.tool;
+    // Always toggle active class based on activeTool
+    tab.classList.toggle('active', tid === state.activeTool);
+    // Update disabled state from tools data if available
+    const tool = state.tools.find(t => t.id === tid);
     if (tool) {
       tab.disabled = !tool.supported;
-      tab.classList.toggle('active', toolId === state.activeTool);
     }
   });
 }
