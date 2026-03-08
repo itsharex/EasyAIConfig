@@ -1,3 +1,7 @@
+use serde_json::{json, Value};
+use std::cmp::Ordering;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::OnceLock;
 
 /// Resolve the user's full shell PATH.
@@ -415,13 +419,243 @@ pub(crate) fn check_setup_environment(query: &Value) -> Result<Value, String> {
     "codexHome": codex_home.to_string_lossy().to_string(),
   }))
 }
-use serde_json::{json, Value};
-use std::cmp::Ordering;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-
 use crate::provider::get_string;
 use crate::{
   compare_versions, default_codex_home, extract_version, home_dir, npm_command,
   parse_json_object, parse_toml_config, read_text, OPENAI_CODEX_PACKAGE,
+  claude_code_home, write_text, ensure_dir, CLAUDE_CODE_PACKAGE,
 };
+
+/* ═══════════════  Multi-tool support  ═══════════════ */
+
+fn find_tool_binary(binary_name: &str) -> Value {
+  // Set PATH before using which
+  std::env::set_var("PATH", full_path_env());
+  let bin_path = which::which(binary_name)
+    .ok()
+    .map(|p| p.to_string_lossy().to_string());
+
+  if let Some(ref path) = bin_path {
+    let output = create_command(path).arg("--version").output();
+    if let Ok(out) = output {
+      if out.status.success() {
+        let version = format!(
+          "{}{}",
+          String::from_utf8_lossy(&out.stdout),
+          String::from_utf8_lossy(&out.stderr)
+        ).trim().to_string();
+        return json!({
+          "installed": true,
+          "version": version,
+          "path": path,
+        });
+      }
+    }
+  }
+
+  json!({
+    "installed": false,
+    "version": Value::Null,
+    "path": Value::Null,
+  })
+}
+
+pub(crate) fn list_tools() -> Result<Value, String> {
+  let codex_binary = find_codex_binary();
+  let claude_binary = find_tool_binary("claude");
+  let openclaw_binary = find_tool_binary("openclaw");
+
+  Ok(json!([
+    {
+      "id": "codex",
+      "name": "Codex CLI",
+      "description": "OpenAI 官方 AI 编程助手",
+      "supported": true,
+      "configFormat": "toml",
+      "installMethod": "npm",
+      "npmPackage": OPENAI_CODEX_PACKAGE,
+      "binary": codex_binary,
+    },
+    {
+      "id": "claudecode",
+      "name": "Claude Code",
+      "description": "Anthropic 终端原生 AI 编程助手",
+      "supported": true,
+      "configFormat": "json",
+      "installMethod": "npm",
+      "npmPackage": CLAUDE_CODE_PACKAGE,
+      "binary": claude_binary,
+    },
+    {
+      "id": "openclaw",
+      "name": "OpenClaw",
+      "description": "开源 AI 编程代理",
+      "supported": false,
+      "configFormat": "json",
+      "installMethod": "npm",
+      "npmPackage": Value::Null,
+      "binary": openclaw_binary,
+    },
+  ]))
+}
+
+/* ═══════════════  Claude Code  ═══════════════ */
+
+fn read_json_file(path: &Path) -> Result<Value, String> {
+  let content = read_text(path)?;
+  let trimmed = content.trim();
+  if trimmed.is_empty() {
+    return Ok(json!({}));
+  }
+  serde_json::from_str(trimmed).map_err(|e| e.to_string())
+}
+
+fn write_json_file(path: &Path, data: &Value) -> Result<(), String> {
+  if let Some(parent) = path.parent() {
+    ensure_dir(parent)?;
+  }
+  let content = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
+  write_text(path, &format!("{}\n", content))
+}
+
+pub(crate) fn load_claudecode_state() -> Result<Value, String> {
+  let home = claude_code_home()?;
+  let settings_path = home.join("settings.json");
+  let settings = read_json_file(&settings_path)?;
+  let binary = find_tool_binary("claude");
+
+  let model = settings.get("model").and_then(Value::as_str).unwrap_or("").to_string();
+  let always_thinking = settings.get("alwaysThinkingEnabled").and_then(Value::as_bool).unwrap_or(false);
+  let skip_dangerous = settings.get("skipDangerousModePermissionPrompt").and_then(Value::as_bool).unwrap_or(false);
+  let has_api_key = std::env::var("ANTHROPIC_API_KEY").map(|v| !v.trim().is_empty()).unwrap_or(false);
+  let settings_json = serde_json::to_string_pretty(&settings).unwrap_or_else(|_| "{}".to_string());
+
+  Ok(json!({
+    "toolId": "claudecode",
+    "configHome": home.to_string_lossy().to_string(),
+    "settingsPath": settings_path.to_string_lossy().to_string(),
+    "settings": settings,
+    "binary": binary,
+    "model": model,
+    "alwaysThinkingEnabled": always_thinking,
+    "skipDangerousModePermissionPrompt": skip_dangerous,
+    "hasApiKey": has_api_key,
+    "settingsJson": settings_json,
+  }))
+}
+
+pub(crate) fn save_claudecode_config(body: &Value) -> Result<Value, String> {
+  let home = claude_code_home()?;
+  let settings_path = home.join("settings.json");
+  let mut settings = read_json_file(&settings_path)?;
+  let obj = parse_json_object(body);
+
+  if let Some(model) = obj.get("model") {
+    if let Some(s) = model.as_str() {
+      if s.is_empty() {
+        settings.as_object_mut().map(|o| o.remove("model"));
+      } else {
+        settings["model"] = json!(s);
+      }
+    }
+  }
+  if let Some(v) = obj.get("alwaysThinkingEnabled") {
+    settings["alwaysThinkingEnabled"] = v.clone();
+  }
+  if let Some(v) = obj.get("skipDangerousModePermissionPrompt") {
+    settings["skipDangerousModePermissionPrompt"] = v.clone();
+  }
+  if let Some(env) = obj.get("env").and_then(Value::as_object) {
+    let existing = settings.as_object_mut().ok_or("invalid settings")?;
+    let env_obj = existing.entry("env").or_insert_with(|| json!({}));
+    if let Some(env_map) = env_obj.as_object_mut() {
+      for (k, v) in env {
+        env_map.insert(k.clone(), v.clone());
+      }
+    }
+  }
+
+  write_json_file(&settings_path, &settings)?;
+  Ok(json!({ "saved": true, "settingsPath": settings_path.to_string_lossy().to_string() }))
+}
+
+pub(crate) fn save_claudecode_raw_config(body: &Value) -> Result<Value, String> {
+  let home = claude_code_home()?;
+  let settings_path = home.join("settings.json");
+  let obj = parse_json_object(body);
+  let raw = get_string(&obj, "settingsJson");
+  if raw.trim().is_empty() {
+    return Err("settings.json 内容不能为空".to_string());
+  }
+  let parsed: Value = serde_json::from_str(&raw).map_err(|e| format!("JSON 解析失败：{}", e))?;
+  write_json_file(&settings_path, &parsed)?;
+  Ok(json!({ "saved": true, "settingsPath": settings_path.to_string_lossy().to_string() }))
+}
+
+fn launch_terminal_for_tool(cwd: &Path, binary_path: &str, tool_label: &str) -> Result<String, String> {
+  let cwd_text = cwd.to_string_lossy().to_string();
+
+  if cfg!(target_os = "macos") {
+    let script = [
+      "tell application \"Terminal\"",
+      "activate",
+      &format!(
+        "do script \"cd {} && {}\"",
+        escape_applescript(&cwd_text),
+        escape_applescript(binary_path)
+      ),
+      "end tell",
+    ]
+    .join("\n");
+
+    let output = create_command("osascript")
+      .arg("-e")
+      .arg(script)
+      .output()
+      .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+      return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    return Ok(format!("{} 已在 Terminal 中启动", tool_label));
+  }
+
+  if cfg!(target_os = "windows") {
+    create_command("cmd.exe")
+      .args([
+        "/c", "start", "", "cmd", "/k",
+        &format!("cd /d \"{}\" && \"{}\"", cwd_text, binary_path),
+      ])
+      .spawn()
+      .map_err(|error| error.to_string())?;
+    return Ok(format!("{} 已在新命令窗口中启动", tool_label));
+  }
+
+  let terminals = vec![
+    ("x-terminal-emulator", vec!["-e".to_string(), format!("bash -lc \"cd '{}' && '{}'\"", cwd_text, binary_path)]),
+    ("gnome-terminal", vec!["--".to_string(), "bash".to_string(), "-lc".to_string(), format!("cd '{}' && '{}'", cwd_text, binary_path)]),
+    ("konsole", vec!["-e".to_string(), "bash".to_string(), "-lc".to_string(), format!("cd '{}' && '{}'", cwd_text, binary_path)]),
+  ];
+
+  for (command, args) in terminals {
+    if command_exists(command).is_none() { continue; }
+    create_command(command).args(args).spawn().map_err(|error| error.to_string())?;
+    return Ok(format!("{} 已在新终端中启动", tool_label));
+  }
+
+  Err(format!("没有找到可用终端，请先手动运行 {}", binary_path))
+}
+
+pub(crate) fn launch_claudecode(body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let cwd = {
+    let input = get_string(&object, "cwd");
+    if input.is_empty() { home_dir()? } else { PathBuf::from(input) }
+  };
+  let binary = find_tool_binary("claude");
+  if !binary.get("installed").and_then(Value::as_bool).unwrap_or(false) {
+    return Err("Claude Code 尚未安装，请先点击安装".to_string());
+  }
+  let bin_path = binary.get("path").and_then(Value::as_str).unwrap_or("claude");
+  let message = launch_terminal_for_tool(&cwd, bin_path, "Claude Code")?;
+  Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
+}

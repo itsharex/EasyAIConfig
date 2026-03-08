@@ -11,6 +11,7 @@ use toml::Value as TomlValue;
 const APP_HOME_DIRNAME: &str = ".codex-config-ui";
 const BACKUPS_DIRNAME: &str = "backups";
 pub(crate) const OPENAI_CODEX_PACKAGE: &str = "@openai/codex";
+pub(crate) const CLAUDE_CODE_PACKAGE: &str = "@anthropic-ai/claude-code";
 
 pub(crate) fn ok(data: Value) -> Value {
   json!({ "ok": true, "data": data })
@@ -30,6 +31,10 @@ pub(crate) fn default_codex_home() -> Result<PathBuf, String> {
     return Ok(PathBuf::from(env_home.trim()));
   }
   Ok(home_dir()?.join(".codex"))
+}
+
+pub(crate) fn claude_code_home() -> Result<PathBuf, String> {
+  Ok(home_dir()?.join(".claude"))
 }
 
 pub(crate) fn app_home() -> Result<PathBuf, String> {
