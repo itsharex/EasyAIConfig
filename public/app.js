@@ -248,9 +248,43 @@ function updateToolSelector() {
   });
 }
 
+// Per-tool form state cache
+const _toolFormCache = {};
+
+function _saveCurrentToolForm() {
+  const toolId = state.activeTool;
+  if (!toolId) return;
+  _toolFormCache[toolId] = {
+    baseUrl: el('baseUrlInput')?.value || '',
+    apiKey: el('apiKeyInput')?.value || '',
+    modelHtml: el('modelSelect')?.innerHTML || '',
+    modelValue: el('modelSelect')?.value || '',
+  };
+}
+
+function _restoreToolForm(toolId) {
+  const cache = _toolFormCache[toolId];
+  if (!cache) return false;
+  const baseUrlInput = el('baseUrlInput');
+  const apiKeyInput = el('apiKeyInput');
+  const modelSelect = el('modelSelect');
+  if (baseUrlInput) baseUrlInput.value = cache.baseUrl;
+  if (apiKeyInput) apiKeyInput.value = cache.apiKey;
+  if (modelSelect) {
+    modelSelect.innerHTML = cache.modelHtml;
+    modelSelect.value = cache.modelValue;
+  }
+  return true;
+}
+
 function setActiveTool(toolId) {
   const tool = state.tools.find(t => t.id === toolId);
   if (!tool || !tool.supported) return;
+  if (toolId === state.activeTool) return; // no-op
+
+  // ── Save current tool's form state ──
+  _saveCurrentToolForm();
+
   state.activeTool = toolId;
   updateToolSelector();
 
@@ -258,7 +292,7 @@ function setActiveTool(toolId) {
   const launchBtn = el('launchBtn');
   if (launchBtn) launchBtn.textContent = `启动 ${tool.name}`;
 
-  // Update quick setup context
+  // UI elements
   const baseUrlField = el('baseUrlInput')?.closest('.field');
   const apiKeyInput = el('apiKeyInput');
   const detectBtn = el('detectBtn');
@@ -270,38 +304,56 @@ function setActiveTool(toolId) {
   const shortcutsRow = document.querySelector('.quick-shortcuts');
 
   if (toolId === 'claudecode') {
-    // Claude Code mode
+    // ── Claude Code mode ──
     if (baseUrlField) baseUrlField.style.display = 'none';
     if (detectField) detectField.style.display = 'none';
-    if (apiKeyInput) {
-      apiKeyInput.placeholder = 'ANTHROPIC_API_KEY (可选，已登录则无需填写)';
-      apiKeyInput.value = '';
-    }
     if (heroTitle) heroTitle.textContent = 'Claude Code 配置';
     if (heroSubtitle) heroSubtitle.textContent = '配置模型与认证方式，支持 claude login 和 API Key。';
     if (sectionTitle) sectionTitle.textContent = 'Claude Code 设置';
     if (shortcutsRow) shortcutsRow.style.display = 'none';
 
-    // Placeholder while loading
+    // Clear Codex values from inputs
+    if (apiKeyInput) {
+      apiKeyInput.value = '';
+      apiKeyInput.placeholder = 'ANTHROPIC_API_KEY (可选，已登录则无需填写)';
+    }
     if (modelSelect) {
       modelSelect.innerHTML = '<option value="">加载中...</option>';
     }
 
-    // Load and prefill
-    loadClaudeCodeQuickState();
+    // Try restore cache first, otherwise load fresh from backend
+    if (!_restoreToolForm('claudecode')) {
+      loadClaudeCodeQuickState();
+    } else {
+      // Still refresh from backend in background
+      loadClaudeCodeQuickState();
+    }
   } else {
-    // Codex mode: restore original UI
+    // ── Codex mode ──
     if (baseUrlField) baseUrlField.style.display = '';
     if (detectField) detectField.style.display = '';
-    if (apiKeyInput) apiKeyInput.placeholder = 'sk-...';
     if (heroTitle) heroTitle.textContent = '最快路径';
     if (heroSubtitle) heroSubtitle.textContent = '用户通常只需要 `URL` 和 `API Key`，这里一步完成。';
     if (sectionTitle) sectionTitle.textContent = '连接配置';
     if (shortcutsRow) shortcutsRow.style.display = '';
 
-    // Restore model selector
-    if (modelSelect) {
-      modelSelect.innerHTML = '<option value="">先检测模型</option>';
+    if (apiKeyInput) {
+      apiKeyInput.placeholder = 'sk-...';
+    }
+
+    // Restore Codex form from cache or from backend state
+    if (!_restoreToolForm('codex')) {
+      // Restore from loaded backend state
+      const baseUrlInput = el('baseUrlInput');
+      if (baseUrlInput && state.current?.config?.base_url) {
+        baseUrlInput.value = state.current.config.base_url;
+      }
+      if (apiKeyInput) {
+        apiKeyInput.value = state.apiKeyField?.maskedValue || '';
+      }
+      if (modelSelect) {
+        modelSelect.innerHTML = '<option value="">先检测模型</option>';
+      }
     }
   }
 }
@@ -1598,6 +1650,12 @@ async function saveConfigOnly() {
 async function saveClaudeCodeConfigOnly() {
   const model = el('modelSelect')?.value || '';
   const apiKey = el('apiKeyInput')?.value?.trim() || '';
+
+  // Safety: don't save OpenAI keys into Claude Code config
+  if (apiKey && apiKey.startsWith('sk-') && apiKey.length > 30) {
+    flash('检测到 OpenAI Key，请勿填入 Claude Code 配置', 'error');
+    return;
+  }
 
   setBusy('saveBtn', true, '保存中...');
   const payload = { model };
