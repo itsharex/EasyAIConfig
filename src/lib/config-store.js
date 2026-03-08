@@ -113,8 +113,9 @@ function codexCandidates() {
       if (line.trim()) paths.add(line.trim());
     }
   }
+  const home = os.homedir();
   const explicit = [
-    '/Users/Open Source Contributor/.npm-global/bin/codex',
+    path.join(home, '.npm-global', 'bin', 'codex'),
     '/usr/local/bin/codex',
     '/opt/homebrew/bin/codex',
   ];
