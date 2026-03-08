@@ -5660,11 +5660,10 @@ button {
   width: 88px;
   height: 88px;
   border-radius: 22px;
-  background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+  background: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8px 32px rgba(59, 130, 246, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.08);
   margin-bottom: 16px;
 }
 
@@ -5878,7 +5877,7 @@ button.about-link-card {
 
 /* ─── Light theme overrides for About page ─── */
 [data-theme="light"] .about-icon-wrap {
-  box-shadow: 0 8px 32px rgba(59, 130, 246, 0.2), 0 0 0 1px rgba(59, 130, 246, 0.08);
+  box-shadow: none;
 }
 
 [data-theme="light"] .about-build {
