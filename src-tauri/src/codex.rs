@@ -1,5 +1,100 @@
+use std::sync::OnceLock;
+
+/// Resolve the user's full shell PATH.
+/// On macOS / Linux, .app bundles don't inherit the login shell PATH,
+/// so we run `$SHELL -lc 'echo $PATH'` to capture it.
+fn full_path_env() -> String {
+  static CACHED: OnceLock<String> = OnceLock::new();
+  CACHED
+    .get_or_init(|| {
+      let current = std::env::var("PATH").unwrap_or_default();
+
+      // On Windows the PATH is usually fine
+      if cfg!(target_os = "windows") {
+        return current;
+      }
+
+      // Try to get PATH from user's login shell
+      let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+      let shell_path = Command::new(&shell)
+        .args(["-lc", "echo $PATH"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+
+      // Build comprehensive PATH with common locations
+      let home = dirs::home_dir()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|| "/Users/unknown".to_string());
+
+      let extra_paths = [
+        format!("{}/.nvm/versions/node/*/bin", home),  // placeholder, expanded below
+        format!("{}/.npm-global/bin", home),
+        format!("{}/.local/bin", home),
+        format!("{}/bin", home),
+        "/opt/homebrew/bin".to_string(),
+        "/opt/homebrew/sbin".to_string(),
+        "/usr/local/bin".to_string(),
+        "/usr/local/sbin".to_string(),
+        "/usr/bin".to_string(),
+        "/bin".to_string(),
+        "/usr/sbin".to_string(),
+        "/sbin".to_string(),
+      ];
+
+      // Also try to find nvm node paths
+      let nvm_dir = format!("{}/.nvm/versions/node", home);
+      let mut nvm_paths = Vec::new();
+      if let Ok(entries) = std::fs::read_dir(&nvm_dir) {
+        for entry in entries.flatten() {
+          let bin = entry.path().join("bin");
+          if bin.is_dir() {
+            nvm_paths.push(bin.to_string_lossy().to_string());
+          }
+        }
+      }
+      // Sort nvm paths in reverse so the latest version comes first
+      nvm_paths.sort();
+      nvm_paths.reverse();
+
+      let mut all_parts: Vec<String> = Vec::new();
+      // shell_path first (highest priority)
+      for p in shell_path.split(':') {
+        if !p.is_empty() {
+          all_parts.push(p.to_string());
+        }
+      }
+      // nvm paths
+      all_parts.extend(nvm_paths);
+      // current PATH
+      for p in current.split(':') {
+        if !p.is_empty() {
+          all_parts.push(p.to_string());
+        }
+      }
+      // extra common paths
+      all_parts.extend(extra_paths.into_iter().filter(|p| !p.contains('*')));
+
+      // Deduplicate while preserving order
+      let mut seen = std::collections::HashSet::new();
+      all_parts.retain(|p| seen.insert(p.clone()));
+
+      all_parts.join(":")
+    })
+    .clone()
+}
+
+/// Create a Command with the full PATH environment set
+fn create_command(program: &str) -> Command {
+  let mut cmd = Command::new(program);
+  cmd.env("PATH", full_path_env());
+  cmd
+}
+
 fn run_command(command: &str, args: &[&str], cwd: Option<&Path>) -> Result<Value, String> {
-  let mut cmd = Command::new(command);
+  let mut cmd = create_command(command);
   cmd.args(args);
   if let Some(dir) = cwd {
     cmd.current_dir(dir);
@@ -16,6 +111,8 @@ fn run_command(command: &str, args: &[&str], cwd: Option<&Path>) -> Result<Value
 }
 
 fn command_exists(command: &str) -> Option<String> {
+  // Set PATH before using which
+  std::env::set_var("PATH", full_path_env());
   which::which(command).ok().map(|path| path.to_string_lossy().to_string())
 }
 
@@ -41,7 +138,7 @@ pub(crate) fn find_codex_binary() -> Value {
   let mut candidates = codex_candidates()
     .into_iter()
     .filter_map(|candidate_path| {
-      let output = Command::new(&candidate_path).arg("--version").output().ok()?;
+      let output = create_command(&candidate_path).arg("--version").output().ok()?;
       if !output.status.success() {
         return None;
       }
@@ -117,7 +214,7 @@ fn launch_terminal_command(cwd: &Path) -> Result<String, String> {
     ]
     .join("\n");
 
-    let output = Command::new("osascript")
+    let output = create_command("osascript")
       .arg("-e")
       .arg(script)
       .output()
@@ -129,7 +226,7 @@ fn launch_terminal_command(cwd: &Path) -> Result<String, String> {
   }
 
   if cfg!(target_os = "windows") {
-    Command::new("cmd.exe")
+    create_command("cmd.exe")
       .args([
         "/c",
         "start",
@@ -153,7 +250,7 @@ fn launch_terminal_command(cwd: &Path) -> Result<String, String> {
     if command_exists(command).is_none() {
       continue;
     }
-    Command::new(command)
+    create_command(command)
       .args(args)
       .spawn()
       .map_err(|error| error.to_string())?;
@@ -229,7 +326,7 @@ pub(crate) fn check_setup_environment(query: &Value) -> Result<Value, String> {
   };
 
   // 1. Check Node.js
-  let node_output = Command::new("node").arg("--version").output();
+  let node_output = create_command("node").arg("--version").output();
   let (node_installed, node_version, node_major) = match node_output {
     Ok(output) if output.status.success() => {
       let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -245,7 +342,7 @@ pub(crate) fn check_setup_environment(query: &Value) -> Result<Value, String> {
   };
 
   // 2. Check npm
-  let npm_output = Command::new(npm_command()).arg("--version").output();
+  let npm_output = create_command(npm_command()).arg("--version").output();
   let (npm_installed, npm_version) = match npm_output {
     Ok(output) if output.status.success() => {
       let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
