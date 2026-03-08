@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" width="96" height="96" alt="EasyAIConfig" />
+  <img src="assets/logo.png" width="96" height="96" alt="EasyAIConfig" />
 </p>
 
 <h1 align="center">EasyAIConfig</h1>
