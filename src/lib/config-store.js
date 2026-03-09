@@ -8,6 +8,10 @@ import { detectProvider } from './provider-check.js';
 const APP_HOME_DIRNAME = '.codex-config-ui';
 const BACKUPS_DIRNAME = 'backups';
 const OPENAI_CODEX_PACKAGE = '@openai/codex';
+const OPENCLAW_INSTALL_TASK_TTL_MS = 30 * 60 * 1000;
+const OPENCLAW_INSTALL_TASKS = new Map();
+
+let openclawInstallTaskSeq = 0;
 
 /* ═══════════════  Tool Registry  ═══════════════ */
 const TOOL_REGISTRY = {
@@ -46,17 +50,18 @@ const TOOL_REGISTRY = {
   openclaw: {
     id: 'openclaw',
     name: 'OpenClaw',
-    description: '开源 AI 编程代理',
+    description: '开源多渠道 AI 助手平台',
     configHome: () => path.join(os.homedir(), '.openclaw'),
     configFormat: 'json',
-    configFileName: 'config.json',
+    configFileName: 'openclaw.json',
     envFileName: '.env',
     binaryName: 'openclaw',
-    npmPackage: null,
-    installMethod: 'npm',
+    npmPackage: 'openclaw',
+    installMethod: 'multi',
     providerKeyField: 'provider',
     projectConfigDir: '.openclaw',
-    supported: false,
+    supported: true,
+    installMethods: ['script', 'npm', 'source', 'docker'],
   },
 };
 
@@ -182,6 +187,245 @@ function runCommand(command, args, options = {}) {
       resolve({ ok: code === 0, code, stdout, stderr });
     });
   });
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function cleanupOpenClawInstallTasks() {
+  const now = Date.now();
+  for (const [taskId, task] of OPENCLAW_INSTALL_TASKS.entries()) {
+    if (task.status !== 'running' && (now - task.updatedAtTs) > OPENCLAW_INSTALL_TASK_TTL_MS) {
+      OPENCLAW_INSTALL_TASKS.delete(taskId);
+    }
+  }
+  while (OPENCLAW_INSTALL_TASKS.size > 12) {
+    const removable = [...OPENCLAW_INSTALL_TASKS.entries()].find(([, task]) => task.status !== 'running');
+    if (!removable) break;
+    OPENCLAW_INSTALL_TASKS.delete(removable[0]);
+  }
+}
+
+function openClawInstallStepTemplate(method) {
+  if (method === 'script') {
+    return [
+      { key: 'preflight', title: '检查运行环境', description: '确认脚本安装所需命令可用', hint: '这一步在确认系统具备安装条件，你不用操作。', progress: 8 },
+      { key: 'download', title: '下载官方安装器', description: '从 OpenClaw 官方地址拉取安装脚本', hint: '如果网络慢，这一步可能停留几十秒，属于正常现象。', progress: 24 },
+      { key: 'install', title: '执行安装脚本', description: '安装器正在写入程序和命令入口', hint: '看到日志滚动代表仍在工作，请不要关闭窗口。', progress: 62 },
+      { key: 'verify', title: '验证命令是否可用', description: '检查 `openclaw` 是否已能直接运行', hint: '已经接近完成，正在做最后确认。', progress: 88 },
+      { key: 'done', title: '整理下一步引导', description: '安装完成，准备告诉你接下来做什么', hint: '安装结束后，我会直接告诉你下一步。', progress: 100 },
+    ];
+  }
+
+  return [
+    { key: 'preflight', title: '检查 Node.js / npm', description: '确认 npm 全局安装环境可用', hint: '这一步在确认本机能执行 npm 安装。', progress: 8 },
+    { key: 'download', title: '下载 OpenClaw 包', description: 'npm 正在获取安装包和依赖信息', hint: '如果网络慢，这一步可能较久，不代表卡死。', progress: 26 },
+    { key: 'install', title: '全局安装 OpenClaw', description: 'npm 正在把 OpenClaw 安装到全局环境', hint: '安装过程可能没有持续输出，请耐心等待。', progress: 64 },
+    { key: 'verify', title: '验证命令是否可用', description: '检查 `openclaw` 命令和版本', hint: '已经接近完成，正在做最终验证。', progress: 88 },
+    { key: 'done', title: '整理下一步引导', description: '安装完成，准备告诉你接下来做什么', hint: '安装结束后，我会直接告诉你下一步。', progress: 100 },
+  ];
+}
+
+function createOpenClawInstallTask({ method, command }) {
+  cleanupOpenClawInstallTasks();
+  const steps = openClawInstallStepTemplate(method).map((step, index) => ({ ...step, status: index === 0 ? 'running' : 'pending' }));
+  const startedAt = nowIso();
+  const task = {
+    id: `openclaw-install-${Date.now()}-${openclawInstallTaskSeq += 1}`,
+    toolId: 'openclaw',
+    type: 'install',
+    method,
+    command,
+    status: 'running',
+    progress: 4,
+    stepIndex: 0,
+    summary: steps[0].description,
+    hint: steps[0].hint,
+    detail: '正在准备安装任务…',
+    steps,
+    logs: [],
+    stdout: '',
+    stderr: '',
+    startedAt,
+    updatedAt: startedAt,
+    updatedAtTs: Date.now(),
+    completedAt: null,
+    version: null,
+    error: null,
+    nextActions: [],
+    _stdoutBuffer: '',
+    _stderrBuffer: '',
+  };
+  OPENCLAW_INSTALL_TASKS.set(task.id, task);
+  return task;
+}
+
+function serializeOpenClawInstallTask(task) {
+  return {
+    taskId: task.id,
+    toolId: task.toolId,
+    type: task.type,
+    method: task.method,
+    command: task.command,
+    status: task.status,
+    progress: task.progress,
+    stepIndex: task.stepIndex,
+    summary: task.summary,
+    hint: task.hint,
+    detail: task.detail,
+    steps: task.steps,
+    logs: task.logs.slice(-14),
+    startedAt: task.startedAt,
+    updatedAt: task.updatedAt,
+    completedAt: task.completedAt,
+    version: task.version,
+    error: task.error,
+    nextActions: task.nextActions,
+  };
+}
+
+function touchOpenClawInstallTask(task) {
+  task.updatedAt = nowIso();
+  task.updatedAtTs = Date.now();
+}
+
+function setOpenClawInstallStep(task, stepIndex, overrides = {}) {
+  const safeStepIndex = Math.max(0, Math.min(stepIndex, task.steps.length - 1));
+  if (safeStepIndex < task.stepIndex) return;
+  task.stepIndex = safeStepIndex;
+  task.progress = Math.max(task.progress, overrides.progress ?? task.steps[safeStepIndex].progress ?? task.progress);
+  task.summary = overrides.summary || task.steps[safeStepIndex].description;
+  task.hint = overrides.hint || task.steps[safeStepIndex].hint;
+  if (overrides.detail) task.detail = overrides.detail;
+  task.steps = task.steps.map((step, index) => ({
+    ...step,
+    status: index < safeStepIndex ? 'done' : index === safeStepIndex ? (overrides.status || 'running') : 'pending',
+  }));
+  touchOpenClawInstallTask(task);
+}
+
+function pushOpenClawInstallLog(task, source, line) {
+  const text = String(line || '').replace(/\u001b\[[0-9;]*m/g, '').trim();
+  if (!text) return;
+  task.logs.push({ source, text, at: nowIso() });
+  if (task.logs.length > 120) task.logs.shift();
+  task.detail = text;
+  touchOpenClawInstallTask(task);
+}
+
+function inferOpenClawInstallStep(task, line) {
+  const text = String(line || '').toLowerCase();
+  if (!text) return;
+  if (task.method === 'script') {
+    if (/(curl|download|fetch|https?:\/\/)/.test(text)) setOpenClawInstallStep(task, 1, { detail: line });
+    if (/(install|extract|copy|link|binary|daemon|openclaw)/.test(text)) setOpenClawInstallStep(task, 2, { detail: line });
+    if (/(done|complete|success|finished|installed)/.test(text)) setOpenClawInstallStep(task, 3, { detail: line });
+    return;
+  }
+  if (/(fetch|tarball|manifest|registry|http)/.test(text)) setOpenClawInstallStep(task, 1, { detail: line });
+  if (/(install|added|changed|build|postinstall|preinstall|link|reify)/.test(text)) setOpenClawInstallStep(task, 2, { detail: line });
+  if (/(audited|funding|done|success|installed)/.test(text)) setOpenClawInstallStep(task, 3, { detail: line });
+}
+
+function consumeOpenClawInstallChunk(task, source, chunk) {
+  const bufferKey = source === 'stderr' ? '_stderrBuffer' : '_stdoutBuffer';
+  const text = String(chunk || '');
+  task[source] += text;
+  const merged = `${task[bufferKey] || ''}${text}`;
+  const lines = merged.split(/\r?\n/);
+  task[bufferKey] = lines.pop() || '';
+  for (const line of lines) {
+    pushOpenClawInstallLog(task, source, line);
+    inferOpenClawInstallStep(task, line);
+  }
+}
+
+function flushOpenClawInstallChunk(task) {
+  for (const bufferKey of ['_stdoutBuffer', '_stderrBuffer']) {
+    const source = bufferKey === '_stdoutBuffer' ? 'stdout' : 'stderr';
+    if (!task[bufferKey]) continue;
+    pushOpenClawInstallLog(task, source, task[bufferKey]);
+    inferOpenClawInstallStep(task, task[bufferKey]);
+    task[bufferKey] = '';
+  }
+}
+
+function runTrackedCommand(task, command, args, options = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: { ...process.env, ...(options.env || {}) },
+      shell: false,
+    });
+
+    child.stdout?.on('data', (chunk) => consumeOpenClawInstallChunk(task, 'stdout', chunk));
+    child.stderr?.on('data', (chunk) => consumeOpenClawInstallChunk(task, 'stderr', chunk));
+    child.on('error', (error) => {
+      pushOpenClawInstallLog(task, 'stderr', error.message);
+      resolve({ ok: false, code: null, stdout: task.stdout, stderr: `${task.stderr}${error.message}` });
+    });
+    child.on('close', (code) => {
+      flushOpenClawInstallChunk(task);
+      resolve({ ok: code === 0, code, stdout: task.stdout, stderr: task.stderr });
+    });
+  });
+}
+
+function finishOpenClawInstallTask(task, status, payload = {}) {
+  task.status = status;
+  task.progress = status === 'success' ? 100 : task.progress;
+  task.version = payload.version || task.version || null;
+  task.error = payload.error || null;
+  task.nextActions = payload.nextActions || [];
+  task.completedAt = nowIso();
+  touchOpenClawInstallTask(task);
+}
+
+async function runOpenClawInstallTask(task) {
+  const isScript = task.method === 'script';
+  const command = isScript
+    ? (process.platform === 'win32' ? 'powershell' : 'bash')
+    : npmCommand();
+  const args = isScript
+    ? (process.platform === 'win32' ? ['-Command', 'iwr -useb https://openclaw.ai/install.ps1 | iex'] : ['-lc', 'curl -fsSL https://openclaw.ai/install.sh | bash'])
+    : ['install', '-g', 'openclaw@latest'];
+
+  try {
+    if (isScript && process.platform !== 'win32' && !commandExists('curl')) {
+      throw new Error('未检测到 `curl`，无法执行脚本安装。请先安装 curl，或改用 npm 安装。');
+    }
+    if (!isScript) {
+      const nodeResult = spawnSync('node', ['--version'], { encoding: 'utf8' });
+      const npmResult = spawnSync(npmCommand(), ['--version'], { encoding: 'utf8' });
+      if (nodeResult.status !== 0) throw new Error('未检测到 Node.js，请先安装 Node.js 18+。');
+      if (npmResult.status !== 0) throw new Error('未检测到 npm，请先修复 npm 环境后重试。');
+      pushOpenClawInstallLog(task, 'stdout', `Node.js ${String(nodeResult.stdout || '').trim()} / npm ${String(npmResult.stdout || '').trim()}`);
+    }
+
+    setOpenClawInstallStep(task, 1, { detail: `即将执行：${task.command}` });
+    const result = await runTrackedCommand(task, command, args);
+    if (!result.ok) throw new Error(result.stderr || `安装命令退出码：${result.code}`);
+
+    setOpenClawInstallStep(task, 3, { detail: '安装命令已执行完成，正在验证 openclaw 命令…' });
+    const binary = findToolBinary('openclaw');
+    if (!binary.installed) throw new Error('安装命令已执行完成，但系统里仍未找到 `openclaw` 命令。');
+
+    setOpenClawInstallStep(task, 4, { status: 'done', summary: 'OpenClaw 安装完成，已经可以使用。', detail: binary.version ? `已检测到版本：${binary.version}` : '已检测到 openclaw 命令。' });
+    finishOpenClawInstallTask(task, 'success', {
+      version: binary.version,
+      nextActions: ['下一步 1：点击“启动 OpenClaw”打开工具。', '下一步 2：首次使用建议执行 `openclaw onboard --install-daemon`。', '下一步 3：如需改配置，可编辑 `~/.openclaw/openclaw.json`。'],
+    });
+  } catch (error) {
+    task.steps = task.steps.map((step, index) => ({ ...step, status: index < task.stepIndex ? 'done' : index === task.stepIndex ? 'error' : 'pending' }));
+    task.summary = 'OpenClaw 安装失败，需要你看一眼错误提示。';
+    task.hint = '先看下方“最后日志”，通常会直接告诉你缺的是网络、权限还是依赖。';
+    task.detail = error instanceof Error ? error.message : String(error);
+    finishOpenClawInstallTask(task, 'error', {
+      error: error instanceof Error ? error.message : String(error),
+      nextActions: ['先确认网络能访问 npm 或 openclaw.ai。', '如果脚本安装失败，可改用 npm 安装。', '如果 npm 安装失败，请检查 Node.js / npm 是否正常。'],
+    });
+  }
 }
 
 function parseVersionString(text) {
@@ -591,8 +835,8 @@ async function createBackup({ configPath, envPath, scope }) {
   return targetDir;
 }
 
-function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabel = 'Codex' } = {}) {
-  const bin = binaryPath || binaryName;
+function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabel = 'Codex', commandText = '' } = {}) {
+  const bin = commandText || binaryPath || binaryName;
   const escapedCwd = String(cwd).replace(/([\\"$])/g, '\\$1');
   const escapedBin = String(bin).replace(/([\\"$])/g, '\\$1');
 
@@ -634,7 +878,23 @@ function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabe
     return `${toolLabel} 已在新终端中启动`;
   }
 
-  throw new Error(`没有找到可用终端，请先手动运行 ${binaryName}`);
+  throw new Error(`没有找到可用终端，请先手动运行 ${commandText || binaryName}`);
+}
+
+async function checkOpenClawGatewayReachable(gatewayUrl) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1800);
+    const response = await fetch(gatewayUrl, {
+      method: 'GET',
+      redirect: 'manual',
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    return response.status > 0;
+  } catch {
+    return false;
+  }
 }
 
 export async function checkSetupEnvironment({ codexHome = defaultCodexHome() } = {}) {
@@ -747,6 +1007,58 @@ export async function loadState({ scope = 'global', projectPath = '', codexHome 
   }
 }
 
+/**
+ * Read relevant environment variables from the local system for provider auto-detection.
+ * Scans process.env, .env files, and auth.json for ANTHROPIC_*, OPENAI_*, CODEX_* keys.
+ */
+export async function readLocalEnvVars({ codexHome = defaultCodexHome() } = {}) {
+  const normalizedCodexHome = path.resolve(codexHome);
+  const envFilePath = path.join(normalizedCodexHome, '.env');
+  const envContent = await readText(envFilePath);
+  const envFileVars = parseEnv(envContent);
+  const authJson = await readAuthJson(normalizedCodexHome);
+
+  const ENV_PREFIXES = ['ANTHROPIC_', 'OPENAI_', 'CODEX_', 'CLAUDE_'];
+  const result = {};
+
+  // Collect from process.env
+  for (const [key, value] of Object.entries(process.env)) {
+    if (ENV_PREFIXES.some(prefix => key.startsWith(prefix)) && value) {
+      result[key] = {
+        value,
+        masked: maskSecretValue(value),
+        source: 'system-env',
+      };
+    }
+  }
+
+  // Collect from .env file (overrides system env display)
+  for (const [key, value] of Object.entries(envFileVars)) {
+    if (ENV_PREFIXES.some(prefix => key.startsWith(prefix)) && value) {
+      result[key] = {
+        value,
+        masked: maskSecretValue(value),
+        source: '.env',
+      };
+    }
+  }
+
+  // Collect from auth.json
+  for (const [key, value] of Object.entries(authJson)) {
+    if (typeof value === 'string' && value && ENV_PREFIXES.some(prefix => key.startsWith(prefix))) {
+      if (!result[key]) {
+        result[key] = {
+          value,
+          masked: maskSecretValue(value),
+          source: 'auth.json',
+        };
+      }
+    }
+  }
+
+  return result;
+}
+
 export async function getProviderSecret({ scope = 'global', projectPath = '', codexHome = defaultCodexHome(), providerKey = '' } = {}) {
   const safeProviderKey = String(providerKey || '').trim();
   if (!safeProviderKey) {
@@ -809,7 +1121,9 @@ export async function saveConfig(payload) {
   ]);
 
   const config = parseToml(configContent);
+  const originalConfig = structuredClone(config);
   const env = parseEnv(envContent);
+  const originalEnv = { ...env };
   const baseUrl = normalizeBaseUrl(payload.baseUrl);
   const apiKey = String(payload.apiKey || '').trim();
   const providerKey = slugifyProviderKey(payload.providerKey || inferProviderSeed(baseUrl));
@@ -830,27 +1144,42 @@ export async function saveConfig(payload) {
     config.model_providers = {};
   }
 
-  config.model_providers[providerKey] = {
+  const nextProvider = {
     ...currentProvider,
     name: providerLabel,
     base_url: baseUrl,
     env_key: envKey,
-    wire_api: 'responses',
   };
+  if (!nextProvider.wire_api) {
+    nextProvider.wire_api = 'responses';
+  }
+  config.model_providers[providerKey] = nextProvider;
 
   if (apiKey && envKey) {
     env[envKey] = apiKey;
   }
 
-  const backupPath = await createBackup(paths);
-  await writeText(paths.configPath, TOML.stringify(config));
-  await writeText(paths.envPath, stringifyEnv(env));
+  const configChanged = JSON.stringify(config) !== JSON.stringify(originalConfig);
+  const envChanged = JSON.stringify(env) !== JSON.stringify(originalEnv);
+  const needsWrite = configChanged || envChanged;
+  const backupPath = needsWrite ? await createBackup(paths) : null;
+
+  if (configChanged) {
+    await writeText(paths.configPath, TOML.stringify(config));
+  }
+  if (envChanged) {
+    await writeText(paths.envPath, stringifyEnv(env));
+  }
 
   return {
     saved: true,
     backupPath,
     paths,
     activeProvider: providerKey,
+    changed: {
+      config: configChanged,
+      env: envChanged,
+    },
   };
 }
 
@@ -864,15 +1193,20 @@ export async function saveSettings(payload) {
 
   const configContent = await readText(paths.configPath);
   const config = parseToml(configContent);
+  const originalConfig = structuredClone(config);
   applyPatch(config, payload.settings || {});
 
-  const backupPath = await createBackup(paths);
-  await writeText(paths.configPath, TOML.stringify(config));
+  const changed = JSON.stringify(config) !== JSON.stringify(originalConfig);
+  const backupPath = changed ? await createBackup(paths) : null;
+  if (changed) {
+    await writeText(paths.configPath, TOML.stringify(config));
+  }
 
   return {
     saved: true,
     backupPath,
     paths,
+    changed,
   };
 }
 
@@ -884,25 +1218,29 @@ export async function saveRawConfig(payload) {
     codexHome,
   });
 
-  const configToml = String(payload.configToml || '').trim();
-  if (!configToml) {
+  const configToml = String(payload.configToml || '');
+  if (!configToml.trim()) {
     throw new Error('config.toml 内容不能为空');
   }
 
-  let parsed;
   try {
-    parsed = TOML.parse(configToml);
+    TOML.parse(configToml);
   } catch (error) {
     throw new Error(`TOML 解析失败：${error instanceof Error ? error.message : String(error)}`);
   }
 
-  const backupPath = await createBackup(paths);
-  await writeText(paths.configPath, TOML.stringify(parsed));
+  const currentContent = await readText(paths.configPath);
+  const changed = currentContent !== configToml;
+  const backupPath = changed ? await createBackup(paths) : null;
+  if (changed) {
+    await writeText(paths.configPath, configToml);
+  }
 
   return {
     saved: true,
     backupPath,
     paths,
+    changed,
   };
 }
 
@@ -1139,4 +1477,261 @@ export async function launchClaudeCode({ cwd } = {}) {
     toolLabel: 'Claude Code',
   });
   return { ok: true, cwd: targetCwd, message };
+}
+
+/* ═══════════════  OpenClaw  ═══════════════ */
+
+function openclawHome() {
+  return path.join(os.homedir(), '.openclaw');
+}
+
+export async function loadOpenClawState() {
+  const home = openclawHome();
+  const configPath = path.join(home, 'openclaw.json');
+  const binary = findToolBinary('openclaw');
+
+  let config = {};
+  const raw = await readText(configPath);
+  const configExists = Boolean(raw.trim());
+  if (raw.trim()) {
+    try { config = JSON.parse(raw); } catch { /* ignore */ }
+  }
+
+  const gatewayPort = process.env.OPENCLAW_GATEWAY_PORT || '18789';
+  const gatewayUrl = `http://127.0.0.1:${gatewayPort}/`;
+  const gatewayReachable = await checkOpenClawGatewayReachable(gatewayUrl);
+  const needsOnboarding = binary.installed && (!configExists || !gatewayReachable);
+
+  return {
+    toolId: 'openclaw',
+    configHome: home,
+    configPath,
+    configExists,
+    config,
+    configJson: JSON.stringify(config, null, 2),
+    binary,
+    gatewayToken: process.env.OPENCLAW_GATEWAY_TOKEN || null,
+    gatewayPort,
+    gatewayUrl,
+    gatewayReachable,
+    needsOnboarding,
+    installMethods: ['script', 'npm', 'source', 'docker'],
+  };
+}
+
+export async function saveOpenClawConfig({ configJson }) {
+  if (!configJson || !configJson.trim()) throw new Error('配置内容不能为空');
+  let parsed;
+  try { parsed = JSON.parse(configJson); } catch (e) {
+    throw new Error(`JSON 解析失败：${e.message}`);
+  }
+  const home = openclawHome();
+  const configPath = path.join(home, 'openclaw.json');
+  await ensureDir(home);
+  await writeText(configPath, JSON.stringify(parsed, null, 2) + '\n');
+  return { saved: true, configPath };
+}
+
+export async function startOpenClawInstallTask({ method = 'npm' } = {}) {
+  if (!['script', 'npm'].includes(method)) {
+    throw new Error('只有脚本安装和 npm 安装支持实时进度追踪');
+  }
+
+  const command = method === 'script'
+    ? (process.platform === 'win32' ? 'iwr -useb https://openclaw.ai/install.ps1 | iex' : 'curl -fsSL https://openclaw.ai/install.sh | bash')
+    : `${npmCommand()} install -g openclaw@latest`;
+
+  const task = createOpenClawInstallTask({ method, command });
+  void runOpenClawInstallTask(task);
+  return serializeOpenClawInstallTask(task);
+}
+
+export async function getOpenClawInstallTask({ taskId } = {}) {
+  cleanupOpenClawInstallTasks();
+  if (!taskId || !OPENCLAW_INSTALL_TASKS.has(taskId)) {
+    throw new Error('安装任务不存在，可能已经过期，请重新开始安装');
+  }
+  return serializeOpenClawInstallTask(OPENCLAW_INSTALL_TASKS.get(taskId));
+}
+
+export async function installOpenClaw({ method = 'npm' } = {}) {
+  if (method === 'script') {
+    if (process.platform === 'win32') {
+      const result = await runCommand('powershell', ['-Command', 'iwr -useb https://openclaw.ai/install.ps1 | iex']);
+      return { ...result, method: 'script', command: 'iwr -useb https://openclaw.ai/install.ps1 | iex' };
+    } else {
+      const result = await runCommand('bash', ['-c', 'curl -fsSL https://openclaw.ai/install.sh | bash']);
+      return { ...result, method: 'script', command: 'curl -fsSL https://openclaw.ai/install.sh | bash' };
+    }
+  }
+  if (method === 'npm') {
+    const result = await runCommand(npmCommand(), ['install', '-g', 'openclaw@latest']);
+    return { ...result, method: 'npm', command: `${npmCommand()} install -g openclaw@latest` };
+  }
+  if (method === 'source') {
+    return {
+      ok: true,
+      method: 'source',
+      instructions: [
+        'git clone https://github.com/openclaw/openclaw.git',
+        'cd openclaw',
+        'pnpm install',
+        'pnpm ui:build',
+        'pnpm build',
+        'pnpm link --global',
+        'openclaw onboard --install-daemon',
+      ],
+      message: '源码构建需要在终端中手动执行以上命令',
+    };
+  }
+  if (method === 'docker') {
+    return {
+      ok: true,
+      method: 'docker',
+      instructions: [
+        'git clone https://github.com/openclaw/openclaw.git',
+        'cd openclaw',
+        './docker-setup.sh',
+      ],
+      message: 'Docker 安装需要在终端中手动执行以上命令',
+    };
+  }
+  throw new Error(`不支持的安装方式：${method}`);
+}
+
+export async function updateOpenClaw() {
+  return runCommand(npmCommand(), ['install', '-g', 'openclaw@latest']);
+}
+
+export async function reinstallOpenClaw() {
+  return runCommand(npmCommand(), ['install', '-g', 'openclaw', '--force']);
+}
+
+export async function uninstallOpenClaw({ purge = false } = {}) {
+  // If purge requested, remove the OpenClaw data directory (~/.openclaw)
+  let purgedPaths = [];
+  if (purge) {
+    const home = openclawHome();
+    try {
+      await fs.rm(home, { recursive: true, force: true });
+      purgedPaths.push(home);
+    } catch { /* directory may not exist, that's fine */ }
+  }
+  const result = await runCommand(npmCommand(), ['uninstall', '-g', 'openclaw']);
+  return { ...result, purge, purgedPaths };
+}
+
+export async function launchOpenClaw({ cwd } = {}) {
+  const targetCwd = path.resolve(cwd || process.cwd());
+  const state = await loadOpenClawState();
+  const binary = state.binary;
+  if (!binary?.installed) {
+    throw new Error('OpenClaw 尚未安装，请先选择安装方式进行安装');
+  }
+
+  if (!state.configExists) {
+    const onboard = await onboardOpenClaw({ cwd: targetCwd });
+    return { ...onboard, mode: 'onboard', gatewayUrl: state.gatewayUrl };
+  }
+
+  if (state.gatewayReachable) {
+    return {
+      ok: true,
+      cwd: targetCwd,
+      mode: 'dashboard',
+      gatewayUrl: state.gatewayUrl,
+      message: 'OpenClaw Dashboard 已准备好',
+    };
+  }
+
+  const binaryPath = binary.path || 'openclaw';
+  const commandText = `${binaryPath} gateway start || ${binaryPath} gateway`;
+  const message = launchTerminalCommand(targetCwd, {
+    commandText,
+    binaryName: 'openclaw gateway',
+    toolLabel: 'OpenClaw Gateway',
+  });
+  return { ok: true, cwd: targetCwd, mode: 'gateway', gatewayUrl: state.gatewayUrl, command: commandText, message };
+}
+
+export async function onboardOpenClaw({ cwd, authChoice, apiKey, apiKeyType } = {}) {
+  const targetCwd = path.resolve(cwd || process.cwd());
+  const binary = findToolBinary('openclaw');
+  if (!binary.installed) {
+    throw new Error('OpenClaw 尚未安装，请先完成安装');
+  }
+  const binPath = binary.path || 'openclaw';
+
+  // Build non-interactive command args
+  const args = [
+    'onboard',
+    '--non-interactive',
+    '--accept-risk',
+    '--flow', 'quickstart',
+    '--install-daemon',
+    '--skip-channels',
+    '--skip-skills',
+    '--skip-search',
+    '--json',
+  ];
+
+  // If user provided an auth choice + API key, pass them
+  if (authChoice && authChoice !== 'skip') {
+    args.push('--auth-choice', authChoice);
+    if (apiKey) {
+      // Map common auth choices to their flag names
+      const keyFlagMap = {
+        'anthropic': '--anthropic-api-key',
+        'apiKey': '--custom-api-key',
+        'openai-api-key': '--openai-api-key',
+        'openrouter-api-key': '--openrouter-api-key',
+        'gemini-api-key': '--gemini-api-key',
+        'mistral-api-key': '--mistral-api-key',
+        'together-api-key': '--together-api-key',
+        'xai-api-key': '--xai-api-key',
+        'custom-api-key': '--custom-api-key',
+      };
+      const flag = keyFlagMap[authChoice] || keyFlagMap[apiKeyType] || '--custom-api-key';
+      args.push(flag, apiKey);
+    }
+  } else {
+    args.push('--auth-choice', 'skip');
+  }
+
+  const commandText = `${binPath} ${args.join(' ')}`;
+
+  // Run directly as child process (not in terminal)
+  const { execFileSync } = await import('child_process');
+  let stdout = '';
+  let stderr = '';
+  try {
+    stdout = execFileSync(binPath, args, {
+      cwd: targetCwd,
+      timeout: 60000,
+      maxBuffer: 1024 * 1024,
+      encoding: 'utf-8',
+    });
+  } catch (err) {
+    stdout = err.stdout || '';
+    stderr = err.stderr || err.message || '';
+  }
+
+  // Try to parse JSON output from the command
+  let jsonResult = null;
+  const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try { jsonResult = JSON.parse(jsonMatch[0]); } catch { /* ignore */ }
+  }
+
+  const success = stdout.includes('Updated') || stdout.includes('openclaw.json') || jsonResult != null;
+
+  return {
+    ok: success,
+    cwd: targetCwd,
+    command: commandText,
+    message: success ? 'OpenClaw 初始化完成' : `初始化可能未完成：${stderr || '请检查日志'}`,
+    stdout: stdout.trim(),
+    stderr: stderr.trim(),
+    result: jsonResult,
+  };
 }

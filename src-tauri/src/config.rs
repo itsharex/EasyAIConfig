@@ -199,7 +199,9 @@ pub(crate) fn save_config(body: &Value) -> Result<Value, String> {
   let config_content = read_text(&paths.config_path)?;
   let env_content = read_text(&paths.env_path)?;
   let mut config = parse_toml_config(&config_content)?;
+  let original_config = config.clone();
   let mut env = parse_env(&env_content);
+  let original_env = env.clone();
   let base_url = normalize_base_url(&get_string(&object, "baseUrl"))?;
   let api_key = get_string(&object, "apiKey");
   let provider_key = slugify_provider_key(&{
@@ -263,20 +265,33 @@ pub(crate) fn save_config(body: &Value) -> Result<Value, String> {
     *providers = json!({});
   }
   let providers_object = providers.as_object_mut().expect("providers object");
-  providers_object.insert(provider_key.clone(), json!({
-    "name": provider_label,
-    "base_url": base_url,
-    "env_key": env_key,
-    "wire_api": "responses",
-  }));
+  let mut next_provider = current_provider.clone();
+  next_provider.insert("name".to_string(), json!(provider_label));
+  next_provider.insert("base_url".to_string(), json!(base_url));
+  next_provider.insert("env_key".to_string(), json!(env_key.clone()));
+  if !next_provider.contains_key("wire_api") {
+    next_provider.insert("wire_api".to_string(), json!("responses"));
+  }
+  providers_object.insert(provider_key.clone(), Value::Object(next_provider));
 
   if !api_key.trim().is_empty() && !env_key.trim().is_empty() {
     env.insert(env_key.clone(), api_key.trim().to_string());
   }
 
-  let backup_path = create_backup(&paths)?;
-  write_text(&paths.config_path, &stringify_toml_config(&config)?)?;
-  write_text(&paths.env_path, &stringify_env(&env))?;
+  let config_changed = config != original_config;
+  let env_changed = env != original_env;
+  let needs_write = config_changed || env_changed;
+  let backup_path = if needs_write {
+    Some(create_backup(&paths)?)
+  } else {
+    None
+  };
+  if config_changed {
+    write_text(&paths.config_path, &stringify_toml_config(&config)?)?;
+  }
+  if env_changed {
+    write_text(&paths.env_path, &stringify_env(&env))?;
+  }
 
   Ok(json!({
     "saved": true,
@@ -288,6 +303,10 @@ pub(crate) fn save_config(body: &Value) -> Result<Value, String> {
       "envPath": paths.env_path.to_string_lossy().to_string(),
     },
     "activeProvider": provider_key,
+    "changed": {
+      "config": config_changed,
+      "env": env_changed,
+    },
   }))
 }
 
@@ -302,10 +321,18 @@ pub(crate) fn save_settings(body: &Value) -> Result<Value, String> {
   let paths = scope_paths(if scope.is_empty() { "global" } else { &scope }, &project_path, &codex_home)?;
   let config_content = read_text(&paths.config_path)?;
   let mut config = parse_toml_config(&config_content)?;
+  let original_config = config.clone();
   apply_patch(&mut config, object.get("settings").unwrap_or(&json!({})));
 
-  let backup_path = create_backup(&paths)?;
-  write_text(&paths.config_path, &stringify_toml_config(&config)?)?;
+  let changed = config != original_config;
+  let backup_path = if changed {
+    Some(create_backup(&paths)?)
+  } else {
+    None
+  };
+  if changed {
+    write_text(&paths.config_path, &stringify_toml_config(&config)?)?;
+  }
 
   Ok(json!({
     "saved": true,
@@ -315,7 +342,8 @@ pub(crate) fn save_settings(body: &Value) -> Result<Value, String> {
       "rootPath": paths.root_path.to_string_lossy().to_string(),
       "configPath": paths.config_path.to_string_lossy().to_string(),
       "envPath": paths.env_path.to_string_lossy().to_string(),
-    }
+    },
+    "changed": changed,
   }))
 }
 
@@ -333,9 +361,17 @@ pub(crate) fn save_raw_config(body: &Value) -> Result<Value, String> {
     return Err("config.toml 内容不能为空".to_string());
   }
 
-  let parsed = config_toml.parse::<TomlValue>().map_err(|error| format!("TOML 解析失败：{error}"))?;
-  let backup_path = create_backup(&paths)?;
-  write_text(&paths.config_path, &toml::to_string_pretty(&parsed).map_err(|error| error.to_string())?)?;
+  config_toml.parse::<TomlValue>().map_err(|error| format!("TOML 解析失败：{error}"))?;
+  let current_content = read_text(&paths.config_path)?;
+  let changed = current_content != config_toml;
+  let backup_path = if changed {
+    Some(create_backup(&paths)?)
+  } else {
+    None
+  };
+  if changed {
+    write_text(&paths.config_path, &config_toml)?;
+  }
 
   Ok(json!({
     "saved": true,
@@ -345,7 +381,8 @@ pub(crate) fn save_raw_config(body: &Value) -> Result<Value, String> {
       "rootPath": paths.root_path.to_string_lossy().to_string(),
       "configPath": paths.config_path.to_string_lossy().to_string(),
       "envPath": paths.env_path.to_string_lossy().to_string(),
-    }
+    },
+    "changed": changed,
   }))
 }
 

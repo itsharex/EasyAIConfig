@@ -759,6 +759,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-log",
  "tauri-plugin-updater",
+ "tokio",
  "toml 0.8.2",
  "url",
  "which",

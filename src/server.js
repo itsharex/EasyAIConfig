@@ -11,25 +11,35 @@ import {
   getCodexReleaseInfo,
   installClaudeCode,
   installCodex,
+  installOpenClaw,
+  getOpenClawInstallTask,
+  onboardOpenClaw,
   launchClaudeCode,
   launchCodex,
+  launchOpenClaw,
   listBackups,
   listTools,
   loadClaudeCodeState,
+  loadOpenClawState,
   loadState,
   reinstallClaudeCode,
   reinstallCodex,
+  reinstallOpenClaw,
   restoreBackup,
   saveClaudeCodeConfig,
   saveClaudeCodeRawConfig,
   saveConfig,
+  saveOpenClawConfig,
   saveRawConfig,
   saveSettings,
+  startOpenClawInstallTask,
   testSavedProvider,
   uninstallClaudeCode,
   uninstallCodex,
+  uninstallOpenClaw,
   updateClaudeCode,
   updateCodex,
+  updateOpenClaw,
 } from './lib/config-store.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -245,6 +255,87 @@ export async function startServer() {
   app.post('/api/claudecode/launch', async (req, res) => {
     try {
       ok(res, { data: await launchClaudeCode(req.body || {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  // ─── OpenClaw endpoints ───
+  app.get('/api/openclaw/state', async (_req, res) => {
+    try {
+      ok(res, { data: await loadOpenClawState() });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/openclaw/config-save', async (req, res) => {
+    try {
+      ok(res, { data: await saveOpenClawConfig(req.body || {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/openclaw/install', async (req, res) => {
+    try {
+      ok(res, { data: await installOpenClaw(req.body || {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/openclaw/install/start', async (req, res) => {
+    try {
+      ok(res, { data: await startOpenClawInstallTask(req.body || {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.get('/api/openclaw/install/status', async (req, res) => {
+    try {
+      ok(res, { data: await getOpenClawInstallTask({ taskId: req.query.taskId || '' }) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/openclaw/update', async (_req, res) => {
+    try {
+      ok(res, { data: await updateOpenClaw() });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/openclaw/reinstall', async (_req, res) => {
+    try {
+      ok(res, { data: await reinstallOpenClaw() });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/openclaw/uninstall', async (req, res) => {
+    try {
+      ok(res, { data: await uninstallOpenClaw(req.body || {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/openclaw/launch', async (req, res) => {
+    try {
+      ok(res, { data: await launchOpenClaw(req.body || {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/openclaw/onboard', async (req, res) => {
+    try {
+      ok(res, { data: await onboardOpenClaw(req.body || {}) });
     } catch (error) {
       fail(res, error);
     }

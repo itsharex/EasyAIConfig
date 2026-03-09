@@ -1,8 +1,62 @@
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::OnceLock;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::{Mutex, OnceLock};
+use std::thread;
+
+const OPENCLAW_INSTALL_TASK_KEEP: usize = 12;
+
+static OPENCLAW_INSTALL_TASK_SEQ: AtomicU64 = AtomicU64::new(1);
+static OPENCLAW_INSTALL_TASKS: OnceLock<Mutex<BTreeMap<String, OpenClawInstallTask>>> = OnceLock::new();
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenClawInstallLog {
+  source: String,
+  text: String,
+  at: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenClawInstallStep {
+  key: String,
+  title: String,
+  description: String,
+  hint: String,
+  progress: u64,
+  status: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenClawInstallTask {
+  task_id: String,
+  tool_id: String,
+  #[serde(rename = "type")]
+  task_type: String,
+  method: String,
+  command: String,
+  status: String,
+  progress: u64,
+  step_index: usize,
+  summary: String,
+  hint: String,
+  detail: String,
+  steps: Vec<OpenClawInstallStep>,
+  logs: Vec<OpenClawInstallLog>,
+  started_at: String,
+  updated_at: String,
+  completed_at: Option<String>,
+  version: Option<String>,
+  error: Option<String>,
+  next_actions: Vec<String>,
+}
 
 /// Resolve the user's full shell PATH.
 /// On macOS / Linux, .app bundles don't inherit the login shell PATH,
@@ -114,6 +168,345 @@ fn run_command(command: &str, args: &[&str], cwd: Option<&Path>) -> Result<Value
   }))
 }
 
+fn openclaw_install_tasks() -> &'static Mutex<BTreeMap<String, OpenClawInstallTask>> {
+  OPENCLAW_INSTALL_TASKS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn now_rfc3339() -> String {
+  chrono::Utc::now().to_rfc3339()
+}
+
+fn openclaw_install_steps(method: &str) -> Vec<OpenClawInstallStep> {
+  let specs = if method == "script" {
+    vec![
+      ("preflight", "检查运行环境", "确认脚本安装所需命令可用", "这一步在确认系统具备安装条件，你不用操作。", 8_u64),
+      ("download", "下载官方安装器", "从 OpenClaw 官方地址拉取安装脚本", "如果网络慢，这一步可能停留几十秒，属于正常现象。", 24_u64),
+      ("install", "执行安装脚本", "安装器正在写入程序和命令入口", "看到日志滚动代表仍在工作，请不要关闭窗口。", 62_u64),
+      ("verify", "验证命令是否可用", "检查 `openclaw` 是否已能直接运行", "已经接近完成，正在做最后确认。", 88_u64),
+      ("done", "整理下一步引导", "安装完成，准备告诉你接下来做什么", "安装结束后，我会直接告诉你下一步。", 100_u64),
+    ]
+  } else {
+    vec![
+      ("preflight", "检查 Node.js / npm", "确认 npm 全局安装环境可用", "这一步在确认本机能执行 npm 安装。", 8_u64),
+      ("download", "下载 OpenClaw 包", "npm 正在获取安装包和依赖信息", "如果网络慢，这一步可能较久，不代表卡死。", 26_u64),
+      ("install", "全局安装 OpenClaw", "npm 正在把 OpenClaw 安装到全局环境", "安装过程可能没有持续输出，请耐心等待。", 64_u64),
+      ("verify", "验证命令是否可用", "检查 `openclaw` 命令和版本", "已经接近完成，正在做最终验证。", 88_u64),
+      ("done", "整理下一步引导", "安装完成，准备告诉你接下来做什么", "安装结束后，我会直接告诉你下一步。", 100_u64),
+    ]
+  };
+
+  specs.into_iter().enumerate().map(|(index, (key, title, description, hint, progress))| OpenClawInstallStep {
+    key: key.to_string(),
+    title: title.to_string(),
+    description: description.to_string(),
+    hint: hint.to_string(),
+    progress,
+    status: if index == 0 { "running".to_string() } else { "pending".to_string() },
+  }).collect()
+}
+
+fn create_openclaw_install_task(method: &str, command: &str) -> OpenClawInstallTask {
+  let id = format!(
+    "openclaw-install-{}-{}",
+    chrono::Utc::now().timestamp_millis(),
+    OPENCLAW_INSTALL_TASK_SEQ.fetch_add(1, AtomicOrdering::Relaxed)
+  );
+  let started_at = now_rfc3339();
+  let steps = openclaw_install_steps(method);
+  OpenClawInstallTask {
+    task_id: id,
+    tool_id: "openclaw".to_string(),
+    task_type: "install".to_string(),
+    method: method.to_string(),
+    command: command.to_string(),
+    status: "running".to_string(),
+    progress: 4,
+    step_index: 0,
+    summary: steps[0].description.clone(),
+    hint: steps[0].hint.clone(),
+    detail: "正在准备安装任务…".to_string(),
+    steps,
+    logs: Vec::new(),
+    started_at: started_at.clone(),
+    updated_at: started_at,
+    completed_at: None,
+    version: None,
+    error: None,
+    next_actions: Vec::new(),
+  }
+}
+
+fn trim_openclaw_install_tasks(tasks: &mut BTreeMap<String, OpenClawInstallTask>) {
+  while tasks.len() > OPENCLAW_INSTALL_TASK_KEEP {
+    let removable = tasks.iter().find(|(_, task)| task.status != "running").map(|(task_id, _)| task_id.clone());
+    if let Some(task_id) = removable {
+      tasks.remove(&task_id);
+    } else {
+      break;
+    }
+  }
+}
+
+fn insert_openclaw_install_task(task: OpenClawInstallTask) {
+  let mut tasks = openclaw_install_tasks().lock().expect("openclaw tasks lock poisoned");
+  tasks.insert(task.task_id.clone(), task);
+  trim_openclaw_install_tasks(&mut tasks);
+}
+
+fn with_openclaw_install_task<R>(task_id: &str, mut update: impl FnMut(&mut OpenClawInstallTask) -> R) -> Option<R> {
+  let mut tasks = openclaw_install_tasks().lock().expect("openclaw tasks lock poisoned");
+  let task = tasks.get_mut(task_id)?;
+  Some(update(task))
+}
+
+fn get_openclaw_install_task_snapshot(task_id: &str) -> Option<OpenClawInstallTask> {
+  let tasks = openclaw_install_tasks().lock().expect("openclaw tasks lock poisoned");
+  tasks.get(task_id).cloned()
+}
+
+fn touch_openclaw_install_task(task: &mut OpenClawInstallTask) {
+  task.updated_at = now_rfc3339();
+}
+
+fn set_openclaw_install_step(task: &mut OpenClawInstallTask, step_index: usize, detail: Option<String>) {
+  if task.steps.is_empty() {
+    return;
+  }
+  let safe_index = step_index.min(task.steps.len().saturating_sub(1));
+  if safe_index < task.step_index {
+    return;
+  }
+  task.step_index = safe_index;
+  task.progress = task.progress.max(task.steps[safe_index].progress);
+  task.summary = task.steps[safe_index].description.clone();
+  task.hint = task.steps[safe_index].hint.clone();
+  if let Some(text) = detail {
+    task.detail = text;
+  }
+  for (index, step) in task.steps.iter_mut().enumerate() {
+    step.status = if index < safe_index {
+      "done".to_string()
+    } else if index == safe_index {
+      "running".to_string()
+    } else {
+      "pending".to_string()
+    };
+  }
+  touch_openclaw_install_task(task);
+}
+
+fn push_openclaw_install_log(task_id: &str, source: &str, line: &str) {
+  let cleaned = line.trim().replace('', "");
+  if cleaned.is_empty() {
+    return;
+  }
+  let _ = with_openclaw_install_task(task_id, |task| {
+    task.logs.push(OpenClawInstallLog {
+      source: source.to_string(),
+      text: cleaned.clone(),
+      at: now_rfc3339(),
+    });
+    if task.logs.len() > 120 {
+      let drain_len = task.logs.len() - 120;
+      task.logs.drain(0..drain_len);
+    }
+    task.detail = cleaned.clone();
+    infer_openclaw_install_step(task, &cleaned);
+    touch_openclaw_install_task(task);
+  });
+}
+
+fn infer_openclaw_install_step(task: &mut OpenClawInstallTask, line: &str) {
+  let text = line.to_lowercase();
+  if task.method == "script" {
+    if text.contains("curl") || text.contains("download") || text.contains("http://") || text.contains("https://") {
+      set_openclaw_install_step(task, 1, Some(line.to_string()));
+    }
+    if text.contains("install") || text.contains("extract") || text.contains("copy") || text.contains("link") || text.contains("binary") || text.contains("daemon") || text.contains("openclaw") {
+      set_openclaw_install_step(task, 2, Some(line.to_string()));
+    }
+    if text.contains("done") || text.contains("complete") || text.contains("success") || text.contains("finished") || text.contains("installed") {
+      set_openclaw_install_step(task, 3, Some(line.to_string()));
+    }
+    return;
+  }
+
+  if text.contains("fetch") || text.contains("tarball") || text.contains("manifest") || text.contains("registry") || text.contains("http") {
+    set_openclaw_install_step(task, 1, Some(line.to_string()));
+  }
+  if text.contains("install") || text.contains("added") || text.contains("changed") || text.contains("build") || text.contains("postinstall") || text.contains("preinstall") || text.contains("link") || text.contains("reify") {
+    set_openclaw_install_step(task, 2, Some(line.to_string()));
+  }
+  if text.contains("audited") || text.contains("funding") || text.contains("done") || text.contains("success") || text.contains("installed") {
+    set_openclaw_install_step(task, 3, Some(line.to_string()));
+  }
+}
+
+fn fail_openclaw_install_task(task_id: &str, message: String) {
+  let _ = with_openclaw_install_task(task_id, |task| {
+    for (index, step) in task.steps.iter_mut().enumerate() {
+      step.status = if index < task.step_index {
+        "done".to_string()
+      } else if index == task.step_index {
+        "error".to_string()
+      } else {
+        "pending".to_string()
+      };
+    }
+    task.status = "error".to_string();
+    task.summary = "OpenClaw 安装失败，需要你看一眼错误提示。".to_string();
+    task.hint = "先看下方“最后日志”，通常会直接告诉你缺的是网络、权限还是依赖。".to_string();
+    task.detail = message.clone();
+    task.error = Some(message.clone());
+    task.next_actions = vec![
+      "先确认网络能访问 npm 或 openclaw.ai。".to_string(),
+      "如果脚本安装失败，可改用 npm 安装。".to_string(),
+      "如果 npm 安装失败，请检查 Node.js / npm 是否正常。".to_string(),
+    ];
+    task.completed_at = Some(now_rfc3339());
+    touch_openclaw_install_task(task);
+  });
+}
+
+fn complete_openclaw_install_task(task_id: &str, version: Option<String>) {
+  let _ = with_openclaw_install_task(task_id, |task| {
+    if let Some(last_index) = task.steps.len().checked_sub(1) {
+      task.step_index = last_index;
+      for (index, step) in task.steps.iter_mut().enumerate() {
+        step.status = if index <= last_index { "done".to_string() } else { "pending".to_string() };
+      }
+    }
+    task.status = "success".to_string();
+    task.progress = 100;
+    task.summary = "OpenClaw 安装完成，已经可以使用。".to_string();
+    task.hint = "现在你不用再做技术判断，直接按下面“接下来怎么做”操作就行。".to_string();
+    task.detail = version.clone().map(|v| format!("已检测到版本：{v}")).unwrap_or_else(|| "已检测到 openclaw 命令。".to_string());
+    task.version = version.clone();
+    task.next_actions = vec![
+      "下一步 1：点击“启动 OpenClaw”打开工具。".to_string(),
+      "下一步 2：首次使用建议执行 `openclaw onboard --install-daemon`。".to_string(),
+      "下一步 3：如需改配置，可编辑 `~/.openclaw/openclaw.json`。".to_string(),
+    ];
+    task.completed_at = Some(now_rfc3339());
+    touch_openclaw_install_task(task);
+  });
+}
+
+fn spawn_openclaw_install_task_runner(task_id: String) {
+  thread::spawn(move || {
+    let task = match get_openclaw_install_task_snapshot(&task_id) {
+      Some(task) => task,
+      None => return,
+    };
+
+    let method = task.method.clone();
+    let mut command = if method == "script" {
+      if cfg!(target_os = "windows") {
+        let mut cmd = create_command("powershell");
+        cmd.args(["-Command", "iwr -useb https://openclaw.ai/install.ps1 | iex"]);
+        cmd
+      } else {
+        let mut cmd = create_command("bash");
+        cmd.args(["-lc", "curl -fsSL https://openclaw.ai/install.sh | bash"]);
+        cmd
+      }
+    } else {
+      let mut cmd = create_command(npm_command());
+      cmd.args(["install", "-g", &format!("{}@latest", OPENCLAW_PACKAGE)]);
+      cmd
+    };
+
+    if method == "script" && !cfg!(target_os = "windows") && command_exists("curl").is_none() {
+      fail_openclaw_install_task(&task_id, "未检测到 `curl`，无法执行脚本安装。请先安装 curl，或改用 npm 安装。".to_string());
+      return;
+    }
+
+    if method == "npm" {
+      let node_output = create_command("node").arg("--version").output();
+      let npm_output = create_command(npm_command()).arg("--version").output();
+      match (node_output, npm_output) {
+        (Ok(node), Ok(npm)) if node.status.success() && npm.status.success() => {
+          let node_version = String::from_utf8_lossy(&node.stdout).trim().to_string();
+          let npm_version = String::from_utf8_lossy(&npm.stdout).trim().to_string();
+          push_openclaw_install_log(&task_id, "stdout", &format!("Node.js {node_version} / npm {npm_version}"));
+        }
+        (Ok(_), Ok(_)) => {
+          fail_openclaw_install_task(&task_id, "未检测到可用的 Node.js / npm，请先修复运行环境后重试。".to_string());
+          return;
+        }
+        _ => {
+          fail_openclaw_install_task(&task_id, "未检测到 Node.js 或 npm，请先安装 Node.js 18+。".to_string());
+          return;
+        }
+      }
+    }
+
+    let _ = with_openclaw_install_task(&task_id, |task| {
+      set_openclaw_install_step(task, 1, Some(format!("即将执行：{}", task.command)));
+    });
+
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = match command.spawn() {
+      Ok(child) => child,
+      Err(error) => {
+        fail_openclaw_install_task(&task_id, error.to_string());
+        return;
+      }
+    };
+
+    let stdout_handle = child.stdout.take().map(|stdout| {
+      let task_id = task_id.clone();
+      thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+          push_openclaw_install_log(&task_id, "stdout", &line);
+        }
+      })
+    });
+
+    let stderr_handle = child.stderr.take().map(|stderr| {
+      let task_id = task_id.clone();
+      thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+          push_openclaw_install_log(&task_id, "stderr", &line);
+        }
+      })
+    });
+
+    let status = match child.wait() {
+      Ok(status) => status,
+      Err(error) => {
+        fail_openclaw_install_task(&task_id, error.to_string());
+        return;
+      }
+    };
+
+    if let Some(handle) = stdout_handle { let _ = handle.join(); }
+    if let Some(handle) = stderr_handle { let _ = handle.join(); }
+
+    if !status.success() {
+      let message = get_openclaw_install_task_snapshot(&task_id)
+        .and_then(|task| task.logs.last().map(|item| item.text.clone()))
+        .unwrap_or_else(|| format!("安装命令退出码：{}", status.code().map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string())));
+      fail_openclaw_install_task(&task_id, message);
+      return;
+    }
+
+    let _ = with_openclaw_install_task(&task_id, |task| {
+      set_openclaw_install_step(task, 3, Some("安装命令已执行完成，正在验证 openclaw 命令…".to_string()));
+    });
+
+    let binary = find_tool_binary("openclaw");
+    if !binary.get("installed").and_then(Value::as_bool).unwrap_or(false) {
+      fail_openclaw_install_task(&task_id, "安装命令已执行完成，但系统里仍未找到 `openclaw` 命令。".to_string());
+      return;
+    }
+
+    complete_openclaw_install_task(&task_id, binary.get("version").and_then(Value::as_str).map(|s| s.to_string()));
+  });
+}
+
 fn command_exists(command: &str) -> Option<String> {
   // Set PATH before using which
   std::env::set_var("PATH", full_path_env());
@@ -196,7 +589,7 @@ fn escape_applescript(text: &str) -> String {
   text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn launch_terminal_command(cwd: &Path) -> Result<String, String> {
+fn launch_codex_terminal_command(cwd: &Path) -> Result<String, String> {
   let codex_binary = find_codex_binary();
   let codex_path = codex_binary
     .get("path")
@@ -318,7 +711,7 @@ pub(crate) fn launch_codex(body: &Value) -> Result<Value, String> {
   if !codex_binary.get("installed").and_then(Value::as_bool).unwrap_or(false) {
     return Err("Codex 尚未安装，请先点击安装".to_string());
   }
-  let message = launch_terminal_command(&cwd)?;
+  let message = launch_codex_terminal_command(&cwd)?;
   Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
 }
 
@@ -419,12 +812,13 @@ pub(crate) fn check_setup_environment(query: &Value) -> Result<Value, String> {
     "codexHome": codex_home.to_string_lossy().to_string(),
   }))
 }
-use crate::provider::get_string;
 use crate::{
   compare_versions, default_codex_home, extract_version, home_dir, npm_command,
   parse_json_object, parse_toml_config, read_text, OPENAI_CODEX_PACKAGE,
-  claude_code_home, write_text, ensure_dir, CLAUDE_CODE_PACKAGE,
+  claude_code_home, openclaw_home, write_text, ensure_dir, CLAUDE_CODE_PACKAGE,
+  OPENCLAW_PACKAGE,
 };
+use crate::provider::get_string;
 
 /* ═══════════════  Multi-tool support  ═══════════════ */
 
@@ -489,11 +883,12 @@ pub(crate) fn list_tools() -> Result<Value, String> {
     {
       "id": "openclaw",
       "name": "OpenClaw",
-      "description": "开源 AI 编程代理",
-      "supported": false,
+      "description": "开源多渠道 AI 助手平台",
+      "supported": true,
       "configFormat": "json",
-      "installMethod": "npm",
-      "npmPackage": Value::Null,
+      "installMethod": "multi",
+      "npmPackage": OPENCLAW_PACKAGE,
+      "installMethods": ["script", "npm", "source", "docker"],
       "binary": openclaw_binary,
     },
   ]))
@@ -770,7 +1165,7 @@ pub(crate) fn save_claudecode_raw_config(body: &Value) -> Result<Value, String> 
   Ok(json!({ "saved": true, "settingsPath": settings_path.to_string_lossy().to_string() }))
 }
 
-fn launch_terminal_for_tool(cwd: &Path, binary_path: &str, tool_label: &str) -> Result<String, String> {
+fn launch_terminal_command(cwd: &Path, command_text: &str, tool_label: &str) -> Result<String, String> {
   let cwd_text = cwd.to_string_lossy().to_string();
 
   if cfg!(target_os = "macos") {
@@ -780,7 +1175,7 @@ fn launch_terminal_for_tool(cwd: &Path, binary_path: &str, tool_label: &str) -> 
       &format!(
         "do script \"cd {} && {}\"",
         escape_applescript(&cwd_text),
-        escape_applescript(binary_path)
+        escape_applescript(command_text)
       ),
       "end tell",
     ]
@@ -801,7 +1196,7 @@ fn launch_terminal_for_tool(cwd: &Path, binary_path: &str, tool_label: &str) -> 
     create_command("cmd.exe")
       .args([
         "/c", "start", "", "cmd", "/k",
-        &format!("cd /d \"{}\" && \"{}\"", cwd_text, binary_path),
+        &format!("cd /d \"{}\" && {}", cwd_text, command_text),
       ])
       .spawn()
       .map_err(|error| error.to_string())?;
@@ -809,9 +1204,9 @@ fn launch_terminal_for_tool(cwd: &Path, binary_path: &str, tool_label: &str) -> 
   }
 
   let terminals = vec![
-    ("x-terminal-emulator", vec!["-e".to_string(), format!("bash -lc \"cd '{}' && '{}'\"", cwd_text, binary_path)]),
-    ("gnome-terminal", vec!["--".to_string(), "bash".to_string(), "-lc".to_string(), format!("cd '{}' && '{}'", cwd_text, binary_path)]),
-    ("konsole", vec!["-e".to_string(), "bash".to_string(), "-lc".to_string(), format!("cd '{}' && '{}'", cwd_text, binary_path)]),
+    ("x-terminal-emulator", vec!["-e".to_string(), format!("bash -lc \"cd '{}' && {}\"", cwd_text, command_text)]),
+    ("gnome-terminal", vec!["--".to_string(), "bash".to_string(), "-lc".to_string(), format!("cd '{}' && {}", cwd_text, command_text)]),
+    ("konsole", vec!["-e".to_string(), "bash".to_string(), "-lc".to_string(), format!("cd '{}' && {}", cwd_text, command_text)]),
   ];
 
   for (command, args) in terminals {
@@ -820,7 +1215,23 @@ fn launch_terminal_for_tool(cwd: &Path, binary_path: &str, tool_label: &str) -> 
     return Ok(format!("{} 已在新终端中启动", tool_label));
   }
 
-  Err(format!("没有找到可用终端，请先手动运行 {}", binary_path))
+  Err(format!("没有找到可用终端，请先手动运行 {}", command_text))
+}
+
+fn launch_terminal_for_tool(cwd: &Path, binary_path: &str, tool_label: &str) -> Result<String, String> {
+  launch_terminal_command(cwd, binary_path, tool_label)
+}
+
+fn check_openclaw_gateway_reachable(gateway_url: &str) -> bool {
+  reqwest::blocking::Client::builder()
+    .connect_timeout(std::time::Duration::from_millis(500))
+    .timeout(std::time::Duration::from_millis(1200))
+    .redirect(reqwest::redirect::Policy::none())
+    .build()
+    .ok()
+    .and_then(|client| client.get(gateway_url).send().ok())
+    .map(|response| response.status().as_u16() > 0)
+    .unwrap_or(false)
 }
 
 pub(crate) fn launch_claudecode(body: &Value) -> Result<Value, String> {
@@ -836,4 +1247,378 @@ pub(crate) fn launch_claudecode(body: &Value) -> Result<Value, String> {
   let bin_path = binary.get("path").and_then(Value::as_str).unwrap_or("claude");
   let message = launch_terminal_for_tool(&cwd, bin_path, "Claude Code")?;
   Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
+}
+
+/* ═══════════════  OpenClaw  ═══════════════ */
+
+pub(crate) fn load_openclaw_state() -> Result<Value, String> {
+  let home = openclaw_home()?;
+  let config_path = home.join("openclaw.json");
+  let binary = find_tool_binary("openclaw");
+
+  let config = if config_path.exists() {
+    read_json_file(&config_path).unwrap_or(json!({}))
+  } else {
+    json!({})
+  };
+  let config_exists = config_path.exists();
+
+  let config_json = serde_json::to_string_pretty(&config).unwrap_or_else(|_| "{}".to_string());
+
+  // Read env vars relevant to OpenClaw, with config fallback
+  let gateway_token_env = std::env::var("OPENCLAW_GATEWAY_TOKEN").unwrap_or_default();
+  let gateway_token_cfg = config.pointer("/gateway/auth/token")
+    .and_then(Value::as_str).unwrap_or("").to_string();
+  let gateway_token = if !gateway_token_env.is_empty() { gateway_token_env } else { gateway_token_cfg };
+
+  let gateway_port_env = std::env::var("OPENCLAW_GATEWAY_PORT").unwrap_or_default();
+  let gateway_port_cfg = config.pointer("/gateway/port")
+    .and_then(Value::as_u64).map(|p| p.to_string()).unwrap_or_default();
+  let gateway_port = if !gateway_port_env.is_empty() { gateway_port_env }
+    else if !gateway_port_cfg.is_empty() { gateway_port_cfg }
+    else { "18789".to_string() };
+
+  let gateway_url = format!("http://127.0.0.1:{}/", gateway_port);
+  let gateway_reachable = check_openclaw_gateway_reachable(&gateway_url);
+  let needs_onboarding = binary.get("installed").and_then(Value::as_bool).unwrap_or(false) && (!config_exists || !gateway_reachable);
+
+  Ok(json!({
+    "toolId": "openclaw",
+    "configHome": home.to_string_lossy().to_string(),
+    "configPath": config_path.to_string_lossy().to_string(),
+    "configExists": config_exists,
+    "config": config,
+    "configJson": config_json,
+    "binary": binary,
+    "gatewayToken": if gateway_token.is_empty() { Value::Null } else { json!(gateway_token) },
+    "gatewayPort": gateway_port,
+    "gatewayUrl": gateway_url,
+    "gatewayReachable": gateway_reachable,
+    "needsOnboarding": needs_onboarding,
+    "installMethods": ["script", "npm", "source", "docker"],
+  }))
+}
+
+pub(crate) fn save_openclaw_config(body: &Value) -> Result<Value, String> {
+  let home = openclaw_home()?;
+  let config_path = home.join("openclaw.json");
+  let obj = parse_json_object(body);
+  let raw = obj.get("configJson")
+    .and_then(Value::as_str)
+    .unwrap_or("{}")
+    .to_string();
+  if raw.trim().is_empty() {
+    return Err("配置内容不能为空".to_string());
+  }
+  let parsed: Value = serde_json::from_str(&raw).map_err(|e| format!("JSON 解析失败：{}", e))?;
+  write_json_file(&config_path, &parsed)?;
+  Ok(json!({ "saved": true, "configPath": config_path.to_string_lossy().to_string() }))
+}
+
+pub(crate) fn launch_openclaw(body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let cwd = {
+    let input = object.get("cwd").and_then(Value::as_str).unwrap_or("").to_string();
+    if input.is_empty() { home_dir()? } else { PathBuf::from(input) }
+  };
+  let state = load_openclaw_state()?;
+  let binary = state.get("binary").cloned().unwrap_or_else(|| json!({}));
+  if !binary.get("installed").and_then(Value::as_bool).unwrap_or(false) {
+    return Err("OpenClaw 尚未安装，请先选择安装方式进行安装".to_string());
+  }
+
+  if !state.get("configExists").and_then(Value::as_bool).unwrap_or(false) {
+    let onboard = onboard_openclaw(body)?;
+    let mut response = parse_json_object(&onboard);
+    response.insert("mode".to_string(), json!("onboard"));
+    response.insert("gatewayUrl".to_string(), state.get("gatewayUrl").cloned().unwrap_or(Value::Null));
+    return Ok(Value::Object(response));
+  }
+
+  if state.get("gatewayReachable").and_then(Value::as_bool).unwrap_or(false) {
+    return Ok(json!({
+      "ok": true,
+      "cwd": cwd.to_string_lossy().to_string(),
+      "mode": "dashboard",
+      "gatewayUrl": state.get("gatewayUrl").cloned().unwrap_or(Value::Null),
+      "message": "OpenClaw Dashboard 已准备好",
+    }));
+  }
+
+  let bin_path = binary.get("path").and_then(Value::as_str).unwrap_or("openclaw");
+  let command = format!("{} gateway start || {} gateway", bin_path, bin_path);
+  let message = launch_terminal_command(&cwd, &command, "OpenClaw Gateway")?;
+  Ok(json!({
+    "ok": true,
+    "cwd": cwd.to_string_lossy().to_string(),
+    "mode": "gateway",
+    "gatewayUrl": state.get("gatewayUrl").cloned().unwrap_or(Value::Null),
+    "command": command,
+    "message": message,
+  }))
+}
+
+pub(crate) fn onboard_openclaw(body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let cwd = {
+    let input = object.get("cwd").and_then(Value::as_str).unwrap_or("").to_string();
+    if input.is_empty() { home_dir()? } else { PathBuf::from(input) }
+  };
+  let binary = find_tool_binary("openclaw");
+  if !binary.get("installed").and_then(Value::as_bool).unwrap_or(false) {
+    return Err("OpenClaw 尚未安装，请先完成安装".to_string());
+  }
+  let bin_path = binary.get("path").and_then(Value::as_str).unwrap_or("openclaw").to_string();
+
+  let auth_choice = object.get("authChoice").and_then(Value::as_str).unwrap_or("skip").to_string();
+  let api_key = object.get("apiKey").and_then(Value::as_str).unwrap_or("").to_string();
+  let _api_key_type = object.get("apiKeyType").and_then(Value::as_str).unwrap_or("").to_string();
+
+  let mut args: Vec<String> = vec![
+    "onboard".into(),
+    "--non-interactive".into(),
+    "--accept-risk".into(),
+    "--flow".into(), "quickstart".into(),
+    "--install-daemon".into(),
+    "--skip-channels".into(),
+    "--skip-skills".into(),
+    "--skip-search".into(),
+    "--json".into(),
+  ];
+
+  if !auth_choice.is_empty() && auth_choice != "skip" {
+    args.push("--auth-choice".into());
+    args.push(auth_choice.clone());
+    if !api_key.is_empty() {
+      let flag = match auth_choice.as_str() {
+        "anthropic" => "--anthropic-api-key",
+        "openai-api-key" => "--openai-api-key",
+        "openrouter-api-key" => "--openrouter-api-key",
+        "gemini-api-key" => "--gemini-api-key",
+        "mistral-api-key" => "--mistral-api-key",
+        "together-api-key" => "--together-api-key",
+        "xai-api-key" => "--xai-api-key",
+        _ => "--custom-api-key",
+      };
+      args.push(flag.into());
+      args.push(api_key);
+    }
+  } else {
+    args.push("--auth-choice".into());
+    args.push("skip".into());
+  }
+
+  let command_text = format!("{} {}", bin_path, args.join(" "));
+
+  // Run as child process — not in terminal
+  std::env::set_var("PATH", full_path_env());
+  let output = create_command(&bin_path)
+    .args(&args)
+    .current_dir(&cwd)
+    .output()
+    .map_err(|e| format!("执行 openclaw onboard 失败：{}", e))?;
+
+  let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+  let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+  let success = stdout.contains("Updated") || stdout.contains("openclaw.json") || output.status.success();
+
+  Ok(json!({
+    "ok": success,
+    "cwd": cwd.to_string_lossy().to_string(),
+    "command": command_text,
+    "message": if success { "OpenClaw 初始化完成" } else { "初始化可能未完成" },
+    "stdout": stdout.trim(),
+    "stderr": stderr.trim(),
+  }))
+}
+
+pub(crate) fn start_openclaw_install_task(body: &Value) -> Result<Value, String> {
+  let obj = parse_json_object(body);
+  let method = obj.get("method").and_then(Value::as_str).unwrap_or("npm");
+  if method != "script" && method != "npm" {
+    return Err("只有脚本安装和 npm 安装支持实时进度追踪".to_string());
+  }
+
+  let command = if method == "script" {
+    if cfg!(target_os = "windows") {
+      "iwr -useb https://openclaw.ai/install.ps1 | iex".to_string()
+    } else {
+      "curl -fsSL https://openclaw.ai/install.sh | bash".to_string()
+    }
+  } else {
+    format!("{} install -g {}@latest", npm_command(), OPENCLAW_PACKAGE)
+  };
+
+  let task = create_openclaw_install_task(method, &command);
+  let response = serde_json::to_value(&task).map_err(|error| error.to_string())?;
+  insert_openclaw_install_task(task.clone());
+  spawn_openclaw_install_task_runner(task.task_id.clone());
+  Ok(response)
+}
+
+pub(crate) fn get_openclaw_install_task(query: &Value) -> Result<Value, String> {
+  let obj = parse_json_object(query);
+  let task_id = obj.get("taskId").and_then(Value::as_str).unwrap_or("").trim();
+  if task_id.is_empty() {
+    return Err("安装任务不存在，可能已经过期，请重新开始安装".to_string());
+  }
+  let task = get_openclaw_install_task_snapshot(task_id)
+    .ok_or_else(|| "安装任务不存在，可能已经过期，请重新开始安装".to_string())?;
+  serde_json::to_value(task).map_err(|error| error.to_string())
+}
+
+/// Run install via a particular method
+pub(crate) fn run_openclaw_install_script(body: &Value) -> Result<Value, String> {
+  let obj = parse_json_object(body);
+  let method = obj.get("method").and_then(Value::as_str).unwrap_or("npm");
+
+  match method {
+    "script" => {
+      // Run the install script via curl | bash (macOS/Linux) or PowerShell (Windows)
+      if cfg!(target_os = "windows") {
+        let result = run_command("powershell", &["-Command", "iwr -useb https://openclaw.ai/install.ps1 | iex"], None)?;
+        Ok(json!({
+          "ok": result.get("ok").and_then(Value::as_bool).unwrap_or(false),
+          "method": "script",
+          "command": "iwr -useb https://openclaw.ai/install.ps1 | iex",
+          "stdout": result.get("stdout").cloned().unwrap_or(Value::Null),
+          "stderr": result.get("stderr").cloned().unwrap_or(Value::Null),
+        }))
+      } else {
+        let result = run_command("bash", &["-c", "curl -fsSL https://openclaw.ai/install.sh | bash"], None)?;
+        Ok(json!({
+          "ok": result.get("ok").and_then(Value::as_bool).unwrap_or(false),
+          "method": "script",
+          "command": "curl -fsSL https://openclaw.ai/install.sh | bash",
+          "stdout": result.get("stdout").cloned().unwrap_or(Value::Null),
+          "stderr": result.get("stderr").cloned().unwrap_or(Value::Null),
+        }))
+      }
+    }
+    "npm" => {
+      let result = codex_npm_action(&["install", "-g", &format!("{}@latest", OPENCLAW_PACKAGE)])?;
+      Ok(json!({
+        "ok": result.get("ok").and_then(Value::as_bool).unwrap_or(false),
+        "method": "npm",
+        "command": result.get("command").cloned().unwrap_or(Value::Null),
+        "stdout": result.get("stdout").cloned().unwrap_or(Value::Null),
+        "stderr": result.get("stderr").cloned().unwrap_or(Value::Null),
+      }))
+    }
+    "source" => {
+      // For source install, we return instructions instead of running directly
+      Ok(json!({
+        "ok": true,
+        "method": "source",
+        "instructions": [
+          "git clone https://github.com/openclaw/openclaw.git",
+          "cd openclaw",
+          "pnpm install",
+          "pnpm ui:build",
+          "pnpm build",
+          "pnpm link --global",
+          "openclaw onboard --install-daemon",
+        ],
+        "message": "源码构建需要在终端中手动执行以上命令",
+      }))
+    }
+    "docker" => {
+      // For docker install, we return instructions
+      Ok(json!({
+        "ok": true,
+        "method": "docker",
+        "instructions": [
+          "git clone https://github.com/openclaw/openclaw.git",
+          "cd openclaw",
+          "./docker-setup.sh",
+        ],
+        "message": "Docker 安装需要在终端中手动执行以上命令",
+      }))
+    }
+    _ => Err(format!("不支持的安装方式：{}", method)),
+  }
+}
+
+pub(crate) fn open_url_in_browser(body: &Value) -> Result<Value, String> {
+  let obj = parse_json_object(body);
+  let url = obj.get("url").and_then(Value::as_str).unwrap_or("").trim().to_string();
+  if url.is_empty() {
+    return Err("URL 不能为空".to_string());
+  }
+  // Validate it looks like a URL
+  if !url.starts_with("http://") && !url.starts_with("https://") {
+    return Err("只允许打开 http/https URL".to_string());
+  }
+
+  let result = if cfg!(target_os = "macos") {
+    Command::new("open").arg(&url).spawn()
+  } else if cfg!(target_os = "windows") {
+    Command::new("cmd").args(["/c", "start", "", &url]).spawn()
+  } else {
+    Command::new("xdg-open").arg(&url).spawn()
+  };
+
+  match result {
+    Ok(_) => Ok(json!({ "opened": true, "url": url })),
+    Err(e) => Err(format!("打开浏览器失败：{}", e)),
+  }
+}
+
+pub(crate) fn stop_openclaw_gateway() -> Result<Value, String> {
+  std::env::set_var("PATH", full_path_env());
+
+  // Try `openclaw gateway stop` first
+  let bin = which::which("openclaw").ok();
+  if let Some(ref bin_path) = bin {
+    let output = create_command(bin_path.to_str().unwrap_or("openclaw"))
+      .args(["gateway", "stop"])
+      .output();
+    if let Ok(out) = output {
+      if out.status.success() {
+        return Ok(json!({ "stopped": true, "method": "gateway stop" }));
+      }
+    }
+  }
+
+  // Fallback: kill process by name
+  let kill_result = if cfg!(target_os = "windows") {
+    Command::new("taskkill").args(["/F", "/IM", "openclaw.exe"]).output()
+  } else {
+    Command::new("pkill").args(["-f", "openclaw.*gateway"]).output()
+  };
+
+  match kill_result {
+    Ok(out) if out.status.success() => Ok(json!({ "stopped": true, "method": "pkill" })),
+    _ => Ok(json!({ "stopped": false, "message": "未找到运行中的 OpenClaw 进程" })),
+  }
+}
+
+pub(crate) fn uninstall_openclaw(body: &Value) -> Result<Value, String> {
+  let obj = parse_json_object(body);
+  let purge = obj.get("purge").and_then(Value::as_bool).unwrap_or(false);
+
+  let mut purged_paths: Vec<String> = Vec::new();
+
+  // If purge requested, remove the OpenClaw data directory (~/.openclaw)
+  if purge {
+    let home = openclaw_home()?;
+    if home.exists() {
+      std::fs::remove_dir_all(&home).map_err(|e| format!("删除 {:?} 失败：{}", home, e))?;
+      purged_paths.push(home.to_string_lossy().to_string());
+    }
+  }
+
+  // Run npm uninstall
+  let result = codex_npm_action(&["uninstall", "-g", OPENCLAW_PACKAGE])?;
+
+  Ok(json!({
+    "ok": result.get("ok").and_then(Value::as_bool).unwrap_or(false),
+    "code": result.get("code").cloned().unwrap_or(Value::Null),
+    "stdout": result.get("stdout").cloned().unwrap_or(Value::String(String::new())),
+    "stderr": result.get("stderr").cloned().unwrap_or(Value::String(String::new())),
+    "command": result.get("command").cloned().unwrap_or(Value::String(String::new())),
+    "purge": purge,
+    "purgedPaths": purged_paths,
+  }))
 }

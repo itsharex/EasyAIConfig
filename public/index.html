@@ -53,6 +53,14 @@
                 <path d="M6.5 5v3M5 6.5h3" />
               </svg></span><span>工具安装</span>
           </button>
+          <button class="nav-item" data-page-target="tasks">
+            <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
+                stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="2" width="9" height="9" rx="1.5" />
+                <path d="M4.5 6.5l1.5 1.5 3-3" />
+              </svg></span><span>任务</span>
+            <span class="nav-badge" id="taskNavBadge" style="display:none">0</span>
+          </button>
           <button class="nav-item" data-page-target="about">
             <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
                 stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
@@ -83,16 +91,6 @@
               <span id="codexPill" class="badge">检测中</span>
             </div>
           </div>
-          <div class="sidebar-line">
-            <span class="sidebar-label">主题</span>
-            <div class="sidebar-inline">
-              <button id="themeToggleBtn" class="secondary ghost-btn theme-toggle-btn" title="切换白天/黑夜模式">
-                <span class="theme-icon theme-icon-light">☀️</span>
-                <span class="theme-icon theme-icon-dark">🌙</span>
-                <span id="themeLabel">黑夜模式</span>
-              </button>
-            </div>
-          </div>
         </div>
       </aside>
 
@@ -105,12 +103,37 @@
             <p id="pageSubtitle">输入 URL 和 API Key，剩下交给 EasyAIConfig。</p>
           </div>
           <div class="workspace-actions" id="defaultActions">
+            <button id="themeToggleBtn" class="topbar-icon-btn" title="切换主题">
+              <svg class="theme-ico-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5" />
+                <line x1="12" y1="1" x2="12" y2="3" />
+                <line x1="12" y1="21" x2="12" y2="23" />
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                <line x1="1" y1="12" x2="3" y2="12" />
+                <line x1="21" y1="12" x2="23" y2="12" />
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+              </svg>
+              <svg class="theme-ico-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+            </button>
             <button id="openAdvancedBtn" class="secondary subtle-btn">配置编辑</button>
             <button id="openAboutBtn" class="secondary subtle-btn">关于</button>
           </div>
           <div class="workspace-actions hide" id="configEditorActions">
+            <button id="validateConfigBtn" class="secondary subtle-btn" title="检测当前配置是否正确">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 3l-8.5 8.5L2 8" />
+              </svg>
+              验证
+            </button>
             <button id="closeConfigEditorBtn" class="secondary subtle-btn">关闭</button>
-            <button id="saveConfigEditorBtn" class="secondary subtle-btn">保存表单配置</button>
+            <button id="saveConfigEditorBtn" class="secondary subtle-btn">保存配置</button>
             <button id="applyConfigEditorBtn">保存并生效</button>
           </div>
         </header>
@@ -139,7 +162,7 @@
                     </svg>
                     <span>Claude Code</span>
                   </button>
-                  <button class="tool-tab" data-tool="openclaw" disabled>
+                  <button class="tool-tab" data-tool="openclaw">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
                       stroke-linecap="round" stroke-linejoin="round">
                       <circle cx="12" cy="12" r="9" opacity="0.5" />
@@ -148,19 +171,43 @@
                       <circle cx="15" cy="10" r="1" fill="currentColor" stroke="none" />
                     </svg>
                     <span>OpenClaw</span>
-                    <span class="tool-tab-soon">soon</span>
                   </button>
                 </div>
 
                 <div class="hero-strip">
-                  <div class="hero-copy">
+                  <div class="hero-head-row">
                     <div class="hero-title">最快路径</div>
-                    <div class="hero-subtitle">用户通常只需要 `URL` 和 `API Key`，这里一步完成。</div>
+                    <div class="hero-indicators">
+                      <span class="hero-pill">自动补全协议</span>
+                      <span class="hero-pill">自动检测模型</span>
+                      <span class="hero-pill">一键保存并启动</span>
+                    </div>
                   </div>
-                  <div class="hero-indicators">
-                    <span class="hero-pill">自动补全协议</span>
-                    <span class="hero-pill">自动检测模型</span>
-                    <span class="hero-pill">一键保存并启动</span>
+                  <div class="hero-subtitle">用户通常只需要 `URL` 和 `API Key`，这里一步完成。</div>
+                  <div id="ocDashboardQuickRow" class="oc-dashboard-row hide">
+                    <span class="oc-dashboard-status">
+                      <span class="running-dot"></span>OpenClaw 正在运行
+                    </span>
+                    <div style="display:flex;gap:6px;margin-left:auto">
+                      <button id="ocOpenDashboardBtn" class="secondary"
+                        style="font-size:0.76rem;padding:0 10px;height:26px">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px">
+                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                          <polyline points="15 3 21 3 21 9" />
+                          <line x1="10" y1="14" x2="21" y2="3" />
+                        </svg>
+                        打开 Dashboard
+                      </button>
+                      <button id="ocStopBtn" class="secondary"
+                        style="font-size:0.76rem;padding:0 10px;height:26px;color:#f87171">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px">
+                          <rect x="6" y="6" width="12" height="12" rx="2" />
+                        </svg>
+                        停止
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -202,6 +249,15 @@
                       </div>
                     </label>
 
+                    <label id="openClawProtocolField" class="field field-wide hide">
+                      <span>协议</span>
+                      <div class="select-wrap"><select id="openClawProtocolSelect">
+                          <option value="openai-completions">OpenAI Chat / Completions</option>
+                          <option value="openai-responses">OpenAI Responses</option>
+                          <option value="anthropic-messages">Claude / Anthropic Messages</option>
+                        </select></div>
+                    </label>
+
                     <div class="field action-field">
                       <span>连接检测</span>
                       <button id="detectBtn" class="secondary fit-btn">检测模型</button>
@@ -209,10 +265,19 @@
 
                     <label class="field field-wide model-field">
                       <span>可用模型</span>
-                      <div class="select-wrap">
-                        <select id="modelSelect" data-empty-placeholder="true">
-                          <option value="">先检测模型</option>
-                        </select>
+                      <div class="model-select-row">
+                        <div class="select-wrap" style="flex:1;min-width:0">
+                          <select id="modelSelect" data-empty-placeholder="true">
+                            <option value="">选择默认模型</option>
+                          </select>
+                        </div>
+                        <button id="modelRefreshBtn" type="button" class="secondary model-refresh-btn"
+                          title="从 URL 获取模型列表">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 12a9 9 0 0 1-15.36 6.36L3 21M3 12a9 9 0 0 1 15.36-6.36L21 3" />
+                          </svg>
+                        </button>
                       </div>
                     </label>
                   </div>
@@ -220,43 +285,6 @@
                   <div id="detectionMeta" class="inline-meta">默认只需要 URL 和 API Key；缺少 http/https 会自动补全。</div>
                   <div id="modelChips" class="chips hide"></div>
 
-                  <div class="quick-shortcuts">
-                    <div class="shortcuts-label">快捷模式</div>
-                    <div class="shortcuts-row">
-                      <button class="shortcut-btn" id="shortcutFast" title="开启 Fast 模式 (minimal reasoning)">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                          <path d="M5 12h14" />
-                          <path d="M13 6l6 6-6 6" />
-                        </svg>
-                        <span>Fast</span>
-                      </button>
-                      <button class="shortcut-btn" id="shortcut1M" title="开启 1M 上下文窗口">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                          <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
-                        </svg>
-                        <span>1M Token</span>
-                      </button>
-                      <button class="shortcut-btn" id="shortcutMaxPerf" title="最大性能: high reasoning + 1M token">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                          <path
-                            d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                          <circle cx="12" cy="12" r="4" />
-                        </svg>
-                        <span>Max</span>
-                      </button>
-                      <button class="shortcut-btn" id="shortcutReset" title="恢复默认配置">
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                          stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                          <path d="M2.5 2v6h6" />
-                          <path d="M2.5 8A10 10 0 1 1 4.34 16" />
-                        </svg>
-                        <span>默认</span>
-                      </button>
-                    </div>
-                  </div>
 
                   <div class="primary-actions">
                     <button id="editConfigQuickBtn" class="secondary">编辑配置</button>
@@ -303,7 +331,7 @@
 
                 <section class="line-panel feature-panel">
                   <div class="mini-title">配置提示</div>
-                  <div class="feature-list">
+                  <div id="configTipsList" class="feature-list">
                     <div class="feature-row"><span>1</span><strong>检测模型后自动推荐最新可用模型</strong></div>
                     <div class="feature-row"><span>2</span><strong>保存后写入 Codex 配置并保留备份</strong></div>
                     <div class="feature-row"><span>3</span><strong>未安装 Codex 时，启动会弹窗引导自动安装</strong></div>
@@ -344,6 +372,27 @@
             <div class="tools-page">
               <div class="tools-grid">
                 <!-- Dynamically rendered by renderToolsPage() -->
+              </div>
+            </div>
+          </section>
+
+          <section class="page-view" data-page="tasks">
+            <div class="tasks-page">
+              <div class="tasks-page-filters" id="taskFilters">
+                <button class="task-filter active" data-filter="all">全部</button>
+                <button class="task-filter" data-filter="running">进行中</button>
+                <button class="task-filter" data-filter="done">已完成</button>
+                <button class="task-filter" data-filter="error">失败</button>
+              </div>
+              <div class="tasks-list" id="tasksPageList">
+                <div class="tasks-empty" id="tasksEmpty">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"
+                    stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3">
+                    <rect x="3" y="3" width="18" height="18" rx="3" />
+                    <path d="M8 12l3 3 5-6" />
+                  </svg>
+                  <div>暂无任务</div>
+                </div>
               </div>
             </div>
           </section>
@@ -412,10 +461,60 @@
 
           <section id="configEditorView" class="page-view" data-page="configEditor">
             <div class="config-editor-page">
+              <!-- ═══ Config Editor Inline Header ═══ -->
+              <div class="cfg-editor-header">
+                <div class="cfg-editor-header-left">
+                  <div class="config-editor-tabs" id="configEditorTabs">
+                    <button type="button" class="cfg-editor-tab active" data-cfg-tool="codex" aria-pressed="true">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 2l9 5v10l-9 5-9-5V7l9-5z" opacity="0.5" />
+                        <path d="M12 12l9-5M12 12v10M12 12L3 7" />
+                      </svg>
+                      <span>Codex</span>
+                    </button>
+                    <button type="button" class="cfg-editor-tab" data-cfg-tool="openclaw" aria-pressed="false">
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
+                        stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="9" opacity="0.5" />
+                        <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                        <circle cx="9" cy="10" r="1" fill="currentColor" stroke="none" />
+                        <circle cx="15" cy="10" r="1" fill="currentColor" stroke="none" />
+                      </svg>
+                      <span>OpenClaw</span>
+                    </button>
+                  </div>
+                </div>
+                <div class="cfg-editor-header-right">
+                  <button class="config-store-btn" id="openConfigStoreBtn" title="打开配置商店，浏览预设方案">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z" opacity="0.4" />
+                      <rect x="8" y="13" width="8" height="7" rx="1" />
+                      <path d="M10 13v-2a2 2 0 0 1 4 0v2" />
+                    </svg>
+                    <span>配置商店</span>
+                    <span class="config-store-hint">浏览预设方案</span>
+                    <svg class="config-store-arrow" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                      stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 3l5 5-5 5" />
+                    </svg>
+                  </button>
+                  <!-- Hidden search elements for backward compatibility -->
+                  <input id="ocRecipeSearchInput" type="hidden" />
+                  <div id="ocRecipeResults" class="oc-recipe-results hide"></div>
+                </div>
+              </div>
               <div class="config-editor-layout">
-                <section class="config-editor-main">
+
+                <!-- ═══ Codex Config Editor ═══ -->
+                <section class="config-editor-main" data-tool-editor="codex">
                   <div class="editor-grid dense-grid">
-                    <label class="field"><span>默认模型</span><input id="cfgModelInput" placeholder="默认由模型目录决定" /></label>
+                    <label class="field"><span>默认模型</span>
+                      <div class="model-combobox" id="cfgModelCombobox" data-input-id="cfgModelInput">
+                        <input id="cfgModelInput" placeholder="默认由模型目录决定" autocomplete="off" />
+                      </div>
+                    </label>
                     <label class="field"><span>默认 Provider</span><input id="cfgProviderInput"
                         placeholder="openai" /></label>
                     <label class="field"><span>服务模式</span>
@@ -568,13 +667,790 @@
                   <label class="field field-wide"><span>基础指令</span><textarea id="cfgBaseInstructionsTextarea" rows="4"
                       placeholder="覆盖模型内置基础指令 (不推荐)"></textarea></label>
                 </section>
+
+                <!-- ═══ OpenClaw Config Editor — Control Panel ═══ -->
+                <section class="config-editor-main hide" data-tool-editor="openclaw">
+                  <div class="oc-panel-hint">点击面板展开配置，未修改的项会使用 OpenClaw 默认值。</div>
+
+                  <!-- ── 📦 模型配置 ── -->
+                  <details class="oc-panel">
+                    <summary class="oc-panel-head"><span class="oc-panel-icon"><svg width="14" height="14"
+                          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+                          stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M2 5l6-3 6 3v6l-6 3-6-3z" />
+                          <path d="M2 5l6 3m0 6V8m6-3l-6 3" />
+                        </svg></span><span class="oc-panel-title">模型配置</span><span class="oc-panel-badge"
+                        id="ocBadgeModel">未配置</span>
+                    </summary>
+                    <div class="oc-panel-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>主模型</span>
+                          <div class="model-combobox" id="ocModelPrimaryCombobox" data-input-id="ocCfgModelPrimary">
+                            <input id="ocCfgModelPrimary" placeholder="例: anthropic/claude-sonnet-4-6"
+                              autocomplete="off" />
+                          </div>
+                        </label>
+                        <label class="field"><span>Fallback 模型</span>
+                          <div class="model-combobox" id="ocModelFallbacksCombobox" data-input-id="ocCfgModelFallbacks">
+                            <input id="ocCfgModelFallbacks" placeholder="逗号分隔，如: openai/gpt-5.2, google/gemini-3-pro"
+                              autocomplete="off" />
+                          </div>
+                        </label>
+                        <label class="field"><span>默认推理级别</span>
+                          <div class="select-wrap"><select id="ocCfgThinkingDefault">
+                              <option value="">默认 (off)</option>
+                              <option value="off">off</option>
+                              <option value="minimal">minimal</option>
+                              <option value="low">low</option>
+                              <option value="medium">medium</option>
+                              <option value="high">high</option>
+                              <option value="xhigh">xhigh</option>
+                              <option value="adaptive">adaptive (自适应)</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>工作目录</span><input id="ocCfgWorkspace" placeholder="默认 ~" /></label>
+                        <label class="field"><span>图像模型</span><input id="ocCfgImageModel"
+                            placeholder="留空 = 使用主模型" /></label>
+                        <label class="field"><span>上下文窗口</span><input id="ocCfgContextTokens" inputmode="numeric"
+                            placeholder="默认 200000" /></label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ── 🔗 Provider 连接 ── -->
+                  <details class="oc-panel">
+                    <summary class="oc-panel-head"><span class="oc-panel-icon"><svg width="14" height="14"
+                          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+                          stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M6.5 9.5a3.5 3.5 0 0 0 5 0l2-2a3.54 3.54 0 0 0-5-5l-1 1" />
+                          <path d="M9.5 6.5a3.5 3.5 0 0 0-5 0l-2 2a3.54 3.54 0 0 0 5 5l1-1" />
+                        </svg></span><span class="oc-panel-title">Provider 连接</span><span class="oc-panel-badge"
+                        id="ocBadgeProvider">未配置</span></summary>
+                    <div class="oc-panel-body">
+                      <div class="env-import-bar">
+                        <div class="env-import-title">快捷导入</div>
+                        <div class="env-import-btn-wrap">
+                          <button type="button" class="secondary env-import-btn" id="ocEnvReadLocalBtn"
+                            title="从已保存的 Provider 列表中选择">
+                            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M2.5 8a5.5 5.5 0 0 1 10.3-2.5M13.5 8a5.5 5.5 0 0 1-10.3 2.5" />
+                              <path d="M13.5 3v2.5H11M2.5 13v-2.5H5" />
+                            </svg>
+                            读取本地
+                          </button>
+                          <div class="env-import-local-dropdown" id="ocEnvLocalDropdown"></div>
+                        </div>
+                        <button type="button" class="secondary env-import-btn" id="ocEnvPasteToggleBtn"
+                          title="粘贴 export 语句自动识别填写">
+                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="4" y="2" width="8" height="12" rx="1.5" />
+                            <path d="M4 5H3a1.5 1.5 0 0 0-1.5 1.5v7A1.5 1.5 0 0 0 3 15h6a1.5 1.5 0 0 0 1.5-1.5V14" />
+                          </svg>
+                          粘贴导入
+                        </button>
+                      </div>
+                      <div class="env-import-collapse" id="ocEnvPasteCollapse">
+                        <div class="env-import-paste-area">
+                          <textarea id="ocEnvPasteTextarea" rows="3"
+                            placeholder="粘贴 export 语句，如:&#10;export ANTHROPIC_BASE_URL=https://...&#10;export ANTHROPIC_AUTH_TOKEN=sk-ant-...&#10;export OPENAI_API_KEY=sk-..."></textarea>
+                          <div class="env-import-hint">支持 ANTHROPIC_* / OPENAI_* / CODEX_* 环境变量</div>
+                        </div>
+                        <div id="ocEnvImportResult"></div>
+                      </div>
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>Provider 标识</span><input id="ocCfgProviderAlias"
+                            placeholder="如 openai / anthropic" /></label>
+                        <label class="field"><span>协议</span>
+                          <div class="select-wrap"><select id="ocCfgProviderApi">
+                              <option value="openai-completions">OpenAI Chat / Completions</option>
+                              <option value="openai-responses">OpenAI Responses</option>
+                              <option value="anthropic-messages">Claude / Anthropic Messages</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>Base URL</span><input id="ocCfgProviderBaseUrl"
+                            placeholder="留空使用官方默认端点" /></label>
+                        <label class="field"><span>API Key</span><input id="ocCfgProviderApiKey" type="password"
+                            placeholder="自动写入 env + provider.apiKey" /></label>
+                        <label class="field"><span>Token 变量名</span><input id="ocCfgProviderEnvKey"
+                            placeholder="如 OPENAI_API_KEY" /></label>
+                        <label class="field"><span>模型显示名</span>
+                          <div class="model-combobox" id="ocModelNameCombobox" data-input-id="ocCfgProviderModelName">
+                            <input id="ocCfgProviderModelName" placeholder="自动生成" autocomplete="off" />
+                          </div>
+                        </label>
+                        <label class="field"><span>Context Window</span><input id="ocCfgProviderContextWindow"
+                            inputmode="numeric" placeholder="默认 200000" /></label>
+                        <label class="field"><span>Max Tokens</span><input id="ocCfgProviderMaxTokens"
+                            inputmode="numeric" placeholder="默认 8192" /></label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ── 💬 渠道配置 ── -->
+                  <details class="oc-panel">
+                    <summary class="oc-panel-head"><span class="oc-panel-icon"><svg width="14" height="14"
+                          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+                          stroke-linecap="round" stroke-linejoin="round">
+                          <path
+                            d="M14 10a1.5 1.5 0 0 1-1.5 1.5H4L2 14V3.5A1.5 1.5 0 0 1 3.5 2h9A1.5 1.5 0 0 1 14 3.5z" />
+                        </svg></span><span class="oc-panel-title">渠道配置</span><span class="oc-panel-badge"
+                        id="ocBadgeChannels">未启用</span>
+                    </summary>
+                    <div class="oc-panel-body">
+                      <!-- Telegram -->
+                      <details class="oc-subpanel">
+                        <summary class="oc-subpanel-head"><span>Telegram</span><span class="oc-sub-badge"
+                            id="ocBadgeTelegram">未配置</span></summary>
+                        <div class="oc-subpanel-body">
+                          <div class="editor-grid dense-grid">
+                            <label class="field"><span>Bot Token</span><input id="ocCfgTelegramToken" type="password"
+                                placeholder="123456:ABCDEF..." /></label>
+                            <label class="field"><span>私聊策略</span>
+                              <div class="select-wrap"><select id="ocCfgTgDmPolicy">
+                                  <option value="">默认 (pairing)</option>
+                                  <option value="pairing">pairing — 需配对码</option>
+                                  <option value="allowlist">allowlist — 仅白名单</option>
+                                  <option value="open">open — 所有人</option>
+                                  <option value="disabled">disabled — 禁用私聊</option>
+                                </select></div>
+                            </label>
+                            <label class="field"><span>群组策略</span>
+                              <div class="select-wrap"><select id="ocCfgTgGroupPolicy">
+                                  <option value="">默认 (open)</option>
+                                  <option value="open">open — 开放</option>
+                                  <option value="allowlist">allowlist — 仅白名单</option>
+                                  <option value="disabled">disabled — 禁用</option>
+                                </select></div>
+                            </label>
+                            <label class="field"><span>DM 白名单</span><input id="ocCfgTgAllowFrom"
+                                placeholder="用户ID，逗号分隔" /></label>
+                            <label class="field"><span>流式预览</span>
+                              <div class="select-wrap"><select id="ocCfgTgStreaming">
+                                  <option value="">默认 (off)</option>
+                                  <option value="off">off</option>
+                                  <option value="partial">partial — 单消息编辑</option>
+                                  <option value="block">block — 分块发送</option>
+                                </select></div>
+                            </label>
+                            <label class="field"><span>反应级别</span>
+                              <div class="select-wrap"><select id="ocCfgTgReactionLevel">
+                                  <option value="">默认 (ack)</option>
+                                  <option value="off">off — 不发反应</option>
+                                  <option value="ack">ack — 仅确认</option>
+                                  <option value="minimal">minimal — 少量</option>
+                                  <option value="extensive">extensive — 丰富</option>
+                                </select></div>
+                            </label>
+                            <label class="field"><span>历史条数</span><input id="ocCfgTgHistoryLimit" inputmode="numeric"
+                                placeholder="默认不限" /></label>
+                            <label class="field"><span>消息分段大小</span><input id="ocCfgTgTextChunkLimit"
+                                inputmode="numeric" placeholder="默认 4000" /></label>
+                          </div>
+                          <div class="toggle-grid">
+                            <label class="toggle-item"><input id="ocCfgTgBlockStreaming"
+                                type="checkbox" /><span>块流式传输</span></label>
+                            <label class="toggle-item"><input id="ocCfgTgLinkPreview" type="checkbox"
+                                checked /><span>链接预览</span></label>
+                          </div>
+                        </div>
+                      </details>
+                      <!-- Discord -->
+                      <details class="oc-subpanel">
+                        <summary class="oc-subpanel-head"><span>Discord</span><span class="oc-sub-badge"
+                            id="ocBadgeDiscord">未配置</span></summary>
+                        <div class="oc-subpanel-body">
+                          <div class="editor-grid dense-grid">
+                            <label class="field"><span>Bot Token</span><input id="ocCfgDiscordToken" type="password"
+                                placeholder="Discord Bot Token" /></label>
+                            <label class="field"><span>私聊策略</span>
+                              <div class="select-wrap"><select id="ocCfgDcDmPolicy">
+                                  <option value="">默认 (pairing)</option>
+                                  <option value="pairing">pairing</option>
+                                  <option value="allowlist">allowlist</option>
+                                  <option value="open">open</option>
+                                  <option value="disabled">disabled</option>
+                                </select></div>
+                            </label>
+                            <label class="field"><span>频道策略</span>
+                              <div class="select-wrap"><select id="ocCfgDcGroupPolicy">
+                                  <option value="">默认 (open)</option>
+                                  <option value="open">open</option>
+                                  <option value="allowlist">allowlist</option>
+                                  <option value="disabled">disabled</option>
+                                </select></div>
+                            </label>
+                            <label class="field"><span>DM 白名单</span><input id="ocCfgDcAllowFrom"
+                                placeholder="用户ID，逗号分隔" /></label>
+                            <label class="field"><span>流式预览</span>
+                              <div class="select-wrap"><select id="ocCfgDcStreaming">
+                                  <option value="">默认 (off)</option>
+                                  <option value="off">off</option>
+                                  <option value="partial">partial</option>
+                                  <option value="block">block</option>
+                                </select></div>
+                            </label>
+                            <label class="field"><span>消息分段大小</span><input id="ocCfgDcTextChunkLimit"
+                                inputmode="numeric" placeholder="默认 2000" /></label>
+                          </div>
+                          <div class="toggle-grid">
+                            <label class="toggle-item"><input id="ocCfgDcAllowBots" type="checkbox" /><span>允许 Bot
+                                触发</span></label>
+                            <label class="toggle-item"><input id="ocCfgDcVoiceEnabled" type="checkbox"
+                                checked /><span>语音频道</span></label>
+                          </div>
+                        </div>
+                      </details>
+                      <!-- Slack -->
+                      <details class="oc-subpanel">
+                        <summary class="oc-subpanel-head"><span>Slack</span><span class="oc-sub-badge"
+                            id="ocBadgeSlack">未配置</span></summary>
+                        <div class="oc-subpanel-body">
+                          <div class="editor-grid dense-grid">
+                            <label class="field"><span>Bot Token</span><input id="ocCfgSlackBotToken" type="password"
+                                placeholder="xoxb-..." /></label>
+                            <label class="field"><span>App Token</span><input id="ocCfgSlackAppToken" type="password"
+                                placeholder="xapp-..." /></label>
+                          </div>
+                        </div>
+                      </details>
+                      <!-- WhatsApp -->
+                      <details class="oc-subpanel">
+                        <summary class="oc-subpanel-head"><span>WhatsApp</span><span class="oc-sub-badge">未配置</span>
+                        </summary>
+                        <div class="oc-subpanel-body">
+                          <div class="oc-panel-empty">需要在 openclaw.json 的 channels.whatsapp 中配置</div>
+                        </div>
+                      </details>
+                      <!-- 微信公众号 -->
+                      <details class="oc-subpanel">
+                        <summary class="oc-subpanel-head"><span>微信公众号</span><span class="oc-sub-badge"
+                            id="ocBadgeWechat">未配置</span></summary>
+                        <div class="oc-subpanel-body">
+                          <div class="editor-grid dense-grid">
+                            <label class="field"><span>AppID</span><input id="ocCfgWechatAppId"
+                                placeholder="wx..." /></label>
+                            <label class="field"><span>验证 Token</span><input id="ocCfgWechatToken"
+                                placeholder="公众号后台设置的 Token" /></label>
+                            <label class="field"><span>EncodingAESKey</span><input id="ocCfgWechatAesKey"
+                                placeholder="消息加解密密钥（可选）" /></label>
+                          </div>
+                        </div>
+                      </details>
+                      <!-- 企业微信 -->
+                      <details class="oc-subpanel">
+                        <summary class="oc-subpanel-head"><span>企业微信</span><span class="oc-sub-badge"
+                            id="ocBadgeWechatWork">未配置</span></summary>
+                        <div class="oc-subpanel-body">
+                          <div class="editor-grid dense-grid">
+                            <label class="field"><span>CorpID</span><input id="ocCfgWechatWorkCorpId"
+                                placeholder="企业 ID" /></label>
+                            <label class="field"><span>AgentID</span><input id="ocCfgWechatWorkAgentId"
+                                inputmode="numeric" placeholder="应用 ID" /></label>
+                            <label class="field"><span>Secret</span><input id="ocCfgWechatWorkSecret" type="password"
+                                placeholder="应用密钥" /></label>
+                          </div>
+                        </div>
+                      </details>
+                      <!-- LINE -->
+                      <details class="oc-subpanel">
+                        <summary class="oc-subpanel-head"><span>LINE</span><span class="oc-sub-badge"
+                            id="ocBadgeLine">未配置</span></summary>
+                        <div class="oc-subpanel-body">
+                          <div class="editor-grid dense-grid">
+                            <label class="field"><span>Channel Secret</span><input id="ocCfgLineSecret" type="password"
+                                placeholder="Channel Secret" /></label>
+                            <label class="field"><span>Access Token</span><input id="ocCfgLineToken" type="password"
+                                placeholder="Long-lived access token" /></label>
+                          </div>
+                        </div>
+                      </details>
+                      <!-- Matrix -->
+                      <details class="oc-subpanel">
+                        <summary class="oc-subpanel-head"><span>Matrix</span><span class="oc-sub-badge"
+                            id="ocBadgeMatrix">未配置</span></summary>
+                        <div class="oc-subpanel-body">
+                          <div class="editor-grid dense-grid">
+                            <label class="field"><span>Homeserver URL</span><input id="ocCfgMatrixHomeserver"
+                                placeholder="https://matrix.org" /></label>
+                            <label class="field"><span>Access Token</span><input id="ocCfgMatrixToken" type="password"
+                                placeholder="syt_..." /></label>
+                          </div>
+                        </div>
+                      </details>
+                      <!-- Channels defaults -->
+                      <div class="oc-panel-divider"></div>
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>全局群组策略</span>
+                          <div class="select-wrap"><select id="ocCfgChannelDefaultGroupPolicy">
+                              <option value="">默认 (open)</option>
+                              <option value="open">open</option>
+                              <option value="allowlist">allowlist</option>
+                              <option value="disabled">disabled</option>
+                            </select></div>
+                        </label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ── 🤖 Agent & 回复 ── -->
+                  <details class="oc-panel">
+                    <summary class="oc-panel-head"><span class="oc-panel-icon"><svg width="14" height="14"
+                          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+                          stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="2" y="5" width="12" height="8" rx="2" />
+                          <path d="M8 2v3" />
+                          <circle cx="5.5" cy="9" r="1" />
+                          <circle cx="10.5" cy="9" r="1" />
+                          <path d="M1 8h-0.01M15 8h0.01" />
+                        </svg></span><span class="oc-panel-title">Agent & 回复</span><span class="oc-panel-badge"
+                        id="ocBadgeAgent">默认</span>
+                    </summary>
+                    <div class="oc-panel-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>最大并发</span><input id="ocCfgMaxConcurrent" inputmode="numeric"
+                            placeholder="默认 1（顺序执行）" /></label>
+                        <label class="field"><span>超时 (秒)</span><input id="ocCfgTimeoutSeconds" inputmode="numeric"
+                            placeholder="默认无限" /></label>
+                        <label class="field"><span>详细模式</span>
+                          <div class="select-wrap"><select id="ocCfgVerboseDefault">
+                              <option value="">默认 (off)</option>
+                              <option value="off">off</option>
+                              <option value="on">on</option>
+                              <option value="full">full</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>提权模式</span>
+                          <div class="select-wrap"><select id="ocCfgElevatedDefault">
+                              <option value="">默认 (off)</option>
+                              <option value="off">off</option>
+                              <option value="on">on</option>
+                              <option value="ask">ask — 每次询问</option>
+                              <option value="full">full — 完全提权</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>流式输出</span>
+                          <div class="select-wrap"><select id="ocCfgBlockStreamingDefault">
+                              <option value="">默认 (off)</option>
+                              <option value="off">off</option>
+                              <option value="on">on</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>输入指示器</span>
+                          <div class="select-wrap"><select id="ocCfgTypingMode">
+                              <option value="">默认 (never)</option>
+                              <option value="never">never</option>
+                              <option value="instant">instant</option>
+                              <option value="thinking">thinking</option>
+                              <option value="message">message</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>类人延迟</span>
+                          <div class="select-wrap"><select id="ocCfgHumanDelay">
+                              <option value="">默认 (off)</option>
+                              <option value="off">off — 立即发送</option>
+                              <option value="natural">natural — 自然延迟</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>响应前缀</span><input id="ocCfgResponsePrefix"
+                            placeholder="如 auto 或 [{model}]" /></label>
+                      </div>
+                      <!-- Heartbeat sub-section -->
+                      <div class="oc-panel-divider"></div>
+                      <div class="oc-inline-title">心跳 (Heartbeat) — 定期自动回复</div>
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>间隔</span><input id="ocCfgHeartbeatEvery"
+                            placeholder="默认 30m（如 1h / 45m）" /></label>
+                        <label class="field"><span>投递目标</span>
+                          <div class="select-wrap"><select id="ocCfgHeartbeatTarget">
+                              <option value="">默认 (last)</option>
+                              <option value="last">last — 最近活跃</option>
+                              <option value="none">none — 静默运行</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>心跳模型</span><input id="ocCfgHeartbeatModel"
+                            placeholder="留空使用主模型" /></label>
+                      </div>
+                      <div class="toggle-grid">
+                        <label class="toggle-item"><input id="ocCfgHeartbeatLightContext"
+                            type="checkbox" /><span>轻量上下文模式</span></label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ── 🔧 工具权限 ── -->
+                  <details class="oc-panel">
+                    <summary class="oc-panel-head"><span class="oc-panel-icon"><svg width="14" height="14"
+                          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+                          stroke-linecap="round" stroke-linejoin="round">
+                          <path
+                            d="M10.3 1.7a4.2 4.2 0 0 0-5.1 5.1L1.5 10.5v4h4l3.7-3.7a4.2 4.2 0 0 0 5.1-5.1L12 8 10 10 8 8l2-2z" />
+                        </svg></span><span class="oc-panel-title">工具权限</span><span class="oc-panel-badge"
+                        id="ocBadgeTools">默认</span>
+                    </summary>
+                    <div class="oc-panel-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>工具 Profile</span>
+                          <div class="select-wrap"><select id="ocCfgToolsProfile">
+                              <option value="">默认 (full)</option>
+                              <option value="minimal">minimal — 最小工具集</option>
+                              <option value="coding">coding — 编程工具</option>
+                              <option value="messaging">messaging — 消息工具</option>
+                              <option value="full">full — 全部工具</option>
+                            </select></div>
+                        </label>
+                        <label class="field field-wide"><span>额外允许工具</span><input id="ocCfgToolsAlsoAllow"
+                            placeholder="逗号分隔，如: web_search, memory_search" /></label>
+                        <label class="field field-wide"><span>禁止工具</span><input id="ocCfgToolsDeny"
+                            placeholder="逗号分隔，如: exec, browser" /></label>
+                      </div>
+                      <!-- Exec sub-section -->
+                      <div class="oc-panel-divider"></div>
+                      <div class="oc-inline-title">命令执行 (Exec)</div>
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>执行宿主</span>
+                          <div class="select-wrap"><select id="ocCfgExecHost">
+                              <option value="">默认 (sandbox)</option>
+                              <option value="sandbox">sandbox — 沙箱</option>
+                              <option value="gateway">gateway — 本地</option>
+                              <option value="node">node — 远程节点</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>安全模式</span>
+                          <div class="select-wrap"><select id="ocCfgExecSecurity">
+                              <option value="">默认 (deny)</option>
+                              <option value="deny">deny — 拒绝</option>
+                              <option value="allowlist">allowlist — 白名单</option>
+                              <option value="full">full — 完全允许</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>超时 (秒)</span><input id="ocCfgExecTimeout" inputmode="numeric"
+                            placeholder="默认无限" /></label>
+                      </div>
+                      <!-- Web Search sub-section -->
+                      <div class="oc-panel-divider"></div>
+                      <div class="oc-inline-title">Web 搜索</div>
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>搜索引擎</span>
+                          <div class="select-wrap"><select id="ocCfgWebSearchProvider">
+                              <option value="">默认 (未启用)</option>
+                              <option value="brave">Brave Search</option>
+                              <option value="perplexity">Perplexity</option>
+                              <option value="grok">Grok (xAI)</option>
+                              <option value="gemini">Google Gemini</option>
+                              <option value="kimi">Kimi / Moonshot</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>搜索 API Key</span><input id="ocCfgWebSearchApiKey" type="password"
+                            placeholder="搜索引擎 API Key" /></label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ── 🔒 安全 & 权限 ── -->
+                  <details class="oc-panel">
+                    <summary class="oc-panel-head"><span class="oc-panel-icon"><svg width="14" height="14"
+                          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+                          stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="3" y="7" width="10" height="7" rx="1.5" />
+                          <path d="M5 7V5a3 3 0 0 1 6 0v2" />
+                        </svg></span><span class="oc-panel-title">安全
+                        & 权限</span><span class="oc-panel-badge" id="ocBadgeSecurity">默认</span></summary>
+                    <div class="oc-panel-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>命令权限</span>
+                          <div class="select-wrap"><select id="ocCfgCommandsText">
+                              <option value="">默认 (启用)</option>
+                              <option value="true">true — 启用文本命令</option>
+                              <option value="false">false — 禁用文本命令</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>/config 命令</span>
+                          <div class="select-wrap"><select id="ocCfgCommandsConfig">
+                              <option value="">默认 (禁用)</option>
+                              <option value="true">true — 允许</option>
+                              <option value="false">false — 禁止</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>Bash 命令</span>
+                          <div class="select-wrap"><select id="ocCfgCommandsBash">
+                              <option value="">默认 (禁用)</option>
+                              <option value="true">true — 允许</option>
+                              <option value="false">false — 禁止</option>
+                            </select></div>
+                        </label>
+                      </div>
+                      <div class="toggle-grid">
+                        <label class="toggle-item"><input id="ocCfgToolsElevatedEnabled" type="checkbox"
+                            checked /><span>允许提权执行</span></label>
+                      </div>
+                      <!-- Approvals -->
+                      <div class="oc-panel-divider"></div>
+                      <div class="oc-inline-title">执行审批转发</div>
+                      <div class="toggle-grid">
+                        <label class="toggle-item"><input id="ocCfgApprovalsEnabled"
+                            type="checkbox" /><span>启用审批转发到聊天渠道</span></label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ── 🧠 会话 & 记忆 ── -->
+                  <details class="oc-panel">
+                    <summary class="oc-panel-head"><span class="oc-panel-icon"><svg width="14" height="14"
+                          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+                          stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="8" cy="8" r="6" />
+                          <path d="M8 2a4.5 4.5 0 0 0 0 12" />
+                          <path d="M2.5 6h11M2.5 10h11" />
+                        </svg></span><span class="oc-panel-title">会话
+                        & 记忆</span><span class="oc-panel-badge" id="ocBadgeSession">默认</span></summary>
+                    <div class="oc-panel-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>会话范围</span>
+                          <div class="select-wrap"><select id="ocCfgSessionScope">
+                              <option value="">默认 (per-sender)</option>
+                              <option value="per-sender">per-sender — 每用户独立</option>
+                              <option value="global">global — 全局共享</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>空闲超时 (分钟)</span><input id="ocCfgSessionIdleMinutes"
+                            inputmode="numeric" placeholder="默认不限" /></label>
+                        <label class="field"><span>重置模式</span>
+                          <div class="select-wrap"><select id="ocCfgSessionResetMode">
+                              <option value="">默认 (不自动重置)</option>
+                              <option value="daily">daily — 每日重置</option>
+                              <option value="idle">idle — 空闲后重置</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>重置触发词</span><input id="ocCfgSessionResetTriggers"
+                            placeholder="逗号分隔，如: /reset, /clear" /></label>
+                      </div>
+                      <!-- Maintenance -->
+                      <div class="oc-panel-divider"></div>
+                      <div class="oc-inline-title">会话维护</div>
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>自动修剪</span><input id="ocCfgSessionPruneAfter"
+                            placeholder="默认 30d（如 7d / 12h）" /></label>
+                        <label class="field"><span>最大条目</span><input id="ocCfgSessionMaxEntries" inputmode="numeric"
+                            placeholder="默认 500" /></label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ── 🌐 Gateway & 网络 ── -->
+                  <details class="oc-panel">
+                    <summary class="oc-panel-head"><span class="oc-panel-icon"><svg width="14" height="14"
+                          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+                          stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="8" cy="8" r="6" />
+                          <path d="M2 8h12M8 2c2 2 3 4 3 6s-1 4-3 6c-2-2-3-4-3-6s1-4 3-6z" />
+                        </svg></span><span class="oc-panel-title">Gateway & 网络</span><span class="oc-panel-badge"
+                        id="ocBadgeGateway">默认</span></summary>
+                    <div class="oc-panel-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>端口</span><input id="ocCfgGatewayPort" inputmode="numeric"
+                            placeholder="默认 18789" /></label>
+                        <label class="field"><span>绑定模式</span>
+                          <div class="select-wrap"><select id="ocCfgGatewayBind">
+                              <option value="">默认 (loopback)</option>
+                              <option value="loopback">loopback (仅本地)</option>
+                              <option value="lan">lan (所有接口)</option>
+                              <option value="auto">auto</option>
+                              <option value="tailnet">tailnet</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>认证模式</span>
+                          <div class="select-wrap"><select id="ocCfgGatewayAuthMode">
+                              <option value="">默认 (token)</option>
+                              <option value="none">none — 无认证</option>
+                              <option value="token">token</option>
+                              <option value="password">password</option>
+                              <option value="trusted-proxy">trusted-proxy — 反向代理</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>Token</span><input id="ocCfgGatewayToken" type="password"
+                            placeholder="Gateway 认证 Token" /></label>
+                        <label class="field"><span>热重载</span>
+                          <div class="select-wrap"><select id="ocCfgGatewayReload">
+                              <option value="">默认 (hybrid)</option>
+                              <option value="off">off</option>
+                              <option value="restart">restart — 重启</option>
+                              <option value="hot">hot — 热重载</option>
+                              <option value="hybrid">hybrid — 混合</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>健康检查 (分钟)</span><input id="ocCfgGatewayHealthCheck"
+                            inputmode="numeric" placeholder="默认 5（0=禁用）" /></label>
+                      </div>
+                      <!-- HTTP API -->
+                      <div class="oc-panel-divider"></div>
+                      <div class="oc-inline-title">HTTP API 端点</div>
+                      <div class="toggle-grid">
+                        <label class="toggle-item"><input id="ocCfgGatewayHttpChatCompletions"
+                            type="checkbox" /><span>启用 /v1/chat/completions</span></label>
+                        <label class="toggle-item"><input id="ocCfgGatewayHttpResponses" type="checkbox" /><span>启用
+                            /v1/responses (OpenResponses)</span></label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ── 📅 定时 & 钩子 ── -->
+                  <details class="oc-panel">
+                    <summary class="oc-panel-head"><span class="oc-panel-icon"><svg width="14" height="14"
+                          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+                          stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="2" y="3" width="12" height="11" rx="1.5" />
+                          <path d="M2 6.5h12M5 1.5v3M11 1.5v3" />
+                        </svg></span><span class="oc-panel-title">定时任务 & 钩子</span><span class="oc-panel-badge"
+                        id="ocBadgeCron">关闭</span>
+                    </summary>
+                    <div class="oc-panel-body">
+                      <div class="oc-inline-title">Cron 定时任务</div>
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>最大并发</span><input id="ocCfgCronMaxConcurrent" inputmode="numeric"
+                            placeholder="默认不限" /></label>
+                        <label class="field"><span>会话保留</span><input id="ocCfgCronSessionRetention"
+                            placeholder="默认 24h" /></label>
+                      </div>
+                      <div class="toggle-grid">
+                        <label class="toggle-item"><input id="ocCfgCronEnabled"
+                            type="checkbox" /><span>启用定时任务</span></label>
+                      </div>
+                      <div class="oc-panel-divider"></div>
+                      <div class="oc-inline-title">Webhooks</div>
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>Webhook 路径</span><input id="ocCfgHooksPath"
+                            placeholder="默认 /hooks" /></label>
+                        <label class="field"><span>Webhook Token</span><input id="ocCfgHooksToken" type="password"
+                            placeholder="认证 Token" /></label>
+                      </div>
+                      <div class="toggle-grid">
+                        <label class="toggle-item"><input id="ocCfgHooksEnabled" type="checkbox" /><span>启用
+                            Webhooks</span></label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ── 🎨 助手身份 ── -->
+                  <details class="oc-panel">
+                    <summary class="oc-panel-head"><span class="oc-panel-icon"><svg width="14" height="14"
+                          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+                          stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="8" cy="8" r="6" />
+                          <circle cx="8" cy="5" r="1" />
+                          <circle cx="5.5" cy="7.5" r="1" />
+                          <circle cx="10.5" cy="7.5" r="1" />
+                          <path d="M7.5 11a1.5 1.5 0 0 0 3 0c0-1-1.5-1.5-1.5-3" />
+                        </svg></span><span class="oc-panel-title">助手身份</span><span class="oc-panel-badge"
+                        id="ocBadgeIdentity">默认</span>
+                    </summary>
+                    <div class="oc-panel-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>助手名称</span><input id="ocCfgAssistantName"
+                            placeholder="默认 OpenClaw" /></label>
+                        <label class="field"><span>助手头像</span><input id="ocCfgAssistantAvatar"
+                            placeholder="emoji 或 URL" /></label>
+                        <label class="field"><span>主题色</span>
+                          <div style="display:flex;gap:8px;align-items:center">
+                            <input id="ocCfgSeamColor" type="color" value="#6366f1"
+                              style="width:36px;height:28px;padding:0;border:none;background:none;cursor:pointer" />
+                            <input id="ocCfgSeamColorText" placeholder="#6366f1" style="flex:1" />
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ── 📝 日志 & 诊断 ── -->
+                  <details class="oc-panel">
+                    <summary class="oc-panel-head"><span class="oc-panel-icon"><svg width="14" height="14"
+                          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+                          stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M4.5 2h9v12h-9z" rx="1" />
+                          <path d="M7 5h4M7 8h4M7 11h2" />
+                          <path d="M2.5 4v10h9" />
+                        </svg></span><span class="oc-panel-title">日志
+                        & 诊断</span><span class="oc-panel-badge" id="ocBadgeLogging">info</span></summary>
+                    <div class="oc-panel-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>日志级别</span>
+                          <div class="select-wrap"><select id="ocCfgLoggingLevel">
+                              <option value="">默认 (info)</option>
+                              <option value="silent">silent</option>
+                              <option value="fatal">fatal</option>
+                              <option value="error">error</option>
+                              <option value="warn">warn</option>
+                              <option value="info">info</option>
+                              <option value="debug">debug</option>
+                              <option value="trace">trace</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>控制台样式</span>
+                          <div class="select-wrap"><select id="ocCfgLoggingStyle">
+                              <option value="">默认 (pretty)</option>
+                              <option value="pretty">pretty</option>
+                              <option value="compact">compact</option>
+                              <option value="json">json</option>
+                            </select></div>
+                        </label>
+                      </div>
+                      <div class="toggle-grid">
+                        <label class="toggle-item"><input id="ocCfgDiagnosticsEnabled"
+                            type="checkbox" /><span>启用诊断模式</span></label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ── ⚙️ 更新 & 环境 ── -->
+                  <details class="oc-panel">
+                    <summary class="oc-panel-head"><span class="oc-panel-icon"><svg width="14" height="14"
+                          viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"
+                          stroke-linecap="round" stroke-linejoin="round">
+                          <circle cx="8" cy="8" r="2" />
+                          <path
+                            d="M8 1v2m0 10v2M1 8h2m10 0h2M3.05 3.05l1.41 1.41m7.08 7.08l1.41 1.41M3.05 12.95l1.41-1.41m7.08-7.08l1.41-1.41" />
+                        </svg></span><span class="oc-panel-title">更新
+                        & 环境</span><span class="oc-panel-badge" id="ocBadgeUpdate">stable</span></summary>
+                    <div class="oc-panel-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>更新通道</span>
+                          <div class="select-wrap"><select id="ocCfgUpdateChannel">
+                              <option value="">默认 (stable)</option>
+                              <option value="stable">stable — 稳定版</option>
+                              <option value="beta">beta — 测试版</option>
+                              <option value="dev">dev — 开发版</option>
+                            </select></div>
+                        </label>
+                      </div>
+                      <div class="toggle-grid">
+                        <label class="toggle-item"><input id="ocCfgUpdateCheckOnStart" type="checkbox"
+                            checked /><span>启动时检查更新</span></label>
+                        <label class="toggle-item"><input id="ocCfgUpdateAutoEnabled"
+                            type="checkbox" /><span>自动后台更新</span></label>
+                      </div>
+                    </div>
+                  </details>
+
+                </section>
+
+                <!-- ═══ Right Sidebar ═══ -->
                 <aside class="config-editor-side">
-                  <div class="config-side-section">
+                  <!-- Codex raw TOML -->
+                  <div class="config-side-section" data-tool-editor-side="codex">
                     <div class="subline">
                       <span class="eyebrow">当前原始 TOML</span>
                     </div>
                     <textarea id="cfgRawTomlTextarea" class="raw-config" rows="26"></textarea>
                     <div class="toml-hint">直接编辑 TOML 后，点击顶部「保存并生效」即可写入配置文件。</div>
+                  </div>
+                  <!-- OpenClaw raw JSON -->
+                  <div class="config-side-section hide" data-tool-editor-side="openclaw">
+                    <div class="subline">
+                      <span class="eyebrow">当前原始 JSON — openclaw.json</span>
+                    </div>
+                    <textarea id="ocCfgRawJsonTextarea" class="raw-config" rows="26"></textarea>
+                    <div class="toml-hint">直接编辑 JSON 后，点击顶部「保存并生效」即可写入 openclaw.json。</div>
                   </div>
                 </aside>
               </div>
@@ -691,7 +1567,7 @@
           <div class="wizard-step-line"></div>
           <div class="wizard-step" data-wizard-step="1">
             <span class="ws-number">2</span>
-            <span class="ws-label">安装 Codex</span>
+            <span class="ws-label">选择与安装</span>
           </div>
           <div class="wizard-step-line"></div>
           <div class="wizard-step" data-wizard-step="2">
@@ -710,14 +1586,13 @@
           <!-- Step 0: Environment Check -->
           <div class="wizard-panel active" data-wizard-panel="0">
             <div class="wp-card">
-              <div class="wp-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="11" cy="11" r="7" opacity="0.5" />
-                  <circle cx="11" cy="11" r="4" />
+              <div class="wp-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="11" cy="11" r="7" />
                   <line x1="16.5" y1="16.5" x2="21" y2="21" />
                 </svg></div>
               <h2 class="wp-title">环境诊断</h2>
-              <p class="wp-desc">正在检查运行 Codex 所需的环境依赖…</p>
+              <p class="wp-desc">正在检查运行 AI 工具所需的环境依赖…</p>
               <div id="wizardEnvChecks" class="wizard-checklist">
                 <div class="wc-item" id="wcNode">
                   <span class="wc-indicator loading"></span>
@@ -728,11 +1603,6 @@
                   <span class="wc-indicator loading"></span>
                   <span class="wc-name">npm</span>
                   <span class="wc-status" id="wcNpmStatus">检测中…</span>
-                </div>
-                <div class="wc-item" id="wcCodex">
-                  <span class="wc-indicator loading"></span>
-                  <span class="wc-name">Codex CLI</span>
-                  <span class="wc-status" id="wcCodexStatus">检测中…</span>
                 </div>
                 <div class="wc-item" id="wcConfig">
                   <span class="wc-indicator loading"></span>
@@ -748,19 +1618,77 @@
             </div>
           </div>
 
-          <!-- Step 1: Install Codex -->
+          <!-- Step 1: Choose & Install Tool -->
           <div class="wizard-panel" data-wizard-panel="1">
             <div class="wp-card">
-              <div class="wp-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 2l9 5v10l-9 5-9-5V7l9-5z" opacity="0.5" />
-                  <path d="M12 12l9-5M12 12v10M12 12L3 7" />
-                  <path d="M7.5 4.5l9 5" />
+              <div class="wp-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 3v12M12 15l-4-4M12 15l4-4" />
+                  <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
                 </svg></div>
-              <h2 class="wp-title">安装 Codex</h2>
-              <p class="wp-desc">将通过 npm 全局安装 <code>@openai/codex</code></p>
+              <h2 class="wp-title">选择要安装的工具</h2>
+              <p class="wp-desc">选择一个 AI 编程工具进行安装，也可以稍后在工具页安装更多。</p>
+
+              <!-- Tool Picker Cards -->
+              <div id="wizardToolPicker" class="wizard-tool-picker">
+                <button class="wizard-tool-card active" data-wizard-tool="codex">
+                  <div class="wtc-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 2l9 5v10l-9 5-9-5V7l9-5z" opacity="0.4" />
+                      <path d="M12 12l9-5M12 12v10M12 12L3 7" />
+                    </svg></div>
+                  <div class="wtc-content">
+                    <div class="wtc-name">Codex CLI</div>
+                    <div class="wtc-desc">OpenAI 官方 AI 编程助手</div>
+                  </div>
+                  <div class="wtc-check"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2.5">
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg></div>
+                </button>
+                <button class="wizard-tool-card" data-wizard-tool="claudecode">
+                  <div class="wtc-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="9" opacity="0.4" />
+                      <path d="M8 12h8M12 8v8" />
+                    </svg></div>
+                  <div class="wtc-content">
+                    <div class="wtc-name">Claude Code</div>
+                    <div class="wtc-desc">Anthropic 终端原生 AI 编程助手</div>
+                  </div>
+                  <div class="wtc-check"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2.5">
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg></div>
+                </button>
+                <button class="wizard-tool-card" data-wizard-tool="openclaw">
+                  <div class="wtc-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" opacity="0.4" />
+                      <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                      <circle cx="9" cy="10" r="1" fill="currentColor" stroke="none" />
+                      <circle cx="15" cy="10" r="1" fill="currentColor" stroke="none" />
+                    </svg></div>
+                  <div class="wtc-content">
+                    <div class="wtc-name">OpenClaw</div>
+                    <div class="wtc-desc">开源多渠道 AI 助手平台</div>
+                  </div>
+                  <div class="wtc-check"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" stroke-width="2.5">
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg></div>
+                </button>
+              </div>
+
+              <!-- Install Method Selector (changes per tool) -->
+              <div id="wizardInstallMethodArea" class="wizard-install-method-area">
+                <div class="wima-label">安装方式</div>
+                <div id="wizardInstallMethods" class="wizard-install-methods-row"></div>
+              </div>
+
+              <!-- Install Status -->
               <div id="wizardInstallStatus" class="wizard-install-box">
-                <div class="wib-command">npm install -g @openai/codex</div>
+                <div class="wib-command" id="wizardInstallCommand">npm install -g @openai/codex</div>
                 <div class="wib-progress hide" id="wizardInstallProgress">
                   <div class="wib-progress-bar">
                     <div class="wib-progress-fill"></div>
@@ -781,10 +1709,10 @@
           <!-- Step 2: Configure Provider -->
           <div class="wizard-panel" data-wizard-panel="2">
             <div class="wp-card">
-              <div class="wp-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" opacity="0.5" />
-                  <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+              <div class="wp-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
                 </svg></div>
               <h2 class="wp-title">配置 API 连接</h2>
               <p class="wp-desc">填入你的 API Provider 信息，自动检测可用模型</p>
@@ -821,7 +1749,7 @@
                 <label class="wizard-field" id="wizardModelField" style="display:none">
                   <span>推荐模型</span>
                   <div class="select-wrap"><select id="wizardModelSelect" data-empty-placeholder="true">
-                      <option value="">先检测模型</option>
+                      <option value="">选择默认模型</option>
                     </select></div>
                 </label>
               </div>
@@ -835,26 +1763,108 @@
           <!-- Step 3: Complete -->
           <div class="wizard-panel" data-wizard-panel="3">
             <div class="wp-card wp-complete-card">
-              <div class="wp-icon wp-success-icon"><svg width="36" height="36" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="10" opacity="0.5" />
-                  <path d="M8 12l3 3 5-6" stroke-width="2" />
+              <div class="wp-icon wp-success-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M8 12l3 3 5-6" />
                 </svg></div>
               <h2 class="wp-title">配置完成！</h2>
-              <p class="wp-desc">你的 Codex 已经配置好了，可以开始使用了</p>
+              <p class="wp-desc" id="wizardCompleteDesc">你的工具已经配置好了，可以开始使用了</p>
               <div id="wizardCompleteSummary" class="wizard-complete-summary"></div>
               <div class="wp-actions">
                 <button id="wizardFinishBtn" class="wizard-primary-btn">进入主界面</button>
-                <button id="wizardLaunchBtn" class="secondary">启动 Codex</button>
+                <button id="wizardLaunchBtn" class="secondary">启动工具</button>
               </div>
             </div>
           </div>
         </div>
       </div>
     </section>
+  <!-- ═══ Config Store Modal ═══ -->
+  <div id="configStoreModal" class="config-store-modal hide">
+    <div class="config-store-backdrop"></div>
+    <div class="config-store-panel">
+      <div class="config-store-header">
+        <div class="config-store-header-left">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9z" opacity="0.4" />
+            <rect x="8" y="13" width="8" height="7" rx="1" />
+            <path d="M10 13v-2a2 2 0 0 1 4 0v2" />
+          </svg>
+          <h2>配置商店</h2>
+          <span class="config-store-tool-badge" id="configStoreToolBadge">Codex</span>
+        </div>
+        <button type="button" id="configStoreCloseBtn" class="topbar-icon-btn" title="关闭">×</button>
+      </div>
+      <div class="config-store-search-bar">
+        <svg class="config-store-search-icon" width="15" height="15" viewBox="0 0 16 16" fill="none"
+          stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="7" cy="7" r="5" />
+          <path d="M11 11l3.5 3.5" />
+        </svg>
+        <input id="configStoreSearchInput" class="config-store-search-input"
+          placeholder="搜索配置方案...如 模型、推理、沙箱、上下文" autocomplete="off" />
+        <kbd class="config-store-kbd">ESC</kbd>
+      </div>
+      <div class="config-store-categories" id="configStoreCategories">
+        <button class="config-store-cat-btn active" data-store-cat="all">全部</button>
+      </div>
+      <div class="config-store-grid" id="configStoreGrid">
+        <!-- Cards rendered by JS -->
+      </div>
+      <div class="config-store-empty hide" id="configStoreEmpty">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"
+          stroke-linecap="round" stroke-linejoin="round" style="opacity:0.3">
+          <circle cx="11" cy="11" r="7" />
+          <line x1="16.5" y1="16.5" x2="21" y2="21" />
+        </svg>
+        <span>没有匹配的配置方案</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Recipe Confirm Modal ═══ -->
+  <div id="recipeConfirmModal" class="recipe-confirm-modal hide">
+    <div class="recipe-confirm-backdrop"></div>
+    <div class="recipe-confirm-panel">
+      <div class="recipe-confirm-head">
+        <h3 id="recipeConfirmTitle">确认应用配置</h3>
+        <button type="button" id="recipeConfirmCloseBtn" class="topbar-icon-btn" title="关闭">×</button>
+      </div>
+      <div class="recipe-confirm-body">
+        <div class="recipe-confirm-info">
+          <div class="recipe-confirm-name" id="recipeConfirmName"></div>
+          <div class="recipe-confirm-desc" id="recipeConfirmDesc"></div>
+        </div>
+        <div class="recipe-confirm-diff-label">配置变更预览</div>
+        <pre class="recipe-confirm-diff" id="recipeConfirmDiff"></pre>
+      </div>
+      <div class="recipe-confirm-foot">
+        <button type="button" id="recipeConfirmCancelBtn" class="secondary">取消</button>
+        <button type="button" id="recipeConfirmApplyBtn">确认应用</button>
+      </div>
+    </div>
+  </div>
+
     <div id="toastContainer" class="toast-container"></div>
   </main>
   <script type="module" src="/app.js"></script>
+  <!-- ═══ Recipe Input Form Modal ═══ -->
+  <div id="ocRecipeFormModal" class="oc-recipe-modal hide">
+    <div class="oc-recipe-modal-backdrop"></div>
+    <div class="oc-recipe-modal-panel">
+      <div class="oc-recipe-modal-head">
+        <h3 id="ocRecipeFormTitle">配置</h3>
+        <button type="button" id="ocRecipeFormCloseBtn" class="topbar-icon-btn" title="关闭">×</button>
+      </div>
+      <div id="ocRecipeFormBody" class="oc-recipe-modal-body"></div>
+      <div class="oc-recipe-modal-foot">
+        <button type="button" id="ocRecipeFormCancelBtn" class="secondary subtle-btn">取消</button>
+        <button type="button" id="ocRecipeFormApplyBtn">应用配置</button>
+      </div>
+    </div>
+  </div>
 </body>
 
 </html>

@@ -12,6 +12,11 @@ const APP_HOME_DIRNAME: &str = ".codex-config-ui";
 const BACKUPS_DIRNAME: &str = "backups";
 pub(crate) const OPENAI_CODEX_PACKAGE: &str = "@openai/codex";
 pub(crate) const CLAUDE_CODE_PACKAGE: &str = "@anthropic-ai/claude-code";
+pub(crate) const OPENCLAW_PACKAGE: &str = "openclaw";
+
+pub(crate) fn openclaw_home() -> Result<PathBuf, String> {
+  Ok(home_dir()?.join(".openclaw"))
+}
 
 pub(crate) fn ok(data: Value) -> Value {
   json!({ "ok": true, "data": data })
