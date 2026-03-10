@@ -77,6 +77,47 @@ const state = {
 
 const el = (id) => document.getElementById(id);
 const tauriInvoke = window.__TAURI__?.core?.invoke || null;
+const rawCodeEditors = new Map();
+
+function renderQuickRailSupportPanel() {
+  const titleEl = el('configTipsTitle');
+  const bodyEl = el('configTipsList');
+  if (!titleEl || !bodyEl) return;
+
+  const compact = window.innerWidth <= 980;
+  if (!compact) {
+    const tips = Array.isArray(state.quickTips) ? state.quickTips : [];
+    titleEl.textContent = '配置提示';
+    bodyEl.className = 'feature-list';
+    bodyEl.innerHTML = tips.map((text, index) => `<div class="feature-row"><span>${index + 1}</span><strong>${escapeHtml(text)}</strong></div>`).join('');
+    return;
+  }
+
+  const heroTitle = document.querySelector('.hero-title');
+  const heroSubtitle = document.querySelector('.hero-subtitle');
+  const heroIndicators = document.querySelector('.hero-indicators');
+  const hasStatusRows = Boolean(heroSubtitle?.querySelector('.oc-status-row'));
+
+  titleEl.textContent = heroTitle?.textContent || '摘要';
+  bodyEl.className = 'quick-summary-list';
+
+  const compactCopy = state.activeTool === 'codex'
+    ? '填 URL 和 API Key 即可。'
+    : state.activeTool === 'claudecode'
+      ? ''
+      : (heroSubtitle?.textContent || '');
+
+  const compactClaudeRows = state.activeTool === 'claudecode' && heroSubtitle?.innerHTML
+    ? heroSubtitle.innerHTML.split('<br>').map((row) => row.trim()).filter(Boolean)
+    : [];
+
+  bodyEl.innerHTML = [
+    heroIndicators?.innerHTML ? `<div class="quick-summary-pills">${heroIndicators.innerHTML}</div>` : '',
+    !hasStatusRows && compactCopy ? `<div class="quick-summary-copy">${escapeHtml(compactCopy)}</div>` : '',
+    compactClaudeRows.length ? `<div class="quick-summary-plain">${compactClaudeRows.map((row) => `<div class="quick-summary-line">${row}</div>`).join('')}</div>` : '',
+    hasStatusRows && heroSubtitle?.innerHTML ? `<div class="quick-summary-body">${heroSubtitle.innerHTML}</div>` : '',
+  ].join('');
+}
 
 /** Open OpenClaw dashboard with auth token appended */
 function openOpenClawDashboard(baseUrl) {
@@ -250,6 +291,7 @@ function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   // Update range slider fills for new theme colors
   document.querySelectorAll('.config-range').forEach(updateRangeFill);
+  syncRawCodeEditorTheme();
 }
 
 function toggleTheme() {
@@ -673,6 +715,13 @@ async function loadClaudeCodeQuickState() {
     const data = json.data;
     state.claudeCodeState = data;
 
+    // Only update quick-page UI if Claude Code is the active tool
+    if (state.activeTool !== 'claudecode') {
+      // Still update console and side panel
+      renderToolConsole();
+      return;
+    }
+
     const modelSelect = el('modelSelect');
     if (modelSelect) {
       // Build model options: aliases + used models from history
@@ -779,6 +828,13 @@ async function loadOpenClawQuickState() {
     const quick = deriveOpenClawQuickConfig(data);
     state.openClawQuickConfig = quick;
 
+    // Only update quick-page UI if OpenClaw is the active tool
+    if (state.activeTool !== 'openclaw') {
+      // Still update console and side panel
+      renderToolConsole();
+      return;
+    }
+
     const heroTitle = document.querySelector('.hero-title');
     const heroSubtitle = document.querySelector('.hero-subtitle');
     const baseUrlInput = el('baseUrlInput');
@@ -821,7 +877,7 @@ async function loadOpenClawQuickState() {
       }
       if (_dqr) _dqr.classList.remove('hide');
     } else {
-      if (_lb && state.activeTool === 'openclaw') {
+      if (_lb) {
         _lb.textContent = '启动 OpenClaw';
         _lb.classList.remove('running');
       }
@@ -2840,10 +2896,43 @@ function getToolConsoleLabel(tool = 'codex') {
   return TOOL_CONSOLE_META[tool]?.label || tool;
 }
 
-function renderToolConsoleStat(label, value, sub = '') {
+const TC_STAT_ICONS = {
+  install: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2.5 8a5.5 5.5 0 0 1 11 0 5.5 5.5 0 0 1-11 0z"/><path d="M8 5v6M5.5 8.5L8 11l2.5-2.5"/></svg>',
+  scope: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M6 6h4M6 8h4M6 10h2"/></svg>',
+  provider: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M6.5 9.5a3.5 3.5 0 0 0 5 0l1-1a3.54 3.54 0 0 0-5-5l-.5.5"/><path d="M9.5 6.5a3.5 3.5 0 0 0-5 0l-1 1a3.54 3.54 0 0 0 5 5l.5-.5"/></svg>',
+  health: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 14s-5.5-3.5-5.5-7A3.5 3.5 0 0 1 8 4.5 3.5 3.5 0 0 1 13.5 7C13.5 10.5 8 14 8 14z"/></svg>',
+  auth: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></svg>',
+  model: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 5l6-3 6 3v6l-6 3-6-3z"/><path d="M2 5l6 3m0 6V8m6-3l-6 3"/></svg>',
+  history: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M8 5v3.5l2.5 1.5"/></svg>',
+  dashboard: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M2 6h12M6 6v8"/></svg>',
+  agent: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="5" r="2.5"/><path d="M3.5 14c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5"/></svg>',
+  channel: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 12l3-3h7a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v8z"/></svg>',
+};
+
+const TC_CARD_ICONS = {
+  status: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M6 6h4M6 8h4M6 10h2"/></svg>',
+  providers: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M6.5 9.5a3.5 3.5 0 0 0 5 0l1-1a3.54 3.54 0 0 0-5-5l-.5.5"/><path d="M9.5 6.5a3.5 3.5 0 0 0-5 0l-1 1a3.54 3.54 0 0 0 5 5l.5-.5"/></svg>',
+  issues: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3M8 12v.5"/></svg>',
+  actions: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 2v12M2 8h12"/></svg>',
+  models: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 5l6-3 6 3v6l-6 3-6-3z"/><path d="M2 5l6 3m0 6V8m6-3l-6 3"/></svg>',
+  agent: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="5" r="2.5"/><path d="M3.5 14c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5"/></svg>',
+  channels: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 12l3-3h7a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v8z"/></svg>',
+  runtime: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M2 6h12M6 6v8"/></svg>',
+};
+
+const TC_ISSUE_ICONS = {
+  warn: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3"/><circle cx="8" cy="12" r="0.5" fill="currentColor" stroke="none"/></svg>',
+  error: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M10 6L6 10M6 6l4 4"/></svg>',
+  ok: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="8" r="6"/><path d="M5.5 8l2 2 3.5-4"/></svg>',
+};
+
+function renderToolConsoleStat(label, value, sub = '', { icon = '' } = {}) {
+  const iconHtml = icon && TC_STAT_ICONS[icon]
+    ? `<span class="tc-stat-icon">${TC_STAT_ICONS[icon]}</span>`
+    : '';
   return `
     <div class="tool-console-stat">
-      <div class="tool-console-stat-label">${escapeHtml(label)}</div>
+      <div class="tool-console-stat-label">${iconHtml}${escapeHtml(label)}</div>
       <div class="tool-console-stat-value">${escapeHtml(value || '-')}</div>
       ${sub ? `<div class="tool-console-stat-sub">${sub}</div>` : ''}
     </div>
@@ -2861,11 +2950,16 @@ function renderToolConsoleAction(action = {}) {
 }
 
 function renderToolConsoleIssue(issue = {}) {
+  const tone = issue.tone || 'warn';
+  const iconSvg = TC_ISSUE_ICONS[tone] || TC_ISSUE_ICONS.warn;
   return `
-    <div class="tool-console-issue ${escapeHtml(issue.tone || 'warn')}">
-      <div class="tool-console-issue-title">${escapeHtml(issue.title || '提醒')}</div>
-      <div class="tool-console-issue-copy">${escapeHtml(issue.copy || '')}</div>
-      ${issue.action ? `<div class="tool-console-actions">${renderToolConsoleAction(issue.action)}</div>` : ''}
+    <div class="tool-console-issue ${escapeHtml(tone)}">
+      <div class="tc-issue-indicator">${iconSvg}</div>
+      <div class="tc-issue-body">
+        <div class="tool-console-issue-title">${escapeHtml(issue.title || '提醒')}</div>
+        <div class="tool-console-issue-copy">${escapeHtml(issue.copy || '')}</div>
+        ${issue.action ? `<div class="tool-console-actions">${renderToolConsoleAction(issue.action)}</div>` : ''}
+      </div>
     </div>
   `;
 }
@@ -2880,11 +2974,16 @@ function renderToolConsoleRow(label, value, { html = false } = {}) {
   return `<div class="tool-console-row"><div class="tool-console-row-label">${escapeHtml(label)}</div><div class="tool-console-row-value">${renderedValue}</div></div>`;
 }
 
-function renderToolConsoleCard(title, copy, body) {
+function renderToolConsoleCard(title, copy, body, { icon = '', iconTone = '' } = {}) {
+  const iconKey = icon || '';
+  const iconSvg = TC_CARD_ICONS[iconKey] || '';
+  const iconHtml = iconSvg
+    ? `<span class="tc-card-icon ${escapeHtml(iconTone)}">${iconSvg}</span>`
+    : '';
   return `
     <section class="tool-console-card">
       <div class="tool-console-card-head">
-        <div class="tool-console-card-title">${escapeHtml(title)}</div>
+        <div class="tool-console-card-title">${iconHtml}${escapeHtml(title)}</div>
         ${copy ? `<div class="tool-console-card-copy">${escapeHtml(copy)}</div>` : ''}
       </div>
       ${body}
@@ -2954,7 +3053,7 @@ function buildCodexConsoleView() {
   const issues = [];
 
   if (!data.codexBinary?.installed) {
-    issues.push({ tone: 'error', title: 'Codex 未安装', copy: '还没检测到 codex 命令，先去“工具安装”里安装。', action: { type: 'goto-page', page: 'tools', label: '去安装' } });
+    issues.push({ tone: 'error', title: 'Codex 未安装', copy: '还没检测到 codex 命令，先去"工具安装"里安装。', action: { type: 'goto-page', page: 'tools', label: '去安装' } });
   }
   if (!data.configExists) {
     issues.push({ tone: 'warn', title: '还没有 Codex 配置', copy: '当前作用域尚未写入 config.toml，建议先完成一次快速配置。', action: { type: 'goto-quick-tool', tool: 'codex', label: '去快速配置' } });
@@ -2963,17 +3062,17 @@ function buildCodexConsoleView() {
     issues.push({ tone: 'error', title: '没有可用 Provider', copy: '当前配置里还没有保存任何 Provider，Codex 启动后通常无法正常请求模型。', action: { type: 'goto-page', page: 'providers', label: '去看 Provider' } });
   }
   if (active && !active.hasApiKey) {
-    issues.push({ tone: 'error', title: '当前 Provider 缺少密钥', copy: `活动 Provider “${active.name}” 已选中，但没有检测到可用 API Key。`, action: { type: 'goto-quick-tool', tool: 'codex', label: '去补 Key' } });
+    issues.push({ tone: 'error', title: '当前 Provider 缺少密钥', copy: `活动 Provider "${active.name}" 已选中，但没有检测到可用 API Key。`, action: { type: 'goto-quick-tool', tool: 'codex', label: '去补 Key' } });
   }
   if (health?.checked && !health.ok) {
-    issues.push({ tone: 'warn', title: '当前 Provider 连通性异常', copy: `已对 “${active?.name || '当前 Provider'}” 做过检测，但结果不通过。`, action: { type: 'refresh-console', label: '重新检测' } });
+    issues.push({ tone: 'warn', title: '当前 Provider 连通性异常', copy: `已对 "${active?.name || '当前 Provider'}" 做过检测，但结果不通过。`, action: { type: 'refresh-console', label: '重新检测' } });
   }
 
   const summary = [
-    renderToolConsoleStat('安装状态', data.codexBinary?.installed ? (data.codexBinary.version || '已安装') : '未安装', data.codexBinary?.path ? `<span class="tool-console-code">${escapeHtml(data.codexBinary.path)}</span>` : ''),
-    renderToolConsoleStat('作用域', data.scope === 'project' ? '项目级' : '全局', data.rootPath ? `<span class="tool-console-code">${escapeHtml(data.rootPath)}</span>` : ''),
-    renderToolConsoleStat('活动 Provider', active?.name || '未选择', active?.baseUrl ? `<span class="tool-console-code">${escapeHtml(active.baseUrl)}</span>` : '还没有可用 Provider'),
-    renderToolConsoleStat('健康检测', health?.loading ? '检测中' : health?.checked ? (health.ok ? '通过' : '失败') : '未检测', active ? `模型：${escapeHtml(data.summary?.model || '-')}` : '先保存 Provider 再检测'),
+    renderToolConsoleStat('安装状态', data.codexBinary?.installed ? (data.codexBinary.version || '已安装') : '未安装', data.codexBinary?.path ? `<span class="tool-console-code">${escapeHtml(data.codexBinary.path)}</span>` : '', { icon: 'install' }),
+    renderToolConsoleStat('作用域', data.scope === 'project' ? '项目级' : '全局', data.rootPath ? `<span class="tool-console-code">${escapeHtml(data.rootPath)}</span>` : '', { icon: 'scope' }),
+    renderToolConsoleStat('活动 Provider', active?.name || '未选择', active?.baseUrl ? `<span class="tool-console-code">${escapeHtml(active.baseUrl)}</span>` : '还没有可用 Provider', { icon: 'provider' }),
+    renderToolConsoleStat('健康检测', health?.loading ? '检测中' : health?.checked ? (health.ok ? '通过' : '失败') : '未检测', active ? `模型：${escapeHtml(data.summary?.model || '-')}` : '先保存 Provider 再检测', { icon: 'health' }),
   ].join('');
 
   const providerBody = providers.length
@@ -2994,9 +3093,9 @@ function buildCodexConsoleView() {
     : '<div class="tool-console-empty">当前没有已保存的 Codex Provider。</div>';
 
   const main = [
-    renderToolConsoleCard('状态总览', '安装、配置与当前模型', `<div class="tool-console-list">${renderToolConsoleRow('配置文件', `<span class="tool-console-code">${escapeHtml(data.configPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('环境变量文件', `<span class="tool-console-code">${escapeHtml(data.envPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('Sandbox', data.summary?.sandboxMode || '默认')}${renderToolConsoleRow('审批策略', data.summary?.approvalPolicy || '默认')}${renderToolConsoleRow('推理强度', data.summary?.reasoningEffort || '默认')}</div>`),
-    renderToolConsoleCard('Provider 检测', '已保存 Provider 与密钥状态', providerBody),
-    renderToolConsoleCard('异常检测', '会优先指出最影响启动与请求的问题', renderToolConsoleIssueList(issues, 'Codex 侧暂未发现明显阻塞项。')),
+    renderToolConsoleCard('状态总览', '安装、配置与当前模型', `<div class="tool-console-list">${renderToolConsoleRow('配置文件', `<span class="tool-console-code">${escapeHtml(data.configPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('环境变量文件', `<span class="tool-console-code">${escapeHtml(data.envPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('Sandbox', data.summary?.sandboxMode || '默认')}${renderToolConsoleRow('审批策略', data.summary?.approvalPolicy || '默认')}${renderToolConsoleRow('推理强度', data.summary?.reasoningEffort || '默认')}</div>`, { icon: 'status' }),
+    renderToolConsoleCard('Provider 检测', '已保存 Provider 与密钥状态', providerBody, { icon: 'providers' }),
+    renderToolConsoleCard('异常检测', '会优先指出最影响启动与请求的问题', renderToolConsoleIssueList(issues, 'Codex 侧暂未发现明显阻塞项。'), { icon: 'issues', iconTone: issues.length ? (issues.some(i => i.tone === 'error') ? 'error' : 'warn') : 'ok' }),
   ].join('');
 
   const side = [
@@ -3005,10 +3104,10 @@ function buildCodexConsoleView() {
       { type: 'goto-page', page: 'providers', label: '查看 Provider' },
       { type: 'goto-config-editor-tool', tool: 'codex', label: '打开配置编辑' },
       { type: 'goto-quick-tool', tool: 'codex', label: '切到快速配置' },
-    ].map(renderToolConsoleAction).join('')}</div>`),
+    ].map(renderToolConsoleAction).join('')}</div>`, { icon: 'actions' }),
   ].join('');
 
-  return { summary, main, side };
+  return { summary, main, side, activity: '' };
 }
 
 function buildClaudeConsoleView() {
@@ -3016,15 +3115,15 @@ function buildClaudeConsoleView() {
   const login = data.login || {};
   const issues = [];
 
-  if (!data.binary?.installed) issues.push({ tone: 'error', title: 'Claude Code 未安装', copy: '还没检测到 Claude Code 命令，先去“工具安装”完成安装。', action: { type: 'goto-page', page: 'tools', label: '去安装' } });
+  if (!data.binary?.installed) issues.push({ tone: 'error', title: 'Claude Code 未安装', copy: '还没检测到 Claude Code 命令，先去"工具安装"完成安装。', action: { type: 'goto-page', page: 'tools', label: '去安装' } });
   if (!login.loggedIn && !data.hasApiKey) issues.push({ tone: 'error', title: 'Claude Code 尚未认证', copy: '当前既没有登录态，也没有检测到可用 API Key。', action: { type: 'goto-quick-tool', tool: 'claudecode', label: '去快速配置' } });
   if (!data.model) issues.push({ tone: 'warn', title: '默认模型未显式指定', copy: 'Claude Code 会回退到自身默认模型；如果你想可控，建议手动指定。', action: { type: 'goto-quick-tool', tool: 'claudecode', label: '设置模型' } });
 
   const summary = [
-    renderToolConsoleStat('安装状态', data.binary?.installed ? (data.binary.version || '已安装') : '未安装', data.binary?.path ? `<span class="tool-console-code">${escapeHtml(data.binary.path)}</span>` : ''),
-    renderToolConsoleStat('认证状态', login.loggedIn ? (login.method === 'oauth' ? 'OAuth 已登录' : 'API Key 已就绪') : '未认证', login.email || login.orgName ? escapeHtml([login.email, login.orgName].filter(Boolean).join(' · ')) : '建议先完成认证'),
-    renderToolConsoleStat('默认模型', data.model || '由 Claude Code 决定', data.alwaysThinkingEnabled ? 'Always thinking 已开启' : '按默认推理策略运行'),
-    renderToolConsoleStat('历史模型', String((data.usedModels || []).length || 0), (data.usedModels || []).length ? `${data.usedModels.length} 个历史模型别名/全名` : '还没有历史模型记录'),
+    renderToolConsoleStat('安装状态', data.binary?.installed ? (data.binary.version || '已安装') : '未安装', data.binary?.path ? `<span class="tool-console-code">${escapeHtml(data.binary.path)}</span>` : '', { icon: 'install' }),
+    renderToolConsoleStat('认证状态', login.loggedIn ? (login.method === 'oauth' ? 'OAuth 已登录' : 'API Key 已就绪') : '未认证', login.email || login.orgName ? escapeHtml([login.email, login.orgName].filter(Boolean).join(' · ')) : '建议先完成认证', { icon: 'auth' }),
+    renderToolConsoleStat('默认模型', data.model || '由 Claude Code 决定', data.alwaysThinkingEnabled ? 'Always thinking 已开启' : '按默认推理策略运行', { icon: 'model' }),
+    renderToolConsoleStat('历史模型', String((data.usedModels || []).length || 0), (data.usedModels || []).length ? `${data.usedModels.length} 个历史模型别名/全名` : '还没有历史模型记录', { icon: 'history' }),
   ].join('');
 
   const modelsBody = (data.usedModels || []).length
@@ -3032,9 +3131,9 @@ function buildClaudeConsoleView() {
     : '<div class="tool-console-empty">当前还没有历史模型记录。</div>';
 
   const main = [
-    renderToolConsoleCard('状态总览', '登录、配置与行为开关', `<div class="tool-console-list">${renderToolConsoleRow('settings.json', `<span class="tool-console-code">${escapeHtml(data.settingsPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('登录方式', login.loggedIn ? (login.method || '已登录') : '未登录')}${renderToolConsoleRow('Always thinking', data.alwaysThinkingEnabled ? '开启' : '关闭')}${renderToolConsoleRow('危险权限提示', data.skipDangerousModePermissionPrompt ? '已跳过' : '保持提示')}</div>`),
-    renderToolConsoleCard('历史模型', '便于回看最近用过什么模型', modelsBody),
-    renderToolConsoleCard('异常检测', '优先指出安装、登录和模型配置问题', renderToolConsoleIssueList(issues, 'Claude Code 侧暂未发现明显阻塞项。')),
+    renderToolConsoleCard('状态总览', '登录、配置与行为开关', `<div class="tool-console-list">${renderToolConsoleRow('settings.json', `<span class="tool-console-code">${escapeHtml(data.settingsPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('登录方式', login.loggedIn ? (login.method || '已登录') : '未登录')}${renderToolConsoleRow('Always thinking', data.alwaysThinkingEnabled ? '开启' : '关闭')}${renderToolConsoleRow('危险权限提示', data.skipDangerousModePermissionPrompt ? '已跳过' : '保持提示')}</div>`, { icon: 'status' }),
+    renderToolConsoleCard('历史模型', '便于回看最近用过什么模型', modelsBody, { icon: 'models' }),
+    renderToolConsoleCard('异常检测', '优先指出安装、登录和模型配置问题', renderToolConsoleIssueList(issues, 'Claude Code 侧暂未发现明显阻塞项。'), { icon: 'issues', iconTone: issues.length ? (issues.some(i => i.tone === 'error') ? 'error' : 'warn') : 'ok' }),
   ].join('');
 
   const side = [
@@ -3042,10 +3141,10 @@ function buildClaudeConsoleView() {
       { type: 'refresh-console', label: '重新检测', primary: true },
       { type: 'goto-quick-tool', tool: 'claudecode', label: '切到快速配置' },
       { type: 'goto-page', page: 'tools', label: '查看安装状态' },
-    ].map(renderToolConsoleAction).join('')}</div>`),
+    ].map(renderToolConsoleAction).join('')}</div>`, { icon: 'actions' }),
   ].join('');
 
-  return { summary, main, side };
+  return { summary, main, side, activity: '' };
 }
 
 function buildOpenClawConsoleView() {
@@ -3060,7 +3159,7 @@ function buildOpenClawConsoleView() {
   const gatewayAuth = String(config.gateway?.auth?.mode || 'token');
   const issues = [];
 
-  if (!data.binary?.installed) issues.push({ tone: 'error', title: 'OpenClaw 未安装', copy: '当前还没检测到 openclaw 命令，先去“工具安装”完成安装。', action: { type: 'goto-page', page: 'tools', label: '去安装' } });
+  if (!data.binary?.installed) issues.push({ tone: 'error', title: 'OpenClaw 未安装', copy: '当前还没检测到 openclaw 命令，先去"工具安装"完成安装。', action: { type: 'goto-page', page: 'tools', label: '去安装' } });
   if (!data.configExists) issues.push({ tone: 'warn', title: 'openclaw.json 尚未生成', copy: '说明还没完成初始化或还没真正保存过配置。', action: { type: 'goto-quick-tool', tool: 'openclaw', label: '去快速配置' } });
   if (data.needsOnboarding) issues.push({ tone: 'warn', title: 'OpenClaw 仍需初始化', copy: '安装后还没完成 onboard，或 Gateway 尚未真正启动。', action: { type: 'launch-openclaw', label: '启动并初始化' } });
   if (!data.gatewayReachable) issues.push({ tone: 'warn', title: 'Dashboard 未在线', copy: '当前没探测到本地 Gateway，很多渠道回调和控制面板操作都会失效。', action: { type: 'launch-openclaw', label: '启动 Gateway' } });
@@ -3071,10 +3170,10 @@ function buildOpenClawConsoleView() {
   if (channels.some((item) => ['wechat', 'wechatWork', 'wechatwork', 'webhook'].includes(item.key)) && !config.gateway?.tls && !config.gateway?.trustProxy) issues.push({ tone: 'warn', title: '公网回调场景建议补 HTTPS / 反代', copy: '你已经在配公众号、企微或 Webhook，一般需要公网 HTTPS 或反向代理才能稳定接入。', action: { type: 'goto-config-editor-tool', tool: 'openclaw', label: '去配网关' } });
 
   const summary = [
-    renderToolConsoleStat('安装状态', data.binary?.installed ? (data.binary.version || '已安装') : '未安装', data.binary?.path ? `<span class="tool-console-code">${escapeHtml(data.binary.path)}</span>` : ''),
-    renderToolConsoleStat('Dashboard', data.gatewayReachable ? '在线' : '未启动', data.gatewayUrl ? `<span class="tool-console-code">${escapeHtml(data.gatewayUrl)}</span>` : '等待本地 Gateway 启动'),
-    renderToolConsoleStat('默认 Agent', quick.model || defaults.model?.primary || '未设置', defaults.thinkingDefault ? `thinking=${escapeHtml(defaults.thinkingDefault)}` : '建议先固定默认模型'),
-    renderToolConsoleStat('接入渠道', String(channels.length), channels.length ? channels.map((item) => item.label).slice(0, 3).join(' · ') : '尚未接入任何聊天渠道'),
+    renderToolConsoleStat('安装状态', data.binary?.installed ? (data.binary.version || '已安装') : '未安装', data.binary?.path ? `<span class="tool-console-code">${escapeHtml(data.binary.path)}</span>` : '', { icon: 'install' }),
+    renderToolConsoleStat('Dashboard', data.gatewayReachable ? '在线' : '未启动', data.gatewayUrl ? `<span class="tool-console-code">${escapeHtml(data.gatewayUrl)}</span>` : '等待本地 Gateway 启动', { icon: 'dashboard' }),
+    renderToolConsoleStat('默认 Agent', quick.model || defaults.model?.primary || '未设置', defaults.thinkingDefault ? `thinking=${escapeHtml(defaults.thinkingDefault)}` : '建议先固定默认模型', { icon: 'agent' }),
+    renderToolConsoleStat('接入渠道', String(channels.length), channels.length ? channels.map((item) => item.label).slice(0, 3).join(' · ') : '尚未接入任何聊天渠道', { icon: 'channel' }),
   ].join('');
 
   const customAgentsBody = agentInfo.customAgents.length
@@ -3098,35 +3197,138 @@ function buildOpenClawConsoleView() {
     : '<div class="tool-console-empty">当前还没有接入聊天渠道。</div>';
 
   const main = [
-    renderToolConsoleCard('运行状态', 'Gateway、配置与认证风险', `<div class="tool-console-list">${renderToolConsoleRow('配置文件', `<span class="tool-console-code">${escapeHtml(data.configPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('Gateway', data.gatewayReachable ? '在线' : '未就绪')}${renderToolConsoleRow('Bind', gatewayBind)}${renderToolConsoleRow('Auth', gatewayAuth)}${renderToolConsoleRow('Onboarding', data.needsOnboarding ? '待完成' : '已完成')}</div>`),
-    renderToolConsoleCard('Agent 总览', '默认 Agent + 自定义 Agent', `<div class="tool-console-list">${renderToolConsoleRow('默认模型', quick.model || defaults.model?.primary || '-')}${renderToolConsoleRow('Thinking', defaults.thinkingDefault || '默认')}${renderToolConsoleRow('并发', defaults.maxConcurrent ? String(defaults.maxConcurrent) : '默认')}${renderToolConsoleRow('Heartbeat', defaults.heartbeat?.every || '关闭')}</div>${renderToolConsoleGroupLabel('自定义 Agent')}${customAgentsBody}`),
-    renderToolConsoleCard('异常检测', '优先指出启动、模型、认证和暴露风险', renderToolConsoleIssueList(issues, 'OpenClaw 侧暂未发现明显阻塞项。')),
+    renderToolConsoleCard('运行状态', 'Gateway、配置与认证', `<div class="tool-console-list">${renderToolConsoleRow('配置文件', `<span class="tool-console-code">${escapeHtml(data.configPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('Gateway', data.gatewayReachable ? '在线' : '未就绪')}${renderToolConsoleRow('Bind', gatewayBind)}${renderToolConsoleRow('Auth', gatewayAuth)}${renderToolConsoleRow('Onboarding', data.needsOnboarding ? '待完成' : '已完成')}</div>`, { icon: 'runtime' }),
+    renderToolConsoleCard('异常检测', '优先指出启动、模型、认证和暴露风险', renderToolConsoleIssueList(issues, 'OpenClaw 侧暂未发现明显阻塞项。'), { icon: 'issues', iconTone: issues.length ? (issues.some(i => i.tone === 'error') ? 'error' : 'warn') : 'ok' }),
   ].join('');
 
   const side = [
-    renderToolConsoleCard('渠道与 Provider', '看当前这台 OpenClaw 正在接什么、用什么模型源', `${channelBody}${renderToolConsoleGroupLabel('Provider')}${providerBody}`),
-    renderToolConsoleCard('快速操作', '检测、启动、停止、跳转排错入口', `<div class="tool-console-actions">${[
+    renderToolConsoleCard('渠道与 Provider', '接入的渠道和模型源', `${channelBody}${renderToolConsoleGroupLabel('Provider')}${providerBody}`, { icon: 'channels' }),
+    renderToolConsoleCard('快速操作', '检测、启动、停止', `<div class="tool-console-actions">${[
       { type: 'refresh-console', label: '重新检测', primary: true },
       data.gatewayReachable ? { type: 'open-openclaw-dashboard', label: '打开 Dashboard' } : { type: 'launch-openclaw', label: '启动 OpenClaw' },
       { type: 'stop-openclaw', label: '停止 Gateway' },
       { type: 'goto-config-editor-tool', tool: 'openclaw', label: '打开配置编辑' },
       { type: 'goto-quick-tool', tool: 'openclaw', label: '切到快速配置' },
-    ].map(renderToolConsoleAction).join('')}</div>`),
+    ].map(renderToolConsoleAction).join('')}</div>`, { icon: 'actions' }),
   ].join('');
 
-  return { summary, main, side };
+  // Build activity panel (agent grid + issues log)
+  const activitySections = [];
+
+  // Error / Issue log (always show if issues exist)
+  if (issues.length) {
+    const logItems = issues.map((issue) => {
+      const level = issue.tone === 'error' ? 'error' : issue.tone === 'ok' ? 'ok' : 'warn';
+      return `<div class="tc-log-item"><div class="tc-log-level ${level}"></div><div class="tc-log-message">${escapeHtml(issue.title)}: ${escapeHtml(issue.copy)}</div></div>`;
+    }).join('');
+    activitySections.push(`
+      <details class="tc-activity-section" open>
+        <summary class="tc-activity-summary">
+          <span class="tc-activity-icon logs"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 2l6 11H2L8 2z"/><path d="M8 7v3"/><circle cx="8" cy="12" r="0.5" fill="currentColor" stroke="none"/></svg></span>
+          错误与告警
+          <span class="tc-activity-badge">${issues.length} 项</span>
+        </summary>
+        <div class="tc-activity-body"><div class="tc-log-list">${logItems}</div></div>
+      </details>
+    `);
+  }
+
+  // Agent activity
+  const allAgents = [
+    { key: 'defaults', model: quick.model || defaults.model?.primary || '-', workspace: defaults.workspace || '~' },
+    ...agentInfo.customAgents,
+  ];
+  if (allAgents.length) {
+    const agentCards = allAgents.map((agent) => `
+      <div class="tc-agent-card">
+        <div class="tc-agent-name">${escapeHtml(agent.key)}</div>
+        <div class="tc-agent-meta">模型: ${escapeHtml(agent.model)}<br>目录: ${escapeHtml(agent.workspace || '~')}</div>
+      </div>
+    `).join('');
+    activitySections.push(`
+      <details class="tc-activity-section">
+        <summary class="tc-activity-summary">
+          <span class="tc-activity-icon agents"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="8" cy="5" r="2.5"/><path d="M3.5 14c0-2.5 2-4.5 4.5-4.5s4.5 2 4.5 4.5"/></svg></span>
+          Agent 活动
+          <span class="tc-activity-badge info">${allAgents.length} 个</span>
+        </summary>
+        <div class="tc-activity-body"><div class="tc-agent-grid">${agentCards}</div></div>
+      </details>
+    `);
+  }
+
+  // Channel listing (detailed)
+  if (channels.length) {
+    const channelItems = channels.map((ch) => `
+      <div class="tc-log-item">
+        <div class="tc-log-level ok"></div>
+        <div class="tc-log-message">${escapeHtml(ch.label)}</div>
+        <div class="tc-log-time">${escapeHtml(ch.key)}</div>
+      </div>
+    `).join('');
+    activitySections.push(`
+      <details class="tc-activity-section">
+        <summary class="tc-activity-summary">
+          <span class="tc-activity-icon channels"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 12l3-3h7a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v8z"/></svg></span>
+          接入渠道
+          <span class="tc-activity-badge info">${channels.length} 个</span>
+        </summary>
+        <div class="tc-activity-body"><div class="tc-log-list">${channelItems}</div></div>
+      </details>
+    `);
+  }
+
+  return { summary, main, side, activity: activitySections.join('') };
+}
+
+function getToolStatusDot(tool) {
+  if (tool === 'codex') {
+    const data = state.current || {};
+    if (!data.codexBinary?.installed) return 'error';
+    const active = data.activeProvider;
+    if (active) {
+      const health = state.providerHealth[active.key];
+      if (health?.checked && !health.ok) return 'warning';
+      if (health?.checked && health.ok) return 'online';
+    }
+    return data.configExists ? 'online' : 'warning';
+  }
+  if (tool === 'claudecode') {
+    const data = state.claudeCodeState || {};
+    if (!data.binary?.installed) return 'error';
+    const login = data.login || {};
+    if (login.loggedIn || data.hasApiKey) return 'online';
+    return 'warning';
+  }
+  if (tool === 'openclaw') {
+    const data = state.openclawState || {};
+    if (!data.binary?.installed) return 'error';
+    if (data.gatewayReachable) return 'online';
+    if (data.configExists) return 'warning';
+    return 'offline';
+  }
+  return 'offline';
 }
 
 function renderToolConsole() {
   const summary = el('toolConsoleSummary');
   const main = el('toolConsoleMain');
   const side = el('toolConsoleSide');
+  const activityEl = el('toolConsoleActivity');
   if (!summary || !main || !side) return;
 
   const tool = state.consoleTool || 'codex';
   document.querySelectorAll('[data-console-tool]').forEach((button) => {
     button.classList.toggle('active', button.dataset.consoleTool === tool);
   });
+
+  // Update status dots
+  const dotCodex = el('tcDotCodex');
+  const dotClaude = el('tcDotClaude');
+  const dotOpenClaw = el('tcDotOpenClaw');
+  if (dotCodex) dotCodex.className = `tc-tab-dot ${getToolStatusDot('codex')}`;
+  if (dotClaude) dotClaude.className = `tc-tab-dot ${getToolStatusDot('claudecode')}`;
+  if (dotOpenClaw) dotOpenClaw.className = `tc-tab-dot ${getToolStatusDot('openclaw')}`;
 
   const view = tool === 'openclaw'
     ? buildOpenClawConsoleView()
@@ -3137,7 +3339,20 @@ function renderToolConsole() {
   summary.innerHTML = view.summary;
   main.innerHTML = view.main;
   side.innerHTML = view.side;
+
+  // Activity panel (only for OpenClaw currently)
+  if (activityEl) {
+    if (view.activity) {
+      activityEl.innerHTML = view.activity;
+      activityEl.classList.add('has-content');
+    } else {
+      activityEl.innerHTML = '';
+      activityEl.classList.remove('has-content');
+    }
+  }
 }
+
+
 
 async function stopOpenClawGateway({ manual = true } = {}) {
   const result = await api('/api/openclaw/stop', { method: 'POST' });
@@ -3288,6 +3503,152 @@ function escapeHtml(value) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
+
+/* ── TOML / JSON Syntax Highlighter ── */
+function highlightToml(toml) {
+  if (!toml) return '<span class="toml-hl-comment"># 暂无配置</span>';
+  return toml.split('\n').map(line => {
+    // Comment
+    if (/^\s*#/.test(line)) return `<span class="toml-hl-comment">${escapeHtml(line)}</span>`;
+    // Section header  [section] or [[array]]
+    const secMatch = line.match(/^(\s*\[{1,2})([^\]]+)(\]{1,2})/);
+    if (secMatch) return `<span class="toml-hl-section">${escapeHtml(line)}</span>`;
+    // Key = value
+    const kvMatch = line.match(/^(\s*)([A-Za-z0-9_.\-]+)(\s*=\s*)(.*)/);
+    if (kvMatch) {
+      const [, indent, key, eq, val] = kvMatch;
+      return `${escapeHtml(indent)}<span class="toml-hl-key">${escapeHtml(key)}</span><span class="toml-hl-eq">${escapeHtml(eq)}</span>${highlightTomlValue(val)}`;
+    }
+    return escapeHtml(line);
+  }).join('\n');
+}
+
+function highlightTomlValue(val) {
+  const trimmed = val.trim();
+  // String (double or single quoted)
+  if (/^".*"$/.test(trimmed) || /^'.*'$/.test(trimmed)) return `<span class="toml-hl-str">${escapeHtml(val)}</span>`;
+  // Multi-line string start
+  if (/^"""/.test(trimmed) || /^'''/.test(trimmed)) return `<span class="toml-hl-str">${escapeHtml(val)}</span>`;
+  // Boolean
+  if (trimmed === 'true' || trimmed === 'false') return `<span class="toml-hl-bool">${escapeHtml(val)}</span>`;
+  // Number
+  if (/^-?\d[\d_.]*$/.test(trimmed) || /^0x[\da-fA-F]+$/.test(trimmed)) return `<span class="toml-hl-num">${escapeHtml(val)}</span>`;
+  // Array
+  if (trimmed.startsWith('[')) return `<span class="toml-hl-str">${escapeHtml(val)}</span>`;
+  // Inline table
+  if (trimmed.startsWith('{')) return `<span class="toml-hl-str">${escapeHtml(val)}</span>`;
+  return escapeHtml(val);
+}
+
+function highlightJson(json) {
+  if (!json) return '<span class="toml-hl-comment">// 暂无配置</span>';
+  return json.split('\n').map(line => {
+    // String key: "key":
+    let result = line.replace(/"([^"]+)"\s*:/g, '<span class="toml-hl-key">"$1"</span><span class="toml-hl-eq">:</span>');
+    // String values
+    result = result.replace(/:\s*"([^"]*)"/g, ': <span class="toml-hl-str">"$1"</span>');
+    // Booleans
+    result = result.replace(/\b(true|false|null)\b/g, '<span class="toml-hl-bool">$1</span>');
+    // Numbers
+    result = result.replace(/:\s*(-?\d[\d.]*)/g, ': <span class="toml-hl-num">$1</span>');
+    return result;
+  }).join('\n');
+}
+
+function getRawCodeEditorTheme() {
+  return state.theme === 'light' ? 'ace/theme/github' : 'ace/theme/tomorrow_night_eighties';
+}
+
+function ensureRawCodeEditor({ editorId, textareaId, mode }) {
+  const host = el(editorId);
+  const textarea = el(textareaId);
+  if (!host || !textarea || !window.ace) return null;
+  if (rawCodeEditors.has(textareaId)) return rawCodeEditors.get(textareaId);
+
+  window.ace.config.set('basePath', '/vendor/ace');
+  const editor = window.ace.edit(editorId);
+  editor.session.setMode(mode);
+  editor.session.setUseWorker(false);
+  editor.session.setTabSize(2);
+  editor.session.setUseSoftTabs(true);
+  editor.setTheme(getRawCodeEditorTheme());
+  editor.setOptions({
+    fontSize: '12px',
+    showPrintMargin: false,
+    wrap: false,
+    highlightActiveLine: true,
+    scrollPastEnd: 0.15,
+    animatedScroll: true,
+  });
+  editor.setValue(textarea.value || '', -1);
+  editor.session.on('change', () => {
+    textarea.value = editor.getValue();
+  });
+  rawCodeEditors.set(textareaId, editor);
+  return editor;
+}
+
+function initRawCodeEditors() {
+  if (!window.ace) {
+    document.querySelectorAll('.raw-code-editor').forEach((node) => node.classList.add('hide'));
+    document.querySelectorAll('.raw-config-native').forEach((node) => {
+      node.classList.remove('raw-config-native');
+      node.hidden = false;
+      node.style.display = '';
+    });
+    return;
+  }
+
+  ensureRawCodeEditor({ editorId: 'cfgRawTomlEditor', textareaId: 'cfgRawTomlTextarea', mode: 'ace/mode/toml' });
+  ensureRawCodeEditor({ editorId: 'ocCfgRawJsonEditor', textareaId: 'ocCfgRawJsonTextarea', mode: 'ace/mode/json' });
+  syncRawCodeEditorTheme();
+}
+
+function syncRawConfigHighlight() {
+  initRawCodeEditors();
+  rawCodeEditors.forEach((editor, textareaId) => {
+    const textarea = el(textareaId);
+    if (!textarea) return;
+    const nextValue = textarea.value || '';
+    if (editor.getValue() !== nextValue) editor.setValue(nextValue, -1);
+  });
+  refreshRawCodeEditors();
+}
+
+function syncRawCodeEditorTheme() {
+  const theme = getRawCodeEditorTheme();
+  rawCodeEditors.forEach((editor) => editor.setTheme(theme));
+}
+
+function refreshRawCodeEditors() {
+  requestAnimationFrame(() => {
+    rawCodeEditors.forEach((editor) => editor.resize());
+  });
+}
+
+function switchConfigEditorView(view) {
+  const layout = el('configEditorLayout');
+  if (!layout) return;
+  // Update toggle buttons
+  document.querySelectorAll('.cfg-view-icon').forEach(b => {
+    b.classList.toggle('active', b.dataset.cfgView === view);
+  });
+  // Apply view mode
+  layout.dataset.viewMode = view;
+  refreshRawCodeEditors();
+}
+
+// Expose to global scope for onclick attributes (script is type="module")
+window.switchConfigEditorView = switchConfigEditorView;
+
+// Also add event delegation as fallback
+document.addEventListener('click', (e) => {
+  const viewBtn = e.target.closest('.cfg-view-icon');
+  if (viewBtn) {
+    const view = viewBtn.dataset.cfgView;
+    if (view) switchConfigEditorView(view);
+  }
+});
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -4560,6 +4921,7 @@ async function setConfigEditorOpen(open) {
     populateConfigEditor();
     setPage('configEditor');
     if (window.refreshCustomSelects) window.refreshCustomSelects();
+    refreshRawCodeEditors();
   } else {
     setPage('quick');
   }
@@ -4767,6 +5129,7 @@ function populateConfigEditor() {
   el('cfgInstructionsTextarea').value = configValue('instructions', '');
   el('cfgBaseInstructionsTextarea').value = configValue('base_instructions', '');
   el('cfgRawTomlTextarea').value = state.current?.configToml || '';
+  syncRawConfigHighlight();
   refreshConfigNumberFields();
   syncShortcutActiveState();
   applyConfigEditorSearch();
@@ -4800,7 +5163,7 @@ function resetConfigEditorSearch(root) {
   root.querySelectorAll('label.field, label.toggle-item').forEach((node) => {
     node.style.display = '';
   });
-  root.querySelectorAll('details.oc-panel, details.oc-subpanel').forEach((node) => {
+  root.querySelectorAll('details.oc-panel, details.oc-subpanel, details.cfg-section').forEach((node) => {
     node.style.display = '';
     restoreSearchOpenState(node);
   });
@@ -4814,6 +5177,13 @@ function filterCodexConfigEditor(root, query) {
     node.style.display = visible ? '' : 'none';
     if (visible) matched += 1;
   });
+  // Expand all cfg-sections during search
+  if (query) {
+    root.querySelectorAll('details.cfg-section').forEach((d) => {
+      rememberSearchOpenState(d);
+      d.open = true;
+    });
+  }
   return matched;
 }
 
@@ -4916,6 +5286,10 @@ function syncConfigEditorForTool() {
       ? '搜索配置项…如 Telegram、网关、日志、Agent'
       : '搜索配置项…如 沙箱、审批、推理、SQLite';
   }
+  // Show/hide OpenClaw header config switch
+  const ocSwitch = el('ocHeaderConfigSwitch');
+  if (ocSwitch) ocSwitch.classList.toggle('hide', tool !== 'openclaw');
+  refreshRawCodeEditors();
 }
 
 /** Populate the OpenClaw config editor form from state.openclawState. */
@@ -5300,6 +5674,7 @@ function populateOpenClawConfigEditor() {
 
   // ── Raw JSON ──
   el('ocCfgRawJsonTextarea').value = state.openclawState?.configJson || JSON.stringify(cfg, null, 2);
+  syncRawConfigHighlight();
   if (window.refreshCustomSelects) window.refreshCustomSelects();
 
   // Update panel badges
@@ -7144,12 +7519,12 @@ function renderCurrentConfig() {
     el('providerDropdown').classList.toggle('hide', !state.providerDropdownOpen);
     el('providerSwitchBtn').setAttribute('aria-expanded', String(state.providerDropdownOpen));
 
-    const tips = el('configTipsList');
-    if (tips) tips.innerHTML = [
+    state.quickTips = [
       '支持 claude login 和 API Key 两种认证方式',
       '模型别名（sonnet / opus / haiku）可直接使用',
       '可通过 Base URL 配置代理或第三方 API',
-    ].map((t, i) => `<div class="feature-row"><span>${i + 1}</span><strong>${t}</strong></div>`).join('');
+    ];
+    renderQuickRailSupportPanel();
     return;
   }
 
@@ -7173,12 +7548,12 @@ function renderCurrentConfig() {
     el('providerDropdown').classList.toggle('hide', !state.providerDropdownOpen);
     el('providerSwitchBtn').setAttribute('aria-expanded', String(state.providerDropdownOpen));
 
-    const tips = el('configTipsList');
-    if (tips) tips.innerHTML = [
+    state.quickTips = [
       '选择默认模型后保存，启动时无需再手动指定',
       `Token 默认写入 ${quick?.envKey || getOpenClawDefaultEnvKey(quick?.api || 'openai-completions')}，想改就在“配置编辑”里改`,
       '官方 OpenAI / Claude 直连时 Base URL 可留空，代理/中转再填 URL',
-    ].map((t, i) => `<div class="feature-row"><span>${i + 1}</span><strong>${t}</strong></div>`).join('');
+    ];
+    renderQuickRailSupportPanel();
     return;
   }
 
@@ -7212,12 +7587,12 @@ function renderCurrentConfig() {
   el('providerDropdown').classList.toggle('hide', !state.providerDropdownOpen);
   el('providerSwitchBtn').setAttribute('aria-expanded', String(state.providerDropdownOpen));
 
-  const tips = el('configTipsList');
-  if (tips) tips.innerHTML = [
+  state.quickTips = [
     '检测模型后自动推荐最新可用模型',
     '保存后写入 Codex 配置并保留备份',
     '未安装 Codex 时，启动会弹窗引导自动安装',
-  ].map((t, i) => `<div class="feature-row"><span>${i + 1}</span><strong>${t}</strong></div>`).join('');
+  ];
+  renderQuickRailSupportPanel();
 }
 
 async function refreshProviderHealth(force = false) {
@@ -9185,7 +9560,7 @@ function bindEvents() {
   });
 
   el('editConfigQuickBtn').addEventListener('click', () => setConfigEditorOpen(true));
-  el('ocConfigViewSwitch')?.addEventListener('click', (e) => {
+  el('ocHeaderConfigSwitch')?.addEventListener('click', (e) => {
     const button = e.target.closest('[data-oc-config-view]');
     if (!button) return;
     setOpenClawConfigView(button.dataset.ocConfigView || 'full');
@@ -9811,6 +10186,10 @@ function bindEvents() {
 }
 
 bindEvents();
+window.addEventListener('resize', () => {
+  refreshRawCodeEditors();
+  renderQuickRailSupportPanel();
+});
 setPage('quick');
 applyDerivedMeta(true);
 renderModelOptions();

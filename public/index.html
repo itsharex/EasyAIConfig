@@ -346,8 +346,8 @@
                   <div id="providerDropdown" class="provider-dropdown hide"></div>
                 </section>
 
-                <section class="line-panel feature-panel">
-                  <div class="mini-title">配置提示</div>
+                <section class="line-panel feature-panel" id="quickSupportPanel">
+                  <div class="mini-title" id="configTipsTitle">配置提示</div>
                   <div id="configTipsList" class="feature-list">
                     <div class="feature-row"><span>1</span><strong>检测模型后自动推荐最新可用模型</strong></div>
                     <div class="feature-row"><span>2</span><strong>保存后写入 Codex 配置并保留备份</strong></div>
@@ -363,17 +363,33 @@
             <div class="tool-console-page" id="toolConsolePage">
               <div class="tool-console-head">
                 <div class="tool-console-tabs" id="toolConsoleTabs">
-                  <button type="button" class="tool-console-tab active" data-console-tool="codex">Codex</button>
-                  <button type="button" class="tool-console-tab" data-console-tool="claudecode">Claude Code</button>
-                  <button type="button" class="tool-console-tab" data-console-tool="openclaw">OpenClaw</button>
+                  <button type="button" class="tool-console-tab active" data-console-tool="codex">
+                    <span class="tc-tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5v10l-9 5-9-5V7l9-5z" opacity="0.5"/><path d="M12 12l9-5M12 12v10M12 12L3 7"/></svg></span>
+                    <span class="tc-tab-label">Codex</span>
+                    <span class="tc-tab-dot" id="tcDotCodex"></span>
+                  </button>
+                  <button type="button" class="tool-console-tab" data-console-tool="claudecode">
+                    <span class="tc-tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" opacity="0.5"/><path d="M8 12h8M12 8v8"/></svg></span>
+                    <span class="tc-tab-label">Claude Code</span>
+                    <span class="tc-tab-dot" id="tcDotClaude"></span>
+                  </button>
+                  <button type="button" class="tool-console-tab" data-console-tool="openclaw">
+                    <span class="tc-tab-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" opacity="0.5"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><circle cx="9" cy="10" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1" fill="currentColor" stroke="none"/></svg></span>
+                    <span class="tc-tab-label">OpenClaw</span>
+                    <span class="tc-tab-dot" id="tcDotOpenClaw"></span>
+                  </button>
                 </div>
-                <button type="button" id="toolConsoleRefreshBtn" class="secondary tiny-btn">↻ 刷新检测</button>
+                <button type="button" id="toolConsoleRefreshBtn" class="secondary tiny-btn tc-refresh-btn">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.36 6.36L3 21M3 12a9 9 0 0 1 15.36-6.36L21 3"/></svg>
+                  <span>刷新检测</span>
+                </button>
               </div>
               <div class="tool-console-summary" id="toolConsoleSummary"></div>
               <div class="tool-console-grid">
                 <section class="tool-console-panel" id="toolConsoleMain"></section>
                 <aside class="tool-console-side" id="toolConsoleSide"></aside>
               </div>
+              <section class="tool-console-activity" id="toolConsoleActivity"></section>
             </div>
           </section>
 
@@ -531,6 +547,24 @@
                       autocomplete="off" />
                     <button type="button" id="configEditorSearchClearBtn" class="tiny-icon-btn hide" title="清空搜索">×</button>
                   </div>
+                  <!-- View mode icons -->
+                  <div class="cfg-view-icons" id="cfgViewIcons">
+                    <button type="button" class="cfg-view-icon" data-cfg-view="form" title="仅表单配置">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="14" height="10" rx="2"/><path d="M1 6h14M5 6v7"/></svg>
+                    </button>
+                    <button type="button" class="cfg-view-icon active" data-cfg-view="split" title="分栏视图">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="14" height="12" rx="2"/><path d="M8 2v12"/></svg>
+                    </button>
+                    <button type="button" class="cfg-view-icon" data-cfg-view="code" title="仅原始代码">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3L1 8l4 5M11 3l4 5-4 5"/></svg>
+                    </button>
+                  </div>
+                  <!-- OpenClaw config view switch (inline, shown only for openclaw) -->
+                  <div class="oc-header-config-switch hide" id="ocHeaderConfigSwitch">
+                    <span class="oc-header-sep"></span>
+                    <button type="button" class="secondary tiny-btn active" data-oc-config-view="minimal">最小</button>
+                    <button type="button" class="secondary tiny-btn" data-oc-config-view="full">完整</button>
+                  </div>
                   <button class="config-store-btn" id="openConfigStoreBtn" title="打开配置商店，浏览预设方案">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                       stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -551,178 +585,180 @@
                 </div>
               </div>
               <div id="configEditorSearchEmpty" class="config-editor-search-empty hide">没有找到匹配的配置项，试试更短的关键词。</div>
-              <div class="config-editor-layout">
+              <div class="config-editor-layout" id="configEditorLayout" data-view-mode="split">
 
                 <!-- ═══ Codex Config Editor ═══ -->
                 <section class="config-editor-main" data-tool-editor="codex">
-                  <div class="editor-grid dense-grid">
-                    <label class="field"><span>默认模型</span>
-                      <div class="model-combobox" id="cfgModelCombobox" data-input-id="cfgModelInput">
-                        <input id="cfgModelInput" placeholder="默认由模型目录决定" autocomplete="off" />
+                  <!-- ═══ 模型与推理 ═══ -->
+                  <details class="cfg-section" open>
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 1.5"/></svg>
+                      <span>模型与推理</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>默认模型</span>
+                          <div class="model-combobox" id="cfgModelCombobox" data-input-id="cfgModelInput">
+                            <input id="cfgModelInput" placeholder="默认由模型目录决定" autocomplete="off" />
+                          </div>
+                        </label>
+                        <label class="field"><span>默认 Provider</span><input id="cfgProviderInput" placeholder="openai" /></label>
+                        <label class="field"><span>推理强度</span>
+                          <div class="select-wrap"><select id="cfgReasoningSelect">
+                              <option value="">默认 (medium)</option><option value="none">none</option><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>Plan 推理</span>
+                          <div class="select-wrap"><select id="cfgPlanReasoningSelect">
+                              <option value="">默认 (medium)</option><option value="none">none</option><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option>
+                            </select></div>
+                        </label>
                       </div>
-                    </label>
-                    <label class="field"><span>默认 Provider</span><input id="cfgProviderInput"
-                        placeholder="openai" /></label>
-                    <label class="field"><span>服务模式</span>
-                      <div class="select-wrap"><select id="cfgServiceTierSelect">
-                          <option value="">默认 (无偏好)</option>
-                          <option value="fast">Fast</option>
-                          <option value="flex">Flex</option>
-                        </select></div>
-                    </label>
-                    <label class="field"><span>个性</span>
-                      <div class="select-wrap"><select id="cfgPersonalityInput">
-                          <option value="">默认 (无)</option>
-                          <option value="none">none</option>
-                          <option value="friendly">friendly</option>
-                          <option value="pragmatic">pragmatic</option>
-                        </select></div>
-                    </label>
-                    <label class="field"><span>审批策略</span>
-                      <div class="select-wrap"><select id="cfgApprovalSelect">
-                          <option value="">默认 (suggest)</option>
-                          <option value="never">never</option>
-                          <option value="on-request">on-request</option>
-                          <option value="on-failure">on-failure</option>
-                          <option value="untrusted">untrusted</option>
-                        </select></div>
-                    </label>
-                    <label class="field"><span>沙箱模式</span>
-                      <div class="select-wrap"><select id="cfgSandboxSelect">
-                          <option value="">默认 (read-only)</option>
-                          <option value="read-only">read-only</option>
-                          <option value="workspace-write">workspace-write</option>
-                          <option value="danger-full-access">danger-full-access</option>
-                        </select></div>
-                    </label>
-                    <label class="field"><span>推理强度</span>
-                      <div class="select-wrap"><select id="cfgReasoningSelect">
-                          <option value="">默认 (medium)</option>
-                          <option value="none">none</option>
-                          <option value="minimal">minimal</option>
-                          <option value="low">low</option>
-                          <option value="medium">medium</option>
-                          <option value="high">high</option>
-                          <option value="xhigh">xhigh</option>
-                        </select></div>
-                    </label>
-                    <label class="field"><span>Plan 推理</span>
-                      <div class="select-wrap"><select id="cfgPlanReasoningSelect">
-                          <option value="">默认 (medium)</option>
-                          <option value="none">none</option>
-                          <option value="minimal">minimal</option>
-                          <option value="low">low</option>
-                          <option value="medium">medium</option>
-                          <option value="high">high</option>
-                          <option value="xhigh">xhigh</option>
-                        </select></div>
-                    </label>
-                    <label class="field field-wide"><span>上下文大小</span>
-                      <div class="config-number-control">
-                        <div class="config-number-row">
-                          <input id="cfgContextWindowInput" inputmode="numeric" placeholder="默认 272000" />
-                          <button id="cfgContextWindowResetBtn" type="button" class="secondary tiny-btn">默认</button>
-                        </div>
-                        <input id="cfgContextWindowRange" class="config-range" type="range" min="32000" max="1048576"
-                          step="1000" />
-                        <div id="cfgContextWindowHint" class="config-field-hint">拖动滑杆快速调整，也可直接输入数字。</div>
-                      </div>
-                    </label>
-                    <label class="field field-wide"><span>自动压缩阈值</span>
-                      <div class="config-number-control">
-                        <div class="config-number-row">
-                          <input id="cfgCompactLimitInput" inputmode="numeric" placeholder="默认 上下文90% ≈ 244800" />
-                          <button id="cfgCompactLimitResetBtn" type="button" class="secondary tiny-btn">默认</button>
-                        </div>
-                        <input id="cfgCompactLimitRange" class="config-range" type="range" min="16000" max="1048576"
-                          step="1000" />
-                        <div id="cfgCompactLimitHint" class="config-field-hint">默认使用上下文大小的 90%。</div>
-                      </div>
-                    </label>
-                    <label class="field field-wide"><span>工具输出上限</span>
-                      <div class="config-number-control">
-                        <div class="config-number-row">
-                          <input id="cfgToolLimitInput" inputmode="numeric" placeholder="默认 无限制" />
-                          <button id="cfgToolLimitResetBtn" type="button" class="secondary tiny-btn">默认</button>
-                        </div>
-                        <input id="cfgToolLimitRange" class="config-range" type="range" min="1024" max="65536"
-                          step="512" />
-                        <div id="cfgToolLimitHint" class="config-field-hint">留空表示不限制；拖动后会写入具体上限。</div>
-                      </div>
-                    </label>
-                    <label class="field field-wide"><span>SQLite 目录</span>
-                      <div class="path-input-group">
-                        <input id="cfgSqliteHomeInput" placeholder="默认 ~/.codex" />
-                      </div>
-                      <div class="path-actions-row">
-                        <button id="cfgSqliteHomeBrowseBtn" type="button" class="secondary tiny-btn">
-                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-                            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M2 13h12M2 3h5l2 2h5v6H2V3z" />
-                          </svg>
-                          浏览
-                        </button>
-                        <button id="cfgSqliteHomeUseCodexHomeBtn" type="button" class="secondary tiny-btn">
-                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-                            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M2 8l6-5 6 5M3.5 9v4.5h9V9" />
-                          </svg>
-                          Codex Home
-                        </button>
-                        <button id="cfgSqliteHomeResetBtn" type="button" class="secondary tiny-btn">
-                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-                            stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M2 8a6 6 0 0 1 11-3M14 8a6 6 0 0 1-11 3" />
-                            <path d="M14 3v2.5h-2.5M2 13v-2.5h2.5" />
-                          </svg>
-                          默认
-                        </button>
-                      </div>
-                    </label>
-                  </div>
-                  <div class="editor-section-title">路径 & 环境</div>
-                  <div class="editor-grid dense-grid">
-                    <label class="field"><span>配置范围</span>
-                      <div class="select-wrap"><select id="scopeSelect">
-                          <option value="global">全局 ~/.codex</option>
-                          <option value="project">项目 .codex/config.toml</option>
-                        </select></div>
-                    </label>
-                    <label class="field"><span>项目路径</span><input id="projectPathInput"
-                        placeholder="/path/to/project" /></label>
-                    <label class="field"><span>启动目录</span><input id="launchCwdInput" placeholder="默认当前目录" /></label>
-                    <label class="field field-wide"><span>CODEX_HOME</span><input id="codexHomeInput"
-                        placeholder="默认 ~/.codex" /></label>
-                  </div>
-                  <div class="toggle-grid">
-                    <label class="toggle-item"><input id="cfgHideReasoningCheck"
-                        type="checkbox" /><span>隐藏推理过程</span></label>
-                    <label class="toggle-item"><input id="cfgShowRawReasoningCheck"
-                        type="checkbox" /><span>显示原始推理</span></label>
-                    <label class="toggle-item"><input id="cfgDisableStorageCheck"
-                        type="checkbox" /><span>关闭响应存储</span></label>
-                    <label class="toggle-item"><input id="cfgShellSnapshotCheck" type="checkbox" /><span>启用 Shell
-                        Snapshot</span></label>
-                    <label class="toggle-item"><input id="cfgCompactPromptCheck"
-                        type="checkbox" /><span>紧凑提示模式</span></label>
-                    <label class="toggle-item"><input id="cfgUpdateCheck" type="checkbox"
-                        checked /><span>启动时检查更新</span></label>
-                  </div>
-                  <label class="field field-wide"><span>系统指令</span><textarea id="cfgInstructionsTextarea" rows="4"
-                      placeholder="自定义系统指令 (可选)"></textarea></label>
-                  <label class="field field-wide"><span>基础指令</span><textarea id="cfgBaseInstructionsTextarea" rows="4"
-                      placeholder="覆盖模型内置基础指令 (不推荐)"></textarea></label>
-                </section>
+                    </div>
+                  </details>
 
+                  <!-- ═══ 行为与审批 ═══ -->
+                  <details class="cfg-section" open>
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>
+                      <span>行为与审批</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>服务模式</span>
+                          <div class="select-wrap"><select id="cfgServiceTierSelect">
+                              <option value="">默认 (无偏好)</option><option value="fast">Fast</option><option value="flex">Flex</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>个性</span>
+                          <div class="select-wrap"><select id="cfgPersonalityInput">
+                              <option value="">默认 (无)</option><option value="none">none</option><option value="friendly">friendly</option><option value="pragmatic">pragmatic</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>审批策略</span>
+                          <div class="select-wrap"><select id="cfgApprovalSelect">
+                              <option value="">默认 (suggest)</option><option value="never">never</option><option value="on-request">on-request</option><option value="on-failure">on-failure</option><option value="untrusted">untrusted</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>沙箱模式</span>
+                          <div class="select-wrap"><select id="cfgSandboxSelect">
+                              <option value="">默认 (read-only)</option><option value="read-only">read-only</option><option value="workspace-write">workspace-write</option><option value="danger-full-access">danger-full-access</option>
+                            </select></div>
+                        </label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ═══ 上下文与性能 ═══ -->
+                  <details class="cfg-section" open>
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M6 6h4M6 8h4M6 10h2"/></svg>
+                      <span>上下文与性能</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field field-wide"><span>上下文大小</span>
+                          <div class="config-number-control">
+                            <div class="config-number-row">
+                              <input id="cfgContextWindowInput" inputmode="numeric" placeholder="默认 272000" />
+                              <button id="cfgContextWindowResetBtn" type="button" class="secondary tiny-btn">默认</button>
+                            </div>
+                            <input id="cfgContextWindowRange" class="config-range" type="range" min="32000" max="1048576" step="1000" />
+                            <div id="cfgContextWindowHint" class="config-field-hint">拖动滑杆快速调整，也可直接输入数字。</div>
+                          </div>
+                        </label>
+                        <label class="field field-wide"><span>自动压缩阈值</span>
+                          <div class="config-number-control">
+                            <div class="config-number-row">
+                              <input id="cfgCompactLimitInput" inputmode="numeric" placeholder="默认 上下文90% ≈ 244800" />
+                              <button id="cfgCompactLimitResetBtn" type="button" class="secondary tiny-btn">默认</button>
+                            </div>
+                            <input id="cfgCompactLimitRange" class="config-range" type="range" min="16000" max="1048576" step="1000" />
+                            <div id="cfgCompactLimitHint" class="config-field-hint">默认使用上下文大小的 90%。</div>
+                          </div>
+                        </label>
+                        <label class="field field-wide"><span>工具输出上限</span>
+                          <div class="config-number-control">
+                            <div class="config-number-row">
+                              <input id="cfgToolLimitInput" inputmode="numeric" placeholder="默认 无限制" />
+                              <button id="cfgToolLimitResetBtn" type="button" class="secondary tiny-btn">默认</button>
+                            </div>
+                            <input id="cfgToolLimitRange" class="config-range" type="range" min="1024" max="65536" step="512" />
+                            <div id="cfgToolLimitHint" class="config-field-hint">留空表示不限制；拖动后会写入具体上限。</div>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ═══ 路径与环境 ═══ -->
+                  <details class="cfg-section" open>
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13h12M2 3h5l2 2h5v6H2V3z"/></svg>
+                      <span>路径与环境</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>配置范围</span>
+                          <div class="select-wrap"><select id="scopeSelect">
+                              <option value="global">全局 ~/.codex</option><option value="project">项目 .codex/config.toml</option>
+                            </select></div>
+                        </label>
+                        <label class="field"><span>项目路径</span><input id="projectPathInput" placeholder="/path/to/project" /></label>
+                        <label class="field"><span>启动目录</span><input id="launchCwdInput" placeholder="默认当前目录" /></label>
+                        <label class="field field-wide"><span>CODEX_HOME</span><input id="codexHomeInput" placeholder="默认 ~/.codex" /></label>
+                        <label class="field field-wide"><span>SQLite 目录</span>
+                          <div class="path-input-group">
+                            <input id="cfgSqliteHomeInput" placeholder="默认 ~/.codex" />
+                          </div>
+                          <div class="path-actions-row">
+                            <button id="cfgSqliteHomeBrowseBtn" type="button" class="secondary tiny-btn"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13h12M2 3h5l2 2h5v6H2V3z" /></svg> 浏览</button>
+                            <button id="cfgSqliteHomeUseCodexHomeBtn" type="button" class="secondary tiny-btn"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8l6-5 6 5M3.5 9v4.5h9V9" /></svg> Codex Home</button>
+                            <button id="cfgSqliteHomeResetBtn" type="button" class="secondary tiny-btn"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8a6 6 0 0 1 11-3M14 8a6 6 0 0 1-11 3" /><path d="M14 3v2.5h-2.5M2 13v-2.5h2.5" /></svg> 默认</button>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ═══ 开关选项 ═══ -->
+                  <details class="cfg-section" open>
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="5" width="14" height="6" rx="3"/><circle cx="5" cy="8" r="1.5"/></svg>
+                      <span>开关选项</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="toggle-grid">
+                        <label class="toggle-item"><input id="cfgHideReasoningCheck" type="checkbox" /><span>隐藏推理过程</span></label>
+                        <label class="toggle-item"><input id="cfgShowRawReasoningCheck" type="checkbox" /><span>显示原始推理</span></label>
+                        <label class="toggle-item"><input id="cfgDisableStorageCheck" type="checkbox" /><span>关闭响应存储</span></label>
+                        <label class="toggle-item"><input id="cfgShellSnapshotCheck" type="checkbox" /><span>启用 Shell Snapshot</span></label>
+                        <label class="toggle-item"><input id="cfgCompactPromptCheck" type="checkbox" /><span>紧凑提示模式</span></label>
+                        <label class="toggle-item"><input id="cfgUpdateCheck" type="checkbox" checked /><span>启动时检查更新</span></label>
+                      </div>
+                    </div>
+                  </details>
+
+                  <!-- ═══ 指令 ═══ -->
+                  <details class="cfg-section" open>
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2h8l2 3v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5l2-3z"/><path d="M6 8h4M6 10h4"/></svg>
+                      <span>指令</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <label class="field field-wide"><span>系统指令</span><textarea id="cfgInstructionsTextarea" rows="4" placeholder="自定义系统指令 (可选)"></textarea></label>
+                      <label class="field field-wide"><span>基础指令</span><textarea id="cfgBaseInstructionsTextarea" rows="4" placeholder="覆盖模型内置基础指令 (不推荐)"></textarea></label>
+                    </div>
+                  </details>
+                </section>
                 <!-- ═══ OpenClaw Config Editor — Control Panel ═══ -->
                 <section class="config-editor-main hide" data-tool-editor="openclaw">
-                  <div class="oc-panel-toolbar">
-                    <div class="oc-panel-hint">点击面板展开配置，未修改的项会使用 OpenClaw 默认值。</div>
-                    <div class="oc-config-view-switch" id="ocConfigViewSwitch">
-                      <button type="button" class="secondary tiny-btn active" data-oc-config-view="minimal">最小化配置</button>
-                      <button type="button" class="secondary tiny-btn" data-oc-config-view="full">完整配置</button>
-                    </div>
-                  </div>
 
                   <!-- ── 📦 模型配置 ── -->
                   <details class="oc-panel" open>
@@ -2048,17 +2084,21 @@
                   <div class="config-side-section" data-tool-editor-side="codex">
                     <div class="subline">
                       <span class="eyebrow">当前原始 TOML</span>
+                      <div class="raw-config-actions"><span class="raw-editor-chip">Ace Editor</span></div>
                     </div>
-                    <textarea id="cfgRawTomlTextarea" class="raw-config" rows="26"></textarea>
-                    <div class="toml-hint">直接编辑 TOML 后，点击顶部「保存并生效」即可写入配置文件。</div>
+                    <div id="cfgRawTomlEditor" class="raw-code-editor" aria-label="当前原始 TOML 编辑器"></div>
+                    <textarea id="cfgRawTomlTextarea" class="raw-config raw-config-native" rows="26" hidden></textarea>
+                    <div class="toml-hint">支持 TOML 高亮、行号和 `Ctrl/Cmd + F` 搜索；修改后点击顶部「保存并生效」。</div>
                   </div>
                   <!-- OpenClaw raw JSON -->
                   <div class="config-side-section hide" data-tool-editor-side="openclaw">
                     <div class="subline">
                       <span class="eyebrow">当前原始 JSON — openclaw.json</span>
+                      <div class="raw-config-actions"><span class="raw-editor-chip">Ace Editor</span></div>
                     </div>
-                    <textarea id="ocCfgRawJsonTextarea" class="raw-config" rows="26"></textarea>
-                    <div class="toml-hint">直接编辑 JSON 后，点击顶部「保存并生效」即可写入 openclaw.json。</div>
+                    <div id="ocCfgRawJsonEditor" class="raw-code-editor" aria-label="当前原始 JSON 编辑器"></div>
+                    <textarea id="ocCfgRawJsonTextarea" class="raw-config raw-config-native" rows="26" hidden></textarea>
+                    <div class="toml-hint">支持 JSON 高亮、行号和 `Ctrl/Cmd + F` 搜索；修改后点击顶部「保存并生效」。</div>
                   </div>
                 </aside>
               </div>
@@ -2526,6 +2566,7 @@
 
     <div id="toastContainer" class="toast-container"></div>
   </main>
+  <script src="/vendor/ace/ace.js"></script>
   <script type="module" src="/app.js"></script>
   <!-- ═══ Recipe Input Form Modal ═══ -->
   <div id="ocRecipeFormModal" class="oc-recipe-modal hide">
