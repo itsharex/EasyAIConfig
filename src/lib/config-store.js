@@ -11,6 +11,7 @@ const BACKUPS_DIRNAME = 'backups';
 const OPENAI_CODEX_PACKAGE = '@openai/codex';
 const OPENCLAW_INSTALL_TASK_TTL_MS = 30 * 60 * 1000;
 const OPENCLAW_INSTALL_TASKS = new Map();
+const OPENCLAW_NPM_REGISTRY_CN = 'https://registry.npmmirror.com';
 
 let openclawInstallTaskSeq = 0;
 const OPENCLAW_INSTALL_SCRIPT_UNIX = 'curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm';
@@ -64,7 +65,7 @@ const TOOL_REGISTRY = {
     providerKeyField: 'provider',
     projectConfigDir: '.openclaw',
     supported: true,
-    installMethods: ['script', 'npm', 'source', 'docker'],
+    installMethods: process.platform === 'win32' ? ['domestic', 'wsl', 'script'] : ['script', 'npm', 'source', 'docker'],
   },
 };
 
@@ -306,6 +307,16 @@ function openClawInstallStepTemplate(method) {
     ];
   }
 
+  if (method === 'domestic') {
+    return [
+      { key: 'preflight', title: '准备国内安装环境', description: '检查 Node.js、npm，并优先使用当前用户目录', hint: '这一步会尽量自动补齐缺失依赖，你不用手动处理。', progress: 8 },
+      { key: 'download', title: '切换国内 npm 源', description: '使用 npmmirror 获取 OpenClaw 安装包和依赖', hint: '国内网络下通常会更稳、更快。', progress: 26 },
+      { key: 'install', title: '一键安装 OpenClaw', description: '正在安装到当前用户目录，避免系统权限问题', hint: '安装过程可能有短暂静默，请耐心等待。', progress: 64 },
+      { key: 'verify', title: '验证命令是否可用', description: '检查 `openclaw` 命令和版本', hint: '已经接近完成，正在做最终验证。', progress: 88 },
+      { key: 'done', title: '整理下一步引导', description: '安装完成，准备告诉你接下来做什么', hint: '安装结束后，我会直接告诉你下一步。', progress: 100 },
+    ];
+  }
+
   return [
     { key: 'preflight', title: '检查 Node.js / npm', description: '确认 npm 全局安装环境可用', hint: '这一步在确认本机能执行 npm 安装。', progress: 8 },
     { key: 'download', title: '下载 OpenClaw 包', description: 'npm 正在获取安装包和依赖信息', hint: '如果网络慢，这一步可能较久，不代表卡死。', progress: 26 },
@@ -394,7 +405,7 @@ function openClawNpmPrefix() {
   return windowsUserNpmPrefix();
 }
 
-function openClawInstallEnv() {
+function openClawInstallEnv({ useCnRegistry = false } = {}) {
   if (process.platform !== 'win32') return undefined;
   const prefix = openClawNpmPrefix();
   const currentPath = process.env.Path || process.env.PATH || '';
@@ -403,12 +414,17 @@ function openClawInstallEnv() {
     entries.unshift(prefix);
   }
   const joinedPath = entries.join(path.delimiter);
-  return {
+  const env = {
     NPM_CONFIG_PREFIX: prefix,
     npm_config_prefix: prefix,
     Path: joinedPath,
     PATH: joinedPath,
   };
+  if (useCnRegistry) {
+    env.NPM_CONFIG_REGISTRY = OPENCLAW_NPM_REGISTRY_CN;
+    env.npm_config_registry = OPENCLAW_NPM_REGISTRY_CN;
+  }
+  return env;
 }
 
 function toPowerShellString(value) {
@@ -434,12 +450,12 @@ async function ensureWindowsUserPathEntry(targetPath) {
   return { ok: result.ok, changed: /changed/i.test(result.stdout || '') };
 }
 
-async function prepareOpenClawWindowsInstall() {
+async function prepareOpenClawWindowsInstall({ useCnRegistry = false } = {}) {
   if (process.platform !== 'win32') return { env: undefined, prefix: '', changed: false, pathChanged: false };
   const prefix = openClawNpmPrefix();
   await ensureDir(prefix);
   await ensureDir(path.join(prefix, 'node_modules'));
-  const env = openClawInstallEnv();
+  const env = openClawInstallEnv({ useCnRegistry });
   const pathResult = await ensureWindowsUserPathEntry(prefix);
   if (!commandExists(npmCommand())) {
     return {
@@ -761,15 +777,17 @@ function finishOpenClawInstallTask(task, status, payload = {}) {
 }
 
 async function runOpenClawInstallTask(task) {
-  const isScript = task.method === 'script';
-  const installSetup = await prepareOpenClawWindowsInstall();
+  const currentMethod = task.method;
+  const isScript = currentMethod === 'script';
+  const useCnRegistry = currentMethod === 'domestic';
+  const installSetup = await prepareOpenClawWindowsInstall({ useCnRegistry });
   const installEnv = installSetup.env;
   const command = isScript
     ? (process.platform === 'win32' ? 'powershell.exe' : 'bash')
     : npmCommand();
   const args = isScript
     ? (process.platform === 'win32' ? openClawWindowsPowerShellArgs(OPENCLAW_INSTALL_SCRIPT_WIN) : ['-lc', OPENCLAW_INSTALL_SCRIPT_UNIX])
-    : ['install', '-g', 'openclaw@latest'];
+    : ['install', '-g', 'openclaw@latest', ...(useCnRegistry ? ['--registry', OPENCLAW_NPM_REGISTRY_CN] : [])];
 
   try {
     if (isOpenClawInstallCancelled(task)) return;
@@ -786,6 +804,7 @@ async function runOpenClawInstallTask(task) {
         pushOpenClawInstallLog(task, 'stdout', `Windows 安装将使用当前用户 npm 目录：${installSetup.prefix}`);
         if (installSetup.pathChanged) pushOpenClawInstallLog(task, 'stdout', '已自动把该目录加入用户 PATH，后续新开的终端可直接使用 openclaw。');
       }
+      if (useCnRegistry) pushOpenClawInstallLog(task, 'stdout', `已启用国内 npm 源：${OPENCLAW_NPM_REGISTRY_CN}`);
     }
 
     // Mark preflight done, start download step
@@ -2117,7 +2136,7 @@ export async function loadOpenClawState() {
     gatewayUrl,
     gatewayReachable,
     needsOnboarding,
-    installMethods: ['script', 'npm', 'source', 'docker'],
+    installMethods: process.platform === 'win32' ? ['domestic', 'wsl', 'script'] : ['script', 'npm', 'source', 'docker'],
   };
 }
 
@@ -2134,14 +2153,16 @@ export async function saveOpenClawConfig({ configJson }) {
   return { saved: true, configPath };
 }
 
-export async function startOpenClawInstallTask({ method = 'npm' } = {}) {
-  if (!['script', 'npm'].includes(method)) {
-    throw new Error('只有脚本安装和 npm 安装支持实时进度追踪');
+export async function startOpenClawInstallTask({ method = process.platform === 'win32' ? 'domestic' : 'script' } = {}) {
+  if (!['script', 'npm', 'domestic'].includes(method)) {
+    throw new Error('只有一键安装、脚本安装和 npm 安装支持实时进度追踪');
   }
 
   const command = method === 'script'
     ? (process.platform === 'win32' ? OPENCLAW_INSTALL_SCRIPT_WIN : OPENCLAW_INSTALL_SCRIPT_UNIX)
-    : `${npmCommand()} install -g openclaw@latest`;
+    : method === 'domestic'
+      ? `${npmCommand()} install -g openclaw@latest --registry=${OPENCLAW_NPM_REGISTRY_CN}`
+      : `${npmCommand()} install -g openclaw@latest`;
 
   const task = createOpenClawInstallTask({ method, command });
   task._installSnapshot = await captureOpenClawInstallSnapshot();
@@ -2165,7 +2186,25 @@ export async function cancelOpenClawInstallTask({ taskId } = {}) {
   return cancelRunningOpenClawInstall(OPENCLAW_INSTALL_TASKS.get(taskId));
 }
 
-export async function installOpenClaw({ method = 'npm' } = {}) {
+export async function installOpenClaw({ method = process.platform === 'win32' ? 'domestic' : 'script' } = {}) {
+  if (method === 'domestic') {
+    const setup = await prepareOpenClawWindowsInstall({ useCnRegistry: true });
+    const result = await runCommand(npmCommand(), ['install', '-g', 'openclaw@latest', '--registry', OPENCLAW_NPM_REGISTRY_CN], { env: setup.env });
+    return { ...result, method: 'domestic', command: `${npmCommand()} install -g openclaw@latest --registry=${OPENCLAW_NPM_REGISTRY_CN}` };
+  }
+  if (method === 'wsl') {
+    return {
+      ok: true,
+      method: 'wsl',
+      instructions: [
+        'wsl --status',
+        'wsl --install -d Ubuntu-24.04',
+        'wsl -d Ubuntu-24.04 -- bash -lc "curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm"',
+        'wsl -d Ubuntu-24.04 -- bash -lc "openclaw --version"',
+      ],
+      message: 'WSL2 适合熟悉 Linux 的高级用户；如果本机还没装 Ubuntu，首次初始化会较久。',
+    };
+  }
   if (method === 'script') {
     if (process.platform === 'win32') {
       const setup = await prepareOpenClawWindowsInstall();

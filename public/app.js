@@ -1294,27 +1294,41 @@ function handleOcEnvPaste() {
 
 function renderOpenClawInstallMethods(container) {
   const _s = (d) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-  const methods = [
-    {
-      id: 'script', icon: _s('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'), title: '一键脚本', desc: '推荐方式，自动检测 Node.js 并安装', tag: '推荐',
-      cmdMac: 'curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm',
-      cmdWin: "$env:OPENCLAW_NO_ONBOARD='1'; iwr -useb https://openclaw.ai/install.ps1 | iex"
-    },
-    {
-      id: 'npm', icon: _s('<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>'), title: 'npm / pnpm', desc: '已有 Node 22+ 环境时的最快方式', tag: '',
-      cmdMac: 'npm install -g openclaw@latest', cmdWin: 'npm install -g openclaw@latest'
-    },
-    {
-      id: 'source', icon: _s('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>'), title: '源码构建', desc: '开发者模式，支持热重载与自定义', tag: '开发者',
-      cmdMac: 'git clone + pnpm build', cmdWin: 'git clone + pnpm build'
-    },
-    {
-      id: 'docker', icon: _s('<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M12 7V3M7 7V5M17 7V5"/>'), title: 'Docker 部署', desc: '容器化部署，适合服务器环境', tag: '服务器',
-      cmdMac: './docker-setup.sh', cmdWin: './docker-setup.sh'
-    },
-  ];
-
   const isWin = navigator.platform?.startsWith('Win');
+  const methods = isWin
+    ? [
+      {
+        id: 'domestic', icon: _s('<path d="M12 3l7 4v10l-7 4-7-4V7l7-4z"/><path d="M8 12h8"/><path d="M12 8v8"/>'), title: '一键安装', desc: '默认推荐，国内优化，自动补 Node.js 和 Git', tag: '默认推荐',
+        cmdMac: '', cmdWin: 'npm install -g openclaw@latest --registry=https://registry.npmmirror.com'
+      },
+      {
+        id: 'wsl', icon: _s('<path d="M4 6h16v12H4z"/><path d="M8 10l2 2-2 2"/><path d="M12 14h4"/>'), title: '高级 WSL2', desc: '适合熟悉 Linux 的用户，需要先装 WSL2 / Ubuntu', tag: '高级',
+        cmdMac: '', cmdWin: 'wsl -d Ubuntu-24.04 -- bash -lc "install openclaw"'
+      },
+      {
+        id: 'script', icon: _s('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'), title: '官方脚本', desc: '保持官方原始安装方式，适合网络和环境都比较稳时使用', tag: '官方',
+        cmdMac: '', cmdWin: "$env:OPENCLAW_NO_ONBOARD='1'; iwr -useb https://openclaw.ai/install.ps1 | iex"
+      },
+    ]
+    : [
+      {
+        id: 'script', icon: _s('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'), title: '一键脚本', desc: '推荐方式，自动检测 Node.js 并安装', tag: '推荐',
+        cmdMac: 'curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm',
+        cmdWin: "$env:OPENCLAW_NO_ONBOARD='1'; iwr -useb https://openclaw.ai/install.ps1 | iex"
+      },
+      {
+        id: 'npm', icon: _s('<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>'), title: 'npm / pnpm', desc: '已有 Node 22+ 环境时的最快方式', tag: '',
+        cmdMac: 'npm install -g openclaw@latest', cmdWin: 'npm install -g openclaw@latest'
+      },
+      {
+        id: 'source', icon: _s('<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>'), title: '源码构建', desc: '开发者模式，支持热重载与自定义', tag: '开发者',
+        cmdMac: 'git clone + pnpm build', cmdWin: 'git clone + pnpm build'
+      },
+      {
+        id: 'docker', icon: _s('<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M12 7V3M7 7V5M17 7V5"/>'), title: 'Docker 部署', desc: '容器化部署，适合服务器环境', tag: '服务器',
+        cmdMac: './docker-setup.sh', cmdWin: './docker-setup.sh'
+      },
+    ];
 
   container.innerHTML = `
     <div class="openclaw-install-methods install-method-dialog">
@@ -1337,7 +1351,7 @@ function renderOpenClawInstallMethods(container) {
             </button>
           `).join('')}
         </div>
-        <div class="install-methods-hint">本地推荐四种安装方式，点击卡片开始安装。</div>
+        <div class="install-methods-hint">${isWin ? 'Windows 提供三种模式：默认一键安装、WSL2 高级模式、官方脚本。' : '本地推荐四种安装方式，点击卡片开始安装。'}</div>
       </div>
       <div class="install-scope-panel" data-install-scope-panel="remote">
         <div class="remote-install-form">
@@ -2148,14 +2162,15 @@ async function runTrackedOpenClawInstall(method, onUpdate) {
 }
 
 async function executeOpenClawInstall(method, card) {
-  if (method === 'source' || method === 'docker') {
+  if (method === 'source' || method === 'docker' || method === 'wsl') {
     // Show instruction dialog with copy button
     const isWin = navigator.platform?.startsWith('Win');
     const fallbackCmds = {
+      wsl: ['wsl --status', 'wsl --install -d Ubuntu-24.04', 'wsl -d Ubuntu-24.04 -- bash -lc "curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm"', 'wsl -d Ubuntu-24.04 -- bash -lc "openclaw --version"'],
       source: ['git clone https://github.com/nicepkg/openclaw.git', 'cd openclaw', 'pnpm install', 'pnpm build'],
       docker: ['./docker-setup.sh'],
     };
-    const titles = { source: '源码构建步骤', docker: 'Docker 部署步骤' };
+    const titles = { wsl: 'WSL2 安装步骤', source: '源码构建步骤', docker: 'Docker 部署步骤' };
 
     let instructions = fallbackCmds[method] || [];
     let message = '请打开终端（Terminal），粘贴以下命令执行。';
@@ -2193,12 +2208,19 @@ async function executeOpenClawInstall(method, card) {
     return;
   }
   const isWin = navigator.platform?.startsWith('Win');
-  const cmdText = method === 'script'
-    ? (isWin ? "$env:OPENCLAW_NO_ONBOARD='1'; iwr -useb https://openclaw.ai/install.ps1 | iex" : 'curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm')
-    : 'npm install -g openclaw@latest';
+  const commandMap = {
+    domestic: 'npm install -g openclaw@latest --registry=https://registry.npmmirror.com',
+    script: isWin ? "$env:OPENCLAW_NO_ONBOARD='1'; iwr -useb https://openclaw.ai/install.ps1 | iex" : 'curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm',
+    npm: 'npm install -g openclaw@latest',
+  };
+  const cmdText = commandMap[method] || commandMap.npm;
 
   // ── Confirmation dialog ──
-  const methodLabel = method === 'script' ? '一键安装脚本' : 'npm 全局安装';
+  const methodLabel = {
+    domestic: '一键安装（国内优化）',
+    script: '官方脚本安装',
+    npm: 'npm 全局安装',
+  }[method] || 'OpenClaw 安装';
   const confirmBody = `
     <div style="display:flex;flex-direction:column;gap:14px;">
       <div style="font-size:0.86rem;color:var(--text);line-height:1.55;">
@@ -2451,7 +2473,29 @@ async function openClawInstallMethodDialog(btn) {
       </div>
 
       <div class="install-scope-panel is-active" data-install-scope-panel="local">
-        <div class="install-scope-hint">推荐先选本地安装，下面四种方式都可用。</div>
+        <div class="install-scope-hint">${isWin ? 'Windows 推荐先试一键安装；如果你熟悉 Linux，再选 WSL2。' : '推荐先选本地安装，下面四种方式都可用。'}</div>
+        ${isWin ? `
+        <button class="install-method-opt" data-method="domestic">
+          <span class="imo-icon">${icoNpm}</span>
+          <div class="imo-content">
+            <div class="imo-title">一键安装 <span class="imc-tag">默认推荐</span></div>
+            <div class="imo-cmd">npm install -g openclaw@latest --registry=https://registry.npmmirror.com</div>
+          </div>
+        </button>
+        <button class="install-method-opt" data-method="wsl">
+          <span class="imo-icon">${icoScript}</span>
+          <div class="imo-content">
+            <div class="imo-title">高级 WSL2</div>
+            <div class="imo-cmd">wsl -d Ubuntu-24.04 -- bash -lc "install openclaw"</div>
+          </div>
+        </button>
+        <button class="install-method-opt" data-method="script">
+          <span class="imo-icon">${icoScript}</span>
+          <div class="imo-content">
+            <div class="imo-title">官方脚本</div>
+            <div class="imo-cmd">${escapeHtml(isWin ? "$env:OPENCLAW_NO_ONBOARD='1'; iwr -useb https://openclaw.ai/install.ps1 | iex" : 'curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm')}</div>
+          </div>
+        </button>` : `
         <button class="install-method-opt" data-method="script">
           <span class="imo-icon">${icoScript}</span>
           <div class="imo-content">
@@ -2479,7 +2523,7 @@ async function openClawInstallMethodDialog(btn) {
             <div class="imo-title">Docker 部署 <span class="imc-tag">服务器</span></div>
             <div class="imo-cmd">./docker-setup.sh</div>
           </div>
-        </button>
+        </button>`}
       </div>
 
       <div class="install-scope-panel" data-install-scope-panel="remote">
@@ -4473,9 +4517,9 @@ function renderOpenClawInstallDialog(task) {
             <ul class="install-tracker-list">${todoItems.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
           </div>
           <div class="install-tracker-note-card">
-            <div class="install-tracker-note-title">安装信息</div>
-            <ul class="install-tracker-list"><li>方式：${escapeHtml(task.method === 'script' ? '一键脚本' : 'npm 全局安装')}</li><li>耗时：${escapeHtml(formatRelativeDuration(task.startedAt, task.completedAt))}</li><li>命令：<code>${escapeHtml(task.command || '')}</code></li></ul>
-          </div>
+          <div class="install-tracker-note-title">安装信息</div>
+          <ul class="install-tracker-list"><li>方式：${escapeHtml(({ domestic: '一键安装（国内优化）', script: '官方脚本安装', npm: 'npm 全局安装' }[task.method] || task.method || 'OpenClaw 安装'))}</li><li>耗时：${escapeHtml(formatRelativeDuration(task.startedAt, task.completedAt))}</li><li>命令：<code>${escapeHtml(task.command || '')}</code></li></ul>
+        </div>
           ${nextActions ? `<div class="install-tracker-note-card"><div class="install-tracker-note-title">接下来怎么做</div><ul class="install-tracker-list">${nextActions}</ul></div>` : ''}
         </div>
       </div>
@@ -9116,12 +9160,18 @@ const WIZARD_TOOL_META = {
     name: 'OpenClaw',
     package: 'openclaw',
     installApi: '/api/openclaw/install',
-    methods: [
-      { id: 'script', label: '一键脚本', cmd: navigator.platform?.startsWith('Win') ? "$env:OPENCLAW_NO_ONBOARD='1'; iwr -useb https://openclaw.ai/install.ps1 | iex" : 'curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm', tag: '推荐' },
-      { id: 'npm', label: 'npm', cmd: 'npm install -g openclaw@latest' },
-      { id: 'source', label: '源码', cmd: 'git clone + pnpm build', tag: '开发者' },
-      { id: 'docker', label: 'Docker', cmd: './docker-setup.sh', tag: '服务器' },
-    ],
+    methods: navigator.platform?.startsWith('Win')
+      ? [
+        { id: 'domestic', label: '一键安装', cmd: 'npm install -g openclaw@latest --registry=https://registry.npmmirror.com', tag: '默认推荐' },
+        { id: 'wsl', label: 'WSL2', cmd: 'wsl -d Ubuntu-24.04 -- bash -lc "install openclaw"', tag: '高级' },
+        { id: 'script', label: '官方脚本', cmd: "$env:OPENCLAW_NO_ONBOARD='1'; iwr -useb https://openclaw.ai/install.ps1 | iex", tag: '官方' },
+      ]
+      : [
+        { id: 'script', label: '一键脚本', cmd: 'curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm', tag: '推荐' },
+        { id: 'npm', label: 'npm', cmd: 'npm install -g openclaw@latest' },
+        { id: 'source', label: '源码', cmd: 'git clone + pnpm build', tag: '开发者' },
+        { id: 'docker', label: 'Docker', cmd: './docker-setup.sh', tag: '服务器' },
+      ],
     binaryKey: 'openclaw',
     configLabel: '~/.openclaw/openclaw.json',
   },

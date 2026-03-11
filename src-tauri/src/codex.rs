@@ -16,6 +16,7 @@ use std::time::Duration;
 const OPENCLAW_INSTALL_TASK_KEEP: usize = 12;
 const OPENCLAW_INSTALL_SCRIPT_UNIX: &str = "curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm";
 const OPENCLAW_INSTALL_SCRIPT_WIN: &str = "$env:OPENCLAW_NO_ONBOARD='1'; iwr -useb https://openclaw.ai/install.ps1 | iex";
+const OPENCLAW_NPM_REGISTRY_CN: &str = "https://registry.npmmirror.com";
 
 static OPENCLAW_INSTALL_TASK_SEQ: AtomicU64 = AtomicU64::new(1);
 static OPENCLAW_INSTALL_TASKS: OnceLock<Mutex<BTreeMap<String, OpenClawInstallTask>>> = OnceLock::new();
@@ -283,6 +284,14 @@ fn openclaw_install_steps(method: &str) -> Vec<OpenClawInstallStep> {
       ("download", "下载官方安装器", "从 OpenClaw 官方地址拉取安装脚本", "如果网络慢，这一步可能停留几十秒，属于正常现象。", 24_u64),
       ("install", "执行安装脚本", "安装器正在写入程序和命令入口", "看到日志滚动代表仍在工作，请不要关闭窗口。", 62_u64),
       ("verify", "验证命令是否可用", "检查 `openclaw` 是否已能直接运行", "已经接近完成，正在做最后确认。", 88_u64),
+      ("done", "整理下一步引导", "安装完成，准备告诉你接下来做什么", "安装结束后，我会直接告诉你下一步。", 100_u64),
+    ]
+  } else if method == "domestic" {
+    vec![
+      ("preflight", "准备国内安装环境", "检查 Node.js、npm，并优先启用应用内 Git", "这一步会尽量自动补齐缺失依赖，你不用手动处理。", 8_u64),
+      ("download", "切换国内 npm 源", "使用 npmmirror 获取 OpenClaw 安装包和依赖", "国内网络下通常会更稳、更快。", 26_u64),
+      ("install", "一键安装 OpenClaw", "正在安装到当前用户目录，避免系统权限问题", "安装过程可能有短暂静默，请耐心等待。", 64_u64),
+      ("verify", "验证命令是否可用", "检查 `openclaw` 命令和版本", "已经接近完成，正在做最终验证。", 88_u64),
       ("done", "整理下一步引导", "安装完成，准备告诉你接下来做什么", "安装结束后，我会直接告诉你下一步。", 100_u64),
     ]
   } else {
@@ -706,7 +715,10 @@ fn spawn_openclaw_install_task_runner(task_id: String) {
       }
     } else {
       let mut cmd = create_command(npm_command());
-      apply_windows_openclaw_npm_env(&mut cmd);
+      apply_windows_openclaw_npm_env(&mut cmd, current_method == "domestic");
+      if current_method == "domestic" {
+        cmd.arg("--registry").arg(OPENCLAW_NPM_REGISTRY_CN);
+      }
       cmd.args(["install", "-g", &format!("{}@latest", OPENCLAW_PACKAGE)]);
       cmd
     };
@@ -726,24 +738,26 @@ fn spawn_openclaw_install_task_runner(task_id: String) {
         let auto_installed = try_auto_install_git(&task_id);
 
         if !auto_installed {
-          // Auto-install failed — try to fallback to npm
-          push_openclaw_install_log(&task_id, "stdout", "Git 自动安装失败，尝试自动切换为 npm 安装方式…");
+          // Auto-install failed — try to fallback to domestic npm
+          push_openclaw_install_log(&task_id, "stdout", "Git 自动安装失败，尝试自动切换为一键安装方式…");
           let node_ok = ensure_node_and_npm_available(&task_id);
           let npm_ok = command_exists(npm_command()).is_some();
           if node_ok && npm_ok {
-            push_openclaw_install_log(&task_id, "stdout", "已自动切换为 npm 安装方式");
-            current_method = "npm".to_string();
+            push_openclaw_install_log(&task_id, "stdout", &format!("已自动切换为一键安装方式，将使用国内 npm 源：{}", OPENCLAW_NPM_REGISTRY_CN));
+            current_method = "domestic".to_string();
             // Rebuild command for npm
             command = {
               let mut cmd = create_command(npm_command());
-              apply_windows_openclaw_npm_env(&mut cmd);
+              apply_windows_openclaw_npm_env(&mut cmd, true);
+              cmd.arg("--registry").arg(OPENCLAW_NPM_REGISTRY_CN);
               cmd.args(["install", "-g", &format!("{}@latest", OPENCLAW_PACKAGE)]);
               cmd
             };
             // Update the task's method/command display
             let _ = with_openclaw_install_task(&task_id, |t| {
-              t.method = "npm".to_string();
-              t.command = format!("{} install -g {}@latest", npm_command(), OPENCLAW_PACKAGE);
+              t.method = "domestic".to_string();
+              t.command = format!("{} install -g {}@latest --registry={}", npm_command(), OPENCLAW_PACKAGE, OPENCLAW_NPM_REGISTRY_CN);
+              t.steps = openclaw_install_steps("domestic");
             });
           } else {
             let hint = if cfg!(target_os = "windows") {
@@ -758,7 +772,17 @@ fn spawn_openclaw_install_task_runner(task_id: String) {
       }
     }
 
-    if current_method == "npm" {
+    if current_method == "domestic" {
+      push_openclaw_install_log(&task_id, "stdout", &format!("已启用国内 npm 源：{}", OPENCLAW_NPM_REGISTRY_CN));
+      if cfg!(target_os = "windows") && command_exists("git").is_none() {
+        push_openclaw_install_log(&task_id, "stdout", "一键安装模式正在检查 Git，可选依赖将优先使用应用内 MinGit…");
+        if !try_auto_install_git(&task_id) {
+          push_openclaw_install_log(&task_id, "stderr", "应用内 Git 预安装失败，将继续尝试 npm 安装；如依赖需要 Git，日志会继续提示。");
+        }
+      }
+    }
+
+    if current_method == "npm" || current_method == "domestic" {
       let _ = ensure_node_and_npm_available(&task_id);
       let node_output = create_command("node").arg("--version").output();
       let npm_output = create_command(npm_command()).arg("--version").output();
@@ -784,8 +808,8 @@ fn spawn_openclaw_install_task_runner(task_id: String) {
     });
 
     command.env("PATH", full_path_env());
-    if current_method == "npm" {
-      apply_windows_openclaw_npm_env(&mut command);
+    if current_method == "npm" || current_method == "domestic" {
+      apply_windows_openclaw_npm_env(&mut command, current_method == "domestic");
     }
     command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = match command.spawn() {
@@ -905,7 +929,7 @@ fn resolve_mingit_download_urls(task_id: &str) -> Result<Vec<String>, String> {
   ];
   let client = reqwest::blocking::Client::builder()
     .timeout(Duration::from_secs(20))
-    .user_agent("EasyAIConfig/1.0.11")
+    .user_agent("EasyAIConfig/1.0.12")
     .build()
     .map_err(|error| error.to_string())?;
 
@@ -973,7 +997,7 @@ fn resolve_mingit_download_urls(task_id: &str) -> Result<Vec<String>, String> {
 fn download_archive(url: &str, archive_path: &Path) -> Result<(), String> {
   let client = reqwest::blocking::Client::builder()
     .timeout(Duration::from_secs(180))
-    .user_agent("EasyAIConfig/1.0.11")
+    .user_agent("EasyAIConfig/1.0.12")
     .build()
     .map_err(|error| error.to_string())?;
   let mut response = client.get(url).send().map_err(|error| error.to_string())?;
@@ -1175,7 +1199,7 @@ fn ensure_node_and_npm_available(task_id: &str) -> bool {
   false
 }
 
-fn apply_windows_openclaw_npm_env(command: &mut Command) {
+fn apply_windows_openclaw_npm_env(command: &mut Command, use_cn_registry: bool) {
   if !cfg!(target_os = "windows") {
     return;
   }
@@ -1189,6 +1213,10 @@ fn apply_windows_openclaw_npm_env(command: &mut Command) {
     command.env("NPM_CONFIG_PREFIX", &prefix_str);
     command.env("npm_config_prefix", &prefix_str);
     command.env("PATH", path_parts.join(";"));
+    if use_cn_registry {
+      command.env("NPM_CONFIG_REGISTRY", OPENCLAW_NPM_REGISTRY_CN);
+      command.env("npm_config_registry", OPENCLAW_NPM_REGISTRY_CN);
+    }
   }
 }
 
@@ -1667,7 +1695,11 @@ pub(crate) fn list_tools() -> Result<Value, String> {
       "configFormat": "json",
       "installMethod": "multi",
       "npmPackage": OPENCLAW_PACKAGE,
-      "installMethods": ["script", "npm", "source", "docker"],
+      "installMethods": if cfg!(target_os = "windows") {
+        json!(["domestic", "wsl", "script"])
+      } else {
+        json!(["script", "npm", "source", "docker"])
+      },
       "binary": openclaw_binary,
     },
   ]))
@@ -2074,7 +2106,11 @@ pub(crate) fn load_openclaw_state() -> Result<Value, String> {
     "gatewayUrl": gateway_url,
     "gatewayReachable": gateway_reachable,
     "needsOnboarding": needs_onboarding,
-    "installMethods": ["script", "npm", "source", "docker"],
+    "installMethods": if cfg!(target_os = "windows") {
+      json!(["domestic", "wsl", "script"])
+    } else {
+      json!(["script", "npm", "source", "docker"])
+    },
   }))
 }
 
@@ -2217,9 +2253,9 @@ pub(crate) fn onboard_openclaw(body: &Value) -> Result<Value, String> {
 
 pub(crate) fn start_openclaw_install_task(body: &Value) -> Result<Value, String> {
   let obj = parse_json_object(body);
-  let method = obj.get("method").and_then(Value::as_str).unwrap_or("npm");
-  if method != "script" && method != "npm" {
-    return Err("只有脚本安装和 npm 安装支持实时进度追踪".to_string());
+  let method = obj.get("method").and_then(Value::as_str).unwrap_or(if cfg!(target_os = "windows") { "domestic" } else { "script" });
+  if method != "script" && method != "npm" && method != "domestic" {
+    return Err("只有一键安装、脚本安装和 npm 安装支持实时进度追踪".to_string());
   }
 
   let command = if method == "script" {
@@ -2228,6 +2264,8 @@ pub(crate) fn start_openclaw_install_task(body: &Value) -> Result<Value, String>
     } else {
       OPENCLAW_INSTALL_SCRIPT_UNIX.to_string()
     }
+  } else if method == "domestic" {
+    format!("{} install -g {}@latest --registry={}", npm_command(), OPENCLAW_PACKAGE, OPENCLAW_NPM_REGISTRY_CN)
   } else {
     format!("{} install -g {}@latest", npm_command(), OPENCLAW_PACKAGE)
   };
@@ -2266,9 +2304,37 @@ pub(crate) fn cancel_openclaw_install_task(body: &Value) -> Result<Value, String
 /// Run install via a particular method
 pub(crate) fn run_openclaw_install_script(body: &Value) -> Result<Value, String> {
   let obj = parse_json_object(body);
-  let method = obj.get("method").and_then(Value::as_str).unwrap_or("npm");
+  let method = obj.get("method").and_then(Value::as_str).unwrap_or(if cfg!(target_os = "windows") { "domestic" } else { "script" });
 
   match method {
+    "domestic" => {
+      let _ = ensure_node_and_npm_available("direct-openclaw-install");
+      let mut cmd = create_command(npm_command());
+      apply_windows_openclaw_npm_env(&mut cmd, true);
+      cmd.args(["install", "-g", &format!("{}@latest", OPENCLAW_PACKAGE), "--registry", OPENCLAW_NPM_REGISTRY_CN]);
+      cmd.stdin(Stdio::null());
+      let output = cmd.output().map_err(|error| error.to_string())?;
+      Ok(json!({
+        "ok": output.status.success(),
+        "method": "domestic",
+        "command": format!("{} install -g {}@latest --registry={}", npm_command(), OPENCLAW_PACKAGE, OPENCLAW_NPM_REGISTRY_CN),
+        "stdout": String::from_utf8_lossy(&output.stdout).to_string(),
+        "stderr": String::from_utf8_lossy(&output.stderr).to_string(),
+      }))
+    }
+    "wsl" => {
+      Ok(json!({
+        "ok": true,
+        "method": "wsl",
+        "instructions": [
+          "wsl --status",
+          "wsl --install -d Ubuntu-24.04",
+          "wsl -d Ubuntu-24.04 -- bash -lc \"curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm\"",
+          "wsl -d Ubuntu-24.04 -- bash -lc \"openclaw --version\"",
+        ],
+        "message": "WSL2 适合熟悉 Linux 的高级用户；如果本机还没装 Ubuntu，首次初始化会较久。",
+      }))
+    }
     "script" => {
       // Run the install script via curl | bash (macOS/Linux) or PowerShell (Windows)
       if cfg!(target_os = "windows") {
@@ -2295,7 +2361,7 @@ pub(crate) fn run_openclaw_install_script(body: &Value) -> Result<Value, String>
     "npm" => {
       let _ = ensure_node_and_npm_available("direct-openclaw-install");
       let mut cmd = create_command(npm_command());
-      apply_windows_openclaw_npm_env(&mut cmd);
+      apply_windows_openclaw_npm_env(&mut cmd, false);
       cmd.args(["install", "-g", &format!("{}@latest", OPENCLAW_PACKAGE)]);
       cmd.stdin(Stdio::null());
       let output = cmd.output().map_err(|error| error.to_string())?;
@@ -2308,7 +2374,7 @@ pub(crate) fn run_openclaw_install_script(body: &Value) -> Result<Value, String>
       Ok(json!({
         "ok": result.get("ok").and_then(Value::as_bool).unwrap_or(false),
         "method": "npm",
-        "command": result.get("command").cloned().unwrap_or(Value::Null),
+        "command": format!("{} install -g {}@latest", npm_command(), OPENCLAW_PACKAGE),
         "stdout": result.get("stdout").cloned().unwrap_or(Value::Null),
         "stderr": result.get("stderr").cloned().unwrap_or(Value::Null),
       }))
