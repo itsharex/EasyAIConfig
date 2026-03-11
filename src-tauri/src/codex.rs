@@ -856,54 +856,118 @@ fn spawn_openclaw_install_task_runner(task_id: String) {
   });
 }
 
+fn parse_git_windows_release_candidates(listing: &str) -> Vec<String> {
+  let mut releases = Vec::new();
+  for token in listing.split(|ch| ch == '"' || ch == '\'' || ch == '<' || ch == '>' || ch == ' ' || ch == '\n' || ch == '\r') {
+    let name = token.rsplit('/').next().unwrap_or(token).trim().trim_end_matches('/');
+    if name.starts_with('v') && name.contains(".windows.") {
+      releases.push(name.to_string());
+    }
+  }
+  releases.sort_by(|left, right| {
+    let left_trimmed = left.trim_start_matches('v');
+    let right_trimmed = right.trim_start_matches('v');
+    let (left_core, left_rev) = left_trimmed.rsplit_once(".windows.").unwrap_or((left_trimmed, "0"));
+    let (right_core, right_rev) = right_trimmed.rsplit_once(".windows.").unwrap_or((right_trimmed, "0"));
+    compare_versions(left_core, right_core)
+      .then_with(|| left_rev.parse::<u32>().unwrap_or(0).cmp(&right_rev.parse::<u32>().unwrap_or(0)))
+  });
+  releases.dedup();
+  releases
+}
+
+fn parse_mingit_asset_candidates(listing: &str) -> Vec<String> {
+  let mut assets = Vec::new();
+  for token in listing.split(|ch| ch == '"' || ch == '\'' || ch == '<' || ch == '>' || ch == ' ' || ch == '\n' || ch == '\r') {
+    if !token.contains("MinGit-") || !token.ends_with("-64-bit.zip") {
+      continue;
+    }
+    let name = token.rsplit('/').next().unwrap_or(token).trim();
+    if name.starts_with("MinGit-") && name.ends_with("-64-bit.zip") {
+      assets.push(name.to_string());
+    }
+  }
+  assets.sort();
+  assets.dedup();
+  assets
+}
+
 fn resolve_mingit_download_urls(task_id: &str) -> Result<Vec<String>, String> {
+  let bases = [
+    "https://repo.huaweicloud.com/git-for-windows/",
+    "https://repo.huaweicloud.com/repository/toolkit/git-for-windows/",
+  ];
   let client = reqwest::blocking::Client::builder()
     .timeout(Duration::from_secs(20))
-    .user_agent("EasyAIConfig/1.0.8")
+    .user_agent("EasyAIConfig/1.0.10")
     .build()
     .map_err(|error| error.to_string())?;
 
-  push_openclaw_install_log(task_id, "stdout", "正在获取 Git for Windows 最新发行信息…");
-  let release: Value = client
-    .get("https://api.github.com/repos/git-for-windows/git/releases/latest")
-    .header("Accept", "application/vnd.github+json")
-    .send()
-    .and_then(|response| response.error_for_status())
-    .map_err(|error| format!("Git 最新发行信息获取失败：{}", error))?
-    .json()
-    .map_err(|error| format!("Git 最新发行信息解析失败：{}", error))?;
-
-  let asset_url = release
-    .get("assets")
-    .and_then(Value::as_array)
-    .and_then(|assets| {
-      assets.iter().find_map(|asset| {
-        let name = asset.get("name").and_then(Value::as_str)?;
-        if !name.starts_with("MinGit-") || !name.ends_with("-64-bit.zip") {
-          return None;
+  let mut urls = Vec::new();
+  for base in bases {
+    push_openclaw_install_log(task_id, "stdout", &format!("正在获取华为云 Git 镜像目录：{}", base));
+    let base_listing = match client.get(base).send().and_then(|response| response.error_for_status()) {
+      Ok(response) => match response.text() {
+        Ok(text) => text,
+        Err(error) => {
+          push_openclaw_install_log(task_id, "stderr", &format!("华为云目录读取失败：{}", error));
+          continue;
         }
-        asset.get("browser_download_url").and_then(Value::as_str)
-      })
-    })
-    .ok_or_else(|| "Git 最新发行里未找到可用的 MinGit 64 位压缩包".to_string())?
-    .to_string();
+      },
+      Err(error) => {
+        push_openclaw_install_log(task_id, "stderr", &format!("华为云目录访问失败：{}", error));
+        continue;
+      }
+    };
 
-  let asset_name = asset_url.rsplit('/').next().unwrap_or("MinGit.zip");
-  let latest_release_mirrors = [
-    format!("https://gh-proxy.com/{}", asset_url),
-    format!("https://ghproxy.net/{}", asset_url),
-    format!("https://ipv4.mirrors.cqupt.edu.cn/github-release/git-for-windows/git/LatestRelease/{}", asset_name),
-    format!("https://mirrors.ustc.edu.cn/github-release/git-for-windows/git/LatestRelease/{}", asset_name),
-    asset_url,
-  ];
+    let latest_release = match parse_git_windows_release_candidates(&base_listing).into_iter().next_back() {
+      Some(release) => release,
+      None => {
+        push_openclaw_install_log(task_id, "stderr", "华为云目录中未找到 Git for Windows 版本");
+        continue;
+      }
+    };
 
-  Ok(latest_release_mirrors.into_iter().collect())
+    let release_url = format!("{}{}/", base, latest_release);
+    push_openclaw_install_log(task_id, "stdout", &format!("正在获取华为云版本目录：{}", release_url));
+    let release_listing = match client.get(&release_url).send().and_then(|response| response.error_for_status()) {
+      Ok(response) => match response.text() {
+        Ok(text) => text,
+        Err(error) => {
+          push_openclaw_install_log(task_id, "stderr", &format!("华为云版本目录读取失败：{}", error));
+          continue;
+        }
+      },
+      Err(error) => {
+        push_openclaw_install_log(task_id, "stderr", &format!("华为云版本目录访问失败：{}", error));
+        continue;
+      }
+    };
+
+    let mut assets = parse_mingit_asset_candidates(&release_listing);
+    assets.sort_by(|left, right| {
+      let lv = left.trim_start_matches("MinGit-").trim_end_matches("-64-bit.zip");
+      let rv = right.trim_start_matches("MinGit-").trim_end_matches("-64-bit.zip");
+      compare_versions(lv, rv)
+    });
+    if let Some(asset) = assets.into_iter().next_back() {
+      urls.push(format!("{}{}", release_url, asset));
+    }
+  }
+
+  urls.sort();
+  urls.dedup();
+  if urls.is_empty() {
+    Err("未能从华为云镜像获取 MinGit 下载地址".to_string())
+  } else {
+    Ok(urls)
+  }
 }
 
 fn download_archive(url: &str, archive_path: &Path) -> Result<(), String> {
   let client = reqwest::blocking::Client::builder()
     .timeout(Duration::from_secs(180))
-    .user_agent("EasyAIConfig/1.0.8")
+    .user_agent("EasyAIConfig/1.0.10")
     .build()
     .map_err(|error| error.to_string())?;
   let mut response = client.get(url).send().map_err(|error| error.to_string())?;
