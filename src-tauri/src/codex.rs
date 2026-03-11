@@ -929,7 +929,7 @@ fn resolve_mingit_download_urls(task_id: &str) -> Result<Vec<String>, String> {
   ];
   let client = reqwest::blocking::Client::builder()
     .timeout(Duration::from_secs(20))
-    .user_agent("EasyAIConfig/1.0.12")
+    .user_agent("EasyAIConfig/1.0.13")
     .build()
     .map_err(|error| error.to_string())?;
 
@@ -997,7 +997,7 @@ fn resolve_mingit_download_urls(task_id: &str) -> Result<Vec<String>, String> {
 fn download_archive(url: &str, archive_path: &Path) -> Result<(), String> {
   let client = reqwest::blocking::Client::builder()
     .timeout(Duration::from_secs(180))
-    .user_agent("EasyAIConfig/1.0.12")
+    .user_agent("EasyAIConfig/1.0.13")
     .build()
     .map_err(|error| error.to_string())?;
   let mut response = client.get(url).send().map_err(|error| error.to_string())?;

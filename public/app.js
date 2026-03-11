@@ -1303,7 +1303,7 @@ function renderOpenClawInstallMethods(container) {
       },
       {
         id: 'wsl', icon: _s('<path d="M4 6h16v12H4z"/><path d="M8 10l2 2-2 2"/><path d="M12 14h4"/>'), title: '高级 WSL2', desc: '适合熟悉 Linux 的用户，需要先装 WSL2 / Ubuntu', tag: '高级',
-        cmdMac: '', cmdWin: 'wsl -d Ubuntu-24.04 -- bash -lc "install openclaw"'
+        cmdMac: '', cmdWin: 'wsl -d Ubuntu-24.04 -- bash -lc "curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm"'
       },
       {
         id: 'script', icon: _s('<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>'), title: '官方脚本', desc: '保持官方原始安装方式，适合网络和环境都比较稳时使用', tag: '官方',
@@ -2486,7 +2486,7 @@ async function openClawInstallMethodDialog(btn) {
           <span class="imo-icon">${icoScript}</span>
           <div class="imo-content">
             <div class="imo-title">高级 WSL2</div>
-            <div class="imo-cmd">wsl -d Ubuntu-24.04 -- bash -lc "install openclaw"</div>
+            <div class="imo-cmd">wsl -d Ubuntu-24.04 -- bash -lc "curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm"</div>
           </div>
         </button>
         <button class="install-method-opt" data-method="script">
@@ -9163,7 +9163,7 @@ const WIZARD_TOOL_META = {
     methods: navigator.platform?.startsWith('Win')
       ? [
         { id: 'domestic', label: '一键安装', cmd: 'npm install -g openclaw@latest --registry=https://registry.npmmirror.com', tag: '默认推荐' },
-        { id: 'wsl', label: 'WSL2', cmd: 'wsl -d Ubuntu-24.04 -- bash -lc "install openclaw"', tag: '高级' },
+        { id: 'wsl', label: 'WSL2', cmd: 'wsl -d Ubuntu-24.04 -- bash -lc "curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm"', tag: '高级' },
         { id: 'script', label: '官方脚本', cmd: "$env:OPENCLAW_NO_ONBOARD='1'; iwr -useb https://openclaw.ai/install.ps1 | iex", tag: '官方' },
       ]
       : [
