@@ -70,6 +70,7 @@ const state = {
   },
   openClawSetupFlowId: 0,
   openClawSetupContext: null,
+  openClawLastRepair: null,
   openClawConfigView: localStorage.getItem('easyaiconfig_oc_config_view') === 'minimal' ? 'minimal' : 'full',
   configStoreGuide: { recipeId: '', values: {} },
   configStoreAssistant: { recipeId: '', values: {}, missing: [] },
@@ -134,16 +135,17 @@ function buildOpenClawDashboardFallbackUrl(baseUrl) {
 }
 
 async function openOpenClawDashboard(baseUrl) {
-  let url = '';
-  try {
-    const json = await api('/api/openclaw/dashboard-url', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cwd: state.current?.launch?.cwd || '' }),
-    });
-    url = json?.ok ? (json.data?.url || '') : '';
-  } catch { /* ignore */ }
-  url = url || buildOpenClawDashboardFallbackUrl(baseUrl);
+  let url = buildOpenClawDashboardFallbackUrl(baseUrl);
+  if (!baseUrl) {
+    try {
+      const json = await api('/api/openclaw/dashboard-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cwd: state.current?.launch?.cwd || '' }),
+      });
+      url = (json?.ok ? (json.data?.url || '') : '') || url;
+    } catch { /* ignore */ }
+  }
   if (!url) return;
   api('/api/open-url', { method: 'POST', body: JSON.stringify({ url }) }).then(res => {
     if (!res?.ok) window.open(url, '_blank');
@@ -3204,6 +3206,7 @@ function buildClaudeConsoleView() {
 
 function buildOpenClawConsoleView() {
   const data = state.openclawState || {};
+  const lastRepair = state.openClawLastRepair || null;
   const quick = deriveOpenClawQuickConfig(data);
   const config = data.config || {};
   const channels = getOpenClawConsoleChannels(config);
@@ -3253,7 +3256,8 @@ function buildOpenClawConsoleView() {
     : '<div class="tool-console-empty">当前还没有接入聊天渠道。</div>';
 
   const main = [
-    renderToolConsoleCard('运行状态', 'Gateway、配置与认证', `<div class="tool-console-list">${renderToolConsoleRow('配置文件', `<span class="tool-console-code">${escapeHtml(data.configPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('Gateway', data.gatewayReachable ? '在线' : '未就绪')}${renderToolConsoleRow('Bind', gatewayBind)}${renderToolConsoleRow('Auth', gatewayAuth)}${renderToolConsoleRow('Token', data.gatewayTokenReady ? '已就绪' : '缺失')}${renderToolConsoleRow('Dashboard URL', data.dashboardUrl ? `<span class="tool-console-code">${escapeHtml(data.dashboardUrl)}</span>` : '-', { html: Boolean(data.dashboardUrl) })}${renderToolConsoleRow('Onboarding', data.needsOnboarding ? '待完成' : '已完成')}</div>`, { icon: 'runtime' }),
+    renderToolConsoleCard('Gateway 状态', '进程、认证与 Dashboard 引导链接', `<div class="tool-console-list">${renderToolConsoleRow('配置文件', `<span class="tool-console-code">${escapeHtml(data.configPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('Gateway HTTP', data.gatewayReachable ? '在线' : '未就绪')}${renderToolConsoleRow('Bind', gatewayBind)}${renderToolConsoleRow('Auth', gatewayAuth)}${renderToolConsoleRow('Token', data.gatewayTokenReady ? '已就绪' : '缺失')}${renderToolConsoleRow('Dashboard URL', data.dashboardUrl ? `<span class="tool-console-code">${escapeHtml(data.dashboardUrl)}</span>` : '-', { html: Boolean(data.dashboardUrl) })}${renderToolConsoleRow('Onboarding', data.needsOnboarding ? '待完成' : '已完成')}</div>`, { icon: 'runtime' }),
+    renderToolConsoleCard('修复结果', '最近一次一键修复的执行结果', lastRepair ? `<div class="tool-console-list">${renderToolConsoleRow('Token 生成', lastRepair.tokenGenerated ? '是' : '否')}${renderToolConsoleRow('要求重启', lastRepair.restartRequired ? '是' : '否')}${renderToolConsoleRow('修复后 Gateway', lastRepair.gatewayReachable ? '在线' : '未就绪')}${renderToolConsoleRow('修复后 URL', lastRepair.dashboardUrl ? `<span class="tool-console-code">${escapeHtml(lastRepair.dashboardUrl)}</span>` : '-', { html: Boolean(lastRepair.dashboardUrl) })}${renderToolConsoleRow('备注', (lastRepair.notes || []).length ? escapeHtml(lastRepair.notes.join(' | ')) : '无')}</div>` : '<div class="tool-console-empty">还没有执行过“一键修复并打开”。</div>', { icon: 'actions' }),
     renderToolConsoleCard('异常检测', '优先指出启动、模型、认证和暴露风险', renderToolConsoleIssueList(issues, 'OpenClaw 侧暂未发现明显阻塞项。'), { icon: 'issues', iconTone: issues.length ? (issues.some(i => i.tone === 'error') ? 'error' : 'warn') : 'ok' }),
   ].join('');
 
@@ -3437,6 +3441,7 @@ async function repairOpenClawDashboard() {
   if (!json.ok || !json.data?.dashboardUrl) {
     throw new Error(json.error || '修复 Gateway 认证失败');
   }
+  state.openClawLastRepair = json.data;
   await fetchOpenClawStateData();
   await openOpenClawDashboard(json.data.dashboardUrl);
   flash(json.data.tokenGenerated ? '已生成新 token 并重新打开 Dashboard' : '已重新打开带令牌的 Dashboard', 'success');
