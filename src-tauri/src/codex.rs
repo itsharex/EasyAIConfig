@@ -693,7 +693,8 @@ fn spawn_openclaw_install_task_runner(task_id: String) {
     };
 
     let method = task.method.clone();
-    let mut command = if method == "script" {
+    let mut current_method = method.clone();
+    let mut command = if current_method == "script" {
       if cfg!(target_os = "windows") {
         let mut cmd = create_command("powershell");
         cmd.args(["-Command", OPENCLAW_INSTALL_SCRIPT_WIN]);
@@ -714,7 +715,7 @@ fn spawn_openclaw_install_task_runner(task_id: String) {
       return;
     }
 
-    if method == "script" {
+    if current_method == "script" {
       if !cfg!(target_os = "windows") && command_exists("curl").is_none() {
         fail_openclaw_install_task(&task_id, "未检测到 `curl`，无法执行脚本安装。请先安装 curl，或改用 npm 安装。".to_string());
         return;
@@ -731,6 +732,7 @@ fn spawn_openclaw_install_task_runner(task_id: String) {
           let npm_ok = command_exists(npm_command()).is_some();
           if node_ok && npm_ok {
             push_openclaw_install_log(&task_id, "stdout", "已自动切换为 npm 安装方式");
+            current_method = "npm".to_string();
             // Rebuild command for npm
             command = {
               let mut cmd = create_command(npm_command());
@@ -756,7 +758,7 @@ fn spawn_openclaw_install_task_runner(task_id: String) {
       }
     }
 
-    if method == "npm" {
+    if current_method == "npm" {
       let _ = ensure_node_and_npm_available(&task_id);
       let node_output = create_command("node").arg("--version").output();
       let npm_output = create_command(npm_command()).arg("--version").output();
@@ -781,6 +783,10 @@ fn spawn_openclaw_install_task_runner(task_id: String) {
       set_openclaw_install_step(task, 1, Some(format!("即将执行：{}", task.command)));
     });
 
+    command.env("PATH", full_path_env());
+    if current_method == "npm" {
+      apply_windows_openclaw_npm_env(&mut command);
+    }
     command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = match command.spawn() {
       Ok(child) => child,
@@ -899,7 +905,7 @@ fn resolve_mingit_download_urls(task_id: &str) -> Result<Vec<String>, String> {
   ];
   let client = reqwest::blocking::Client::builder()
     .timeout(Duration::from_secs(20))
-    .user_agent("EasyAIConfig/1.0.10")
+    .user_agent("EasyAIConfig/1.0.11")
     .build()
     .map_err(|error| error.to_string())?;
 
@@ -967,7 +973,7 @@ fn resolve_mingit_download_urls(task_id: &str) -> Result<Vec<String>, String> {
 fn download_archive(url: &str, archive_path: &Path) -> Result<(), String> {
   let client = reqwest::blocking::Client::builder()
     .timeout(Duration::from_secs(180))
-    .user_agent("EasyAIConfig/1.0.10")
+    .user_agent("EasyAIConfig/1.0.11")
     .build()
     .map_err(|error| error.to_string())?;
   let mut response = client.get(url).send().map_err(|error| error.to_string())?;
