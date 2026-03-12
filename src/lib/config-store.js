@@ -2412,7 +2412,7 @@ export async function launchOpenClaw({ cwd } = {}) {
   }
 
   const binaryPath = binary.path || 'openclaw';
-  const commandText = `${binaryPath} gateway start || ${binaryPath} gateway`;
+  const commandText = `${binaryPath} gateway --force`;
   if (process.platform === 'win32') {
     const message = launchWindowsBackgroundCommand(targetCwd, commandText, {
       toolLabel: 'OpenClaw Gateway',

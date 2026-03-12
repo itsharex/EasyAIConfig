@@ -2348,7 +2348,7 @@ pub(crate) fn launch_openclaw(body: &Value) -> Result<Value, String> {
   }
 
   let bin_path = binary.get("path").and_then(Value::as_str).unwrap_or("openclaw");
-  let command = format!("{} gateway start || {} gateway", bin_path, bin_path);
+  let command = format!("{} gateway --force", bin_path);
   #[cfg(target_os = "windows")]
   {
     let message = launch_windows_background_command(&cwd, &command, "OpenClaw Gateway")?;
