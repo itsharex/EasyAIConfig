@@ -3109,6 +3109,77 @@ function getOpenClawConsoleAgents(config = {}) {
   };
 }
 
+function deriveOpenClawDashboardAuthDiagnostics(data = {}, lastRepair = null) {
+  const authMode = String(data.gatewayAuthMode || data.config?.gateway?.auth?.mode || 'token');
+  const dashboardUrl = String(data.dashboardUrl || '');
+  const hasTokenizedUrl = /[?&]token=/.test(dashboardUrl);
+  const tokenReady = Boolean(data.gatewayTokenReady);
+  const repairNotes = Array.isArray(lastRepair?.notes) ? lastRepair.notes.filter(Boolean) : [];
+
+  if (!data.gatewayReachable) {
+    return {
+      tone: 'error',
+      summary: '未就绪',
+      detail: 'Gateway 尚未运行，Dashboard 认证还没有开始。',
+      session: '不可用',
+      issues: [],
+    };
+  }
+
+  if (authMode === 'none') {
+    return {
+      tone: 'ok',
+      summary: '无需认证',
+      detail: '当前 Control UI 不要求 token 或密码。',
+      session: '无需会话',
+      issues: [],
+    };
+  }
+
+  if (authMode === 'password') {
+    return {
+      tone: 'warn',
+      summary: '需手动输入密码',
+      detail: '应用无法替你填写浏览器里的密码框。',
+      session: '待人工确认',
+      issues: [{ tone: 'warn', title: 'Dashboard 需要密码认证', copy: 'Gateway 已在线，但 Control UI 还需要你在浏览器里输入密码后才能连上。', action: { type: 'open-openclaw-dashboard', label: '打开 Dashboard' } }],
+    };
+  }
+
+  if (!tokenReady) {
+    return {
+      tone: 'error',
+      summary: '缺少 token',
+      detail: 'Gateway 已启用 token 认证，但当前没有检测到可用 token。',
+      session: '认证失败',
+      issues: [{ tone: 'error', title: 'Gateway 缺少令牌', copy: '当前启用了 token 鉴权，但没有检测到可用 token，Dashboard 会提示 unauthorized / 4008。', action: { type: 'repair-openclaw-dashboard', label: '一键修复并打开' } }],
+    };
+  }
+
+  if (!hasTokenizedUrl) {
+    return {
+      tone: 'error',
+      summary: '缺少令牌化 URL',
+      detail: '当前没有拿到带 token 的 Dashboard 启动链接。',
+      session: '认证失败',
+      issues: [{ tone: 'error', title: 'Dashboard 启动链接缺少 token', copy: 'Control UI 需要令牌化 URL 才能引导浏览器建立认证会话。', action: { type: 'repair-openclaw-dashboard', label: '重新生成并打开' } }],
+    };
+  }
+
+  const copy = lastRepair
+    ? '已执行自动修复，但应用无法直接读取外部浏览器会话；如果浏览器仍报 4008，通常是旧会话/旧 token 残留。'
+    : '应用无法直接读取外部浏览器会话；如果浏览器仍报 4008，请重新打开令牌化 URL。';
+
+  return {
+    tone: 'warn',
+    summary: '待浏览器确认',
+    detail: copy,
+    session: lastRepair ? '已修复待确认' : '未验证',
+    issues: [{ tone: 'warn', title: 'Dashboard 认证需浏览器确认', copy, action: { type: 'repair-openclaw-dashboard', label: '重新打开认证链接' } }],
+    notes: repairNotes,
+  };
+}
+
 function buildCodexConsoleView() {
   const data = state.current || {};
   const providers = data.providers || [];
@@ -3222,22 +3293,24 @@ function buildOpenClawConsoleView() {
   const defaults = agentInfo.defaults || {};
   const gatewayBind = String(config.gateway?.bind || 'local');
   const gatewayAuth = String(data.gatewayAuthMode || config.gateway?.auth?.mode || 'token');
+  const dashboardAuth = deriveOpenClawDashboardAuthDiagnostics(data, lastRepair);
   const issues = [];
 
   if (!data.binary?.installed) issues.push({ tone: 'error', title: 'OpenClaw 未安装', copy: '当前还没检测到 openclaw 命令，先去"工具安装"完成安装。', action: { type: 'goto-page', page: 'tools', label: '去安装' } });
   if (!data.configExists) issues.push({ tone: 'warn', title: 'openclaw.json 尚未生成', copy: '说明还没完成初始化或还没真正保存过配置。', action: { type: 'goto-quick-tool', tool: 'openclaw', label: '去快速配置' } });
   if (data.needsOnboarding) issues.push({ tone: 'warn', title: 'OpenClaw 仍需初始化', copy: '当前还没有生成 `openclaw.json`，先完成首次初始化。', action: { type: 'launch-openclaw', label: '启动并初始化' } });
   if (!data.gatewayReachable) issues.push({ tone: 'warn', title: 'Dashboard 未在线', copy: '当前没探测到本地 Gateway，很多渠道回调和控制面板操作都会失效。', action: { type: 'launch-openclaw', label: '启动 Gateway' } });
-  if (gatewayAuth === 'token' && !data.gatewayTokenReady) issues.push({ tone: 'error', title: 'Gateway 缺少令牌', copy: '当前启用了 token 鉴权，但没有检测到可用 token，Dashboard 会提示 unauthorized / 4008。', action: { type: 'repair-openclaw-dashboard', label: '一键修复并打开' } });
   if (!providers.length) issues.push({ tone: 'error', title: '没有配置模型 Provider', copy: 'OpenClaw 已安装，但 `models.providers` 里还没有可用模型源。', action: { type: 'goto-config-editor-tool', tool: 'openclaw', label: '去配置 Provider' } });
   if (!quick.model) issues.push({ tone: 'error', title: '默认 Agent 模型未设置', copy: '当前没有检测到 `agents.defaults.model.primary`，聊天入口通常无法正常出结果。', action: { type: 'goto-config-editor-tool', tool: 'openclaw', label: '去设置模型' } });
   if (providers.length && !quick.hasApiKey) issues.push({ tone: 'error', title: '默认 Provider 缺少 API Key', copy: `已检测到默认模型 ${quick.model || '-'}，但没有找到它对应的 API Key。`, action: { type: 'goto-quick-tool', tool: 'openclaw', label: '去补 Key' } });
   if ((gatewayBind === 'lan' || gatewayBind === '0.0.0.0') && gatewayAuth === 'none') issues.push({ tone: 'error', title: '网络已暴露但未启用认证', copy: '当前 Gateway 允许局域网/公网访问，但认证模式为 none，风险较高。', action: { type: 'goto-config-editor-tool', tool: 'openclaw', label: '去修安全配置' } });
   if (channels.some((item) => ['wechat', 'wechatWork', 'wechatwork', 'webhook'].includes(item.key)) && !config.gateway?.tls && !config.gateway?.trustProxy) issues.push({ tone: 'warn', title: '公网回调场景建议补 HTTPS / 反代', copy: '你已经在配公众号、企微或 Webhook，一般需要公网 HTTPS 或反向代理才能稳定接入。', action: { type: 'goto-config-editor-tool', tool: 'openclaw', label: '去配网关' } });
+  issues.push(...(dashboardAuth.issues || []));
 
   const summary = [
     renderToolConsoleStat('安装状态', data.binary?.installed ? (data.binary.version || '已安装') : '未安装', data.binary?.path ? `<span class="tool-console-code">${escapeHtml(data.binary.path)}</span>` : '', { icon: 'install' }),
     renderToolConsoleStat('Dashboard', data.gatewayReachable ? '在线' : '未启动', (data.dashboardUrl || data.gatewayUrl) ? `<span class="tool-console-code">${escapeHtml(data.dashboardUrl || data.gatewayUrl)}</span>` : '等待本地 Gateway 启动', { icon: 'dashboard' }),
+    renderToolConsoleStat('认证状态', dashboardAuth.summary, dashboardAuth.detail, { icon: 'runtime' }),
     renderToolConsoleStat('默认 Agent', quick.model || defaults.model?.primary || '未设置', defaults.thinkingDefault ? `thinking=${escapeHtml(defaults.thinkingDefault)}` : '建议先固定默认模型', { icon: 'agent' }),
     renderToolConsoleStat('接入渠道', String(channels.length), channels.length ? channels.map((item) => item.label).slice(0, 3).join(' · ') : '尚未接入任何聊天渠道', { icon: 'channel' }),
   ].join('');
@@ -3264,6 +3337,7 @@ function buildOpenClawConsoleView() {
 
   const main = [
     renderToolConsoleCard('Gateway 状态', '进程、认证与 Dashboard 引导链接', `<div class="tool-console-list">${renderToolConsoleRow('配置文件', `<span class="tool-console-code">${escapeHtml(data.configPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('Gateway HTTP', data.gatewayReachable ? '在线' : '未就绪')}${renderToolConsoleRow('Bind', gatewayBind)}${renderToolConsoleRow('Auth', gatewayAuth)}${renderToolConsoleRow('Token', data.gatewayTokenReady ? '已就绪' : '缺失')}${renderToolConsoleRow('Dashboard URL', data.dashboardUrl ? `<span class="tool-console-code">${escapeHtml(data.dashboardUrl)}</span>` : '-', { html: Boolean(data.dashboardUrl) })}${renderToolConsoleRow('Onboarding', data.needsOnboarding ? '待完成' : '已完成')}</div>`, { icon: 'runtime' }),
+    renderToolConsoleCard('Dashboard 认证状态', 'Control UI 认证、令牌化链接与浏览器会话', `<div class="tool-console-list">${renderToolConsoleRow('状态', dashboardAuth.summary)}${renderToolConsoleRow('认证模式', gatewayAuth)}${renderToolConsoleRow('令牌化 URL', /[?&]token=/.test(String(data.dashboardUrl || '')) ? '已就绪' : '缺失')}${renderToolConsoleRow('浏览器会话', dashboardAuth.session)}${renderToolConsoleRow('诊断', dashboardAuth.detail)}${renderToolConsoleRow('修复备注', (dashboardAuth.notes || []).length ? (dashboardAuth.notes || []).join(' | ') : '无')}</div>`, { icon: 'issues', iconTone: dashboardAuth.tone === 'error' ? 'error' : dashboardAuth.tone === 'ok' ? 'ok' : 'warn' }),
     renderToolConsoleCard('修复结果', '最近一次一键修复的执行结果', lastRepair ? `<div class="tool-console-list">${renderToolConsoleRow('Token 生成', lastRepair.tokenGenerated ? '是' : '否')}${renderToolConsoleRow('要求重启', lastRepair.restartRequired ? '是' : '否')}${renderToolConsoleRow('修复后 Gateway', lastRepair.gatewayReachable ? '在线' : '未就绪')}${renderToolConsoleRow('修复后 URL', lastRepair.dashboardUrl ? `<span class="tool-console-code">${escapeHtml(lastRepair.dashboardUrl)}</span>` : '-', { html: Boolean(lastRepair.dashboardUrl) })}${renderToolConsoleRow('备注', (lastRepair.notes || []).length ? escapeHtml(lastRepair.notes.join(' | ')) : '无')}</div>` : '<div class="tool-console-empty">还没有执行过“一键修复并打开”。</div>', { icon: 'actions' }),
     renderToolConsoleCard('异常检测', '优先指出启动、模型、认证和暴露风险', renderToolConsoleIssueList(issues, 'OpenClaw 侧暂未发现明显阻塞项。'), { icon: 'issues', iconTone: issues.length ? (issues.some(i => i.tone === 'error') ? 'error' : 'warn') : 'ok' }),
   ].join('');
