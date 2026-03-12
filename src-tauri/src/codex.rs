@@ -8,6 +8,8 @@ use std::io::{BufRead, BufReader};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
@@ -222,6 +224,22 @@ fn create_command(program: &str) -> Command {
   let mut cmd = Command::new(program);
   cmd.env("PATH", full_path_env());
   cmd
+}
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+#[cfg(target_os = "windows")]
+fn launch_windows_background_command(cwd: &Path, command_text: &str, tool_label: &str) -> Result<String, String> {
+  let mut cmd = create_command("cmd.exe");
+  cmd.args(["/d", "/s", "/c", command_text])
+    .current_dir(cwd)
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .creation_flags(CREATE_NO_WINDOW);
+  cmd.spawn().map_err(|error| error.to_string())?;
+  Ok(format!("{} 已在后台启动", tool_label))
 }
 
 fn run_command(command: &str, args: &[&str], cwd: Option<&Path>) -> Result<Value, String> {
@@ -2331,6 +2349,19 @@ pub(crate) fn launch_openclaw(body: &Value) -> Result<Value, String> {
 
   let bin_path = binary.get("path").and_then(Value::as_str).unwrap_or("openclaw");
   let command = format!("{} gateway start || {} gateway", bin_path, bin_path);
+  #[cfg(target_os = "windows")]
+  {
+    let message = launch_windows_background_command(&cwd, &command, "OpenClaw Gateway")?;
+    return Ok(json!({
+      "ok": true,
+      "cwd": cwd.to_string_lossy().to_string(),
+      "mode": "gateway",
+      "gatewayUrl": state.get("gatewayUrl").cloned().unwrap_or(Value::Null),
+      "command": command,
+      "message": message,
+      "background": true,
+    }));
+  }
   let message = launch_terminal_command(&cwd, &command, "OpenClaw Gateway")?;
   Ok(json!({
     "ok": true,

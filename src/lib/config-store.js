@@ -1315,6 +1315,17 @@ function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabe
   throw new Error(`没有找到可用终端，请先手动运行 ${commandText || binaryName}`);
 }
 
+function launchWindowsBackgroundCommand(cwd, commandText, { toolLabel = 'OpenClaw Gateway' } = {}) {
+  const child = spawn('cmd.exe', ['/d', '/s', '/c', commandText], {
+    cwd,
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  child.unref();
+  return `${toolLabel} 已在后台启动`;
+}
+
 async function checkOpenClawGatewayReachable(gatewayUrl) {
   try {
     const controller = new AbortController();
@@ -2402,6 +2413,12 @@ export async function launchOpenClaw({ cwd } = {}) {
 
   const binaryPath = binary.path || 'openclaw';
   const commandText = `${binaryPath} gateway start || ${binaryPath} gateway`;
+  if (process.platform === 'win32') {
+    const message = launchWindowsBackgroundCommand(targetCwd, commandText, {
+      toolLabel: 'OpenClaw Gateway',
+    });
+    return { ok: true, cwd: targetCwd, mode: 'gateway', gatewayUrl: state.gatewayUrl, command: commandText, message, background: true };
+  }
   const message = launchTerminalCommand(targetCwd, {
     commandText,
     binaryName: 'openclaw gateway',
