@@ -1747,21 +1747,21 @@ function syncOpenClawSetupDialogSurface() {
 
 function renderOpenClawSetupDialog({ stateData, command = '', terminalMessage = '', autoOpenDashboard = false, elapsedMs = 0, timedOut = false }) {
   const steps = [
-    { title: '已自动打开终端', done: Boolean(terminalMessage), desc: terminalMessage || '正在准备终端窗口…' },
-    { title: '按终端向导完成初始化', done: Boolean(stateData?.configExists), desc: stateData?.configExists ? '已检测到 OpenClaw 配置文件。' : '终端里会引导你完成首次配置，这一步你只需要按提示继续。' },
-    { title: '等待本地 Gateway 就绪', done: Boolean(stateData?.gatewayReachable), desc: stateData?.gatewayReachable ? `Dashboard 已在线：${stateData.gatewayUrl}` : '完成终端向导后，这里会自动检测本地 Dashboard 是否已启动。' },
+    { title: '后台初始化已开始', done: Boolean(terminalMessage), desc: terminalMessage || '正在准备初始化任务…' },
+    { title: '自动生成首次配置', done: Boolean(stateData?.configExists), desc: stateData?.configExists ? '已检测到 OpenClaw 配置文件。' : '正在后台自动生成首次配置，一般不需要你手动处理。' },
+    { title: '等待本地 Gateway 就绪', done: Boolean(stateData?.gatewayReachable), desc: stateData?.gatewayReachable ? `Dashboard 已在线：${stateData.gatewayUrl}` : '配置完成后，这里会自动检测本地 Dashboard 是否已启动。' },
   ];
   const showModelConfig = Boolean(stateData?.configExists || stateData?.gatewayReachable || timedOut);
   return `
     <div class="install-tracker">
       <div class="install-tracker-top">
         <div>
-          <div class="install-tracker-status">${stateData?.gatewayReachable ? '初始化完成' : timedOut ? '等待你完成终端向导' : '正在自动初始化'}</div>
+          <div class="install-tracker-status">${stateData?.gatewayReachable ? '初始化完成' : timedOut ? '后台初始化仍在进行' : '正在自动初始化'}</div>
           <div class="install-tracker-summary">${stateData?.gatewayReachable ? 'OpenClaw 已准备好，建议先确认模型配置再打开 Dashboard。' : stateData?.configExists ? '配置已生成，正在等待 Gateway 启动。' : '终端已经自动打开，请跟着向导完成。'}</div>
         </div>
         <div class="install-tracker-percent">${stateData?.gatewayReachable ? '100%' : stateData?.configExists ? '75%' : '35%'}</div>
       </div>
-      <div class="install-tracker-hint">${timedOut ? '如果终端还在运行，不用重新安装；完成后点"刷新状态"即可。' : '这个步骤已经尽量自动化了；你只需要处理终端里真正必须人工确认的内容。'}</div>
+      <div class="install-tracker-hint">${timedOut ? '如果后台任务还在处理，不用重新安装；稍等片刻后点“刷新状态”即可。' : '这个步骤已经尽量自动化了；通常不需要你再打开终端。'}</div>
       <div class="install-tracker-detail">${escapeHtml(command || 'openclaw onboard --install-daemon')}</div>
       <div class="install-tracker-grid">
         <div class="install-tracker-col">${steps.map((step, index) => renderOpenClawInstallStep({ title: step.title, description: step.desc, status: step.done ? 'done' : (index === steps.findIndex((item) => !item.done) ? 'running' : 'pending') }, index, 0)).join('')}</div>
@@ -1789,7 +1789,7 @@ function renderOpenClawSetupDialog({ stateData, command = '', terminalMessage = 
         ${stateData?.gatewayReachable ? `<button type="button" class="secondary install-tracker-copy-btn" data-openclaw-open-dashboard>打开 Dashboard</button>` : `<button type="button" class="secondary install-tracker-copy-btn" data-openclaw-refresh-state>刷新状态</button>`}
       </div>
       <div class="install-tracker-note-card">
-        <div class="install-tracker-detail">${escapeHtml(terminalMessage || '终端命令准备中…')}</div>
+        <div class="install-tracker-detail">${escapeHtml(terminalMessage || '后台初始化命令准备中…')}</div>
       </div>
       ${showModelConfig ? renderOnboardModelConfigHtml() : ''}
     </div>
@@ -2057,7 +2057,7 @@ async function runOpenClawOnboardFlow({ autoOpenDashboard = false } = {}) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
-    timeoutMs: 12000,
+    timeoutMs: 90000,
   });
   if (!launchJson.ok || !launchJson.data) {
     throw new Error(launchJson.error || '启动 OpenClaw 初始化失败');
@@ -2118,7 +2118,7 @@ async function runOpenClawOnboardFlow({ autoOpenDashboard = false } = {}) {
 
   patchUpdateDialog({
     eyebrow: 'OpenClaw',
-    title: '请完成终端向导',
+    title: '后台初始化仍在进行',
     trackerMode: true,
     body: renderOpenClawSetupDialog({
       stateData: latestState,
@@ -2130,7 +2130,7 @@ async function runOpenClawOnboardFlow({ autoOpenDashboard = false } = {}) {
     }),
   });
   syncOpenClawSetupDialogSurface();
-  flash('终端向导可能仍在运行，完成后点“刷新状态”即可', 'info');
+  flash('后台初始化可能仍在进行，稍后点“刷新状态”即可', 'info');
   return latestState;
 }
 
@@ -2887,7 +2887,7 @@ document.addEventListener('click', async (e) => {
     if (ctx) {
       patchUpdateDialog({
         eyebrow: 'OpenClaw',
-        title: data.gatewayReachable ? '初始化完成' : '请继续完成终端向导',
+        title: data.gatewayReachable ? '初始化完成' : '后台初始化仍在进行',
         trackerMode: true,
         body: renderOpenClawSetupDialog({
           stateData: data,
@@ -2912,7 +2912,7 @@ document.addEventListener('click', async (e) => {
   try {
     const data = await fetchOpenClawStateData();
     if (!data.gatewayReachable) {
-      flash('Dashboard 还没准备好，请先完成终端向导', 'info');
+      flash('Dashboard 还没准备好，后台初始化完成后再试', 'info');
       return;
     }
     await repairOpenClawDashboard({ silent: true });
@@ -8848,9 +8848,9 @@ async function launchOpenClawOnly() {
       }
 
       pushLog('Gateway 还未就绪，但初始化已完成');
-      hint = '初始化已完成，但 Gateway 尚未响应。可稍后再试，或用管理员 PowerShell 重新初始化。';
+      hint = '初始化已完成，但 Gateway 尚未响应。可稍后重试，或点“刷新状态”再次检测。';
       stopTimer();
-      updateDialog('初始化完成', isBackgroundLaunch ? 'Gateway 仍未就绪，请查看这里的日志' : 'Gateway 仍未就绪，请检查终端');
+      updateDialog('初始化完成', isBackgroundLaunch ? 'Gateway 仍未就绪，请查看这里的日志' : 'Gateway 仍未就绪，请稍后刷新状态');
       setUpdateDialogLocked(false);
       patchUpdateDialog({ confirmText: '关闭', confirmDisabled: false });
       return;

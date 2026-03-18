@@ -6,6 +6,7 @@ use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::io::Write;
+use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 #[cfg(target_os = "windows")]
@@ -2050,20 +2051,43 @@ fn launch_terminal_command(cwd: &Path, command_text: &str, tool_label: &str) -> 
   Err(format!("没有找到可用终端，请先手动运行 {}", command_text))
 }
 
+fn quote_windows_cmd_arg(value: &str) -> String {
+  format!("\"{}\"", value.replace('"', "\"\""))
+}
+
 fn launch_terminal_for_tool(cwd: &Path, binary_path: &str, tool_label: &str) -> Result<String, String> {
+  if cfg!(target_os = "windows") {
+    let command_text = quote_windows_cmd_arg(binary_path);
+    return launch_terminal_command(cwd, &command_text, tool_label);
+  }
   launch_terminal_command(cwd, binary_path, tool_label)
 }
 
 fn check_openclaw_gateway_reachable(gateway_url: &str) -> bool {
-  reqwest::blocking::Client::builder()
+  let http_ok = reqwest::blocking::Client::builder()
     .connect_timeout(std::time::Duration::from_millis(500))
-    .timeout(std::time::Duration::from_millis(1200))
+    .timeout(std::time::Duration::from_millis(4500))
     .redirect(reqwest::redirect::Policy::none())
     .build()
     .ok()
     .and_then(|client| client.get(gateway_url).send().ok())
     .map(|response| response.status().as_u16() > 0)
-    .unwrap_or(false)
+    .unwrap_or(false);
+  if http_ok {
+    return true;
+  }
+
+  reqwest::Url::parse(gateway_url)
+    .ok()
+    .and_then(|url| {
+      let host = url.host_str()?.to_string();
+      let port = url.port_or_known_default()?;
+      std::net::TcpStream::connect_timeout(
+        &(host.as_str(), port).to_socket_addrs().ok()?.next()?,
+        std::time::Duration::from_millis(1500),
+      ).ok()
+    })
+    .is_some()
 }
 
 fn normalize_openclaw_control_ui_base_path(value: &str) -> String {
@@ -2350,7 +2374,11 @@ pub(crate) fn launch_openclaw(body: &Value) -> Result<Value, String> {
   }
 
   let bin_path = binary.get("path").and_then(Value::as_str).unwrap_or("openclaw");
-  let command = format!("{} gateway --force", bin_path);
+  let command = if cfg!(target_os = "windows") {
+    format!("{} gateway --force", quote_windows_cmd_arg(bin_path))
+  } else {
+    format!("{} gateway --force", bin_path)
+  };
   #[cfg(target_os = "windows")]
   {
     let message = launch_windows_background_command(&cwd, &command, "OpenClaw Gateway")?;
@@ -2905,6 +2933,11 @@ pub(crate) fn open_url_in_browser(body: &Value) -> Result<Value, String> {
 pub(crate) fn stop_openclaw_gateway() -> Result<Value, String> {
   std::env::set_var("PATH", full_path_env());
 
+  let state = load_openclaw_state()?;
+  let gateway_port = state.get("gatewayPort").and_then(Value::as_str).unwrap_or("18789").to_string();
+  let mut methods: Vec<String> = Vec::new();
+  let mut attempted = false;
+
   // Try `openclaw gateway stop` first
   let bin = which::which("openclaw").ok();
   if let Some(ref bin_path) = bin {
@@ -2913,22 +2946,61 @@ pub(crate) fn stop_openclaw_gateway() -> Result<Value, String> {
       .output();
     if let Ok(out) = output {
       if out.status.success() {
-        return Ok(json!({ "stopped": true, "method": "gateway stop" }));
+        attempted = true;
+        methods.push("gateway stop".to_string());
       }
     }
   }
 
-  // Fallback: kill process by name
-  let kill_result = if cfg!(target_os = "windows") {
-    create_command("taskkill").args(["/F", "/IM", "openclaw.exe"]).output()
-  } else {
-    Command::new("pkill").args(["-f", "openclaw.*gateway"]).output()
-  };
+  if cfg!(target_os = "windows") {
+    let netstat_output = create_command("netstat").args(["-ano", "-p", "tcp"]).output();
+    if let Ok(output) = netstat_output {
+      let stdout = String::from_utf8_lossy(&output.stdout);
+      let mut seen = HashSet::new();
+      for line in stdout.lines() {
+        let text = line.trim();
+        if !text.contains("LISTENING") { continue; }
+        let parts = text.split_whitespace().collect::<Vec<_>>();
+        if parts.len() < 5 { continue; }
+        let local_addr = parts[1];
+        let pid = parts[4];
+        if !local_addr.ends_with(&format!(":{}", gateway_port)) || !seen.insert(pid.to_string()) {
+          continue;
+        }
+        if create_command("taskkill").args(["/F", "/T", "/PID", pid]).output().map(|out| out.status.success()).unwrap_or(false) {
+          attempted = true;
+          methods.push(format!("taskkill pid {}", pid));
+        }
+      }
+    }
 
-  match kill_result {
-    Ok(out) if out.status.success() => Ok(json!({ "stopped": true, "method": "pkill" })),
-    _ => Ok(json!({ "stopped": false, "message": "未找到运行中的 OpenClaw 进程" })),
+    if !attempted
+      && create_command("taskkill").args(["/F", "/T", "/IM", "openclaw.exe"]).output().map(|out| out.status.success()).unwrap_or(false) {
+      attempted = true;
+      methods.push("taskkill openclaw.exe".to_string());
+    }
+  } else if Command::new("pkill").args(["-f", "openclaw.*gateway"]).output().map(|out| out.status.success()).unwrap_or(false) {
+    attempted = true;
+    methods.push("pkill openclaw.*gateway".to_string());
   }
+
+  thread::sleep(Duration::from_millis(900));
+  let after = load_openclaw_state()?;
+  if !after.get("gatewayReachable").and_then(Value::as_bool).unwrap_or(false) {
+    let method_text = if methods.is_empty() { "none".to_string() } else { methods.join(" -> ") };
+    return Ok(json!({
+      "stopped": true,
+      "method": method_text,
+      "gatewayReachable": false,
+      "gatewayUrl": after.get("gatewayUrl").cloned().unwrap_or(Value::Null),
+    }));
+  }
+
+  if attempted {
+    return Err("OpenClaw Gateway 仍在运行，请手动检查 Windows 后台进程".to_string());
+  }
+
+  Ok(json!({ "stopped": false, "message": "未找到运行中的 OpenClaw 进程" }))
 }
 
 pub(crate) fn uninstall_openclaw(body: &Value) -> Result<Value, String> {

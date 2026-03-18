@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import net from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import TOML from '@iarna/toml';
 import { detectProvider } from './provider-check.js';
@@ -1287,6 +1288,7 @@ function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabe
   const bin = commandText || binaryPath || binaryName;
   const escapedCwd = String(cwd).replace(/([\\"$])/g, '\\$1');
   const escapedBin = String(bin).replace(/([\\"$])/g, '\\$1');
+  const windowsBin = commandText || (binaryPath ? `"${String(binaryPath).replace(/"/g, '""')}"` : bin);
 
   if (process.platform === 'darwin') {
     const appleScript = [
@@ -1303,7 +1305,7 @@ function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabe
   }
 
   if (process.platform === 'win32') {
-    const child = spawn('cmd.exe', ['/c', 'start', '', 'cmd', '/k', `cd /d "${cwd}" && "${bin}"`], {
+    const child = spawn('cmd.exe', ['/c', 'start', '', 'cmd', '/k', `cd /d "${cwd}" && ${windowsBin}`], {
       detached: true,
       stdio: 'ignore',
     });
@@ -1340,11 +1342,38 @@ function launchWindowsBackgroundCommand(cwd, commandText, { toolLabel = 'OpenCla
   return `${toolLabel} 已在后台启动`;
 }
 
+function buildWindowsCommand(binaryPath, args = []) {
+  const program = `"${String(binaryPath || '').replace(/"/g, '""')}"`;
+  return [program, ...args].filter(Boolean).join(' ');
+}
+
+async function findWindowsListeningPids(port) {
+  const normalizedPort = String(port || '').trim();
+  if (process.platform !== 'win32' || !normalizedPort) return [];
+  const result = await runCommand('netstat', ['-ano', '-p', 'tcp']);
+  if (!result.ok) return [];
+
+  const pids = new Set();
+  for (const line of String(result.stdout || '').split(/\r?\n/)) {
+    const text = line.trim();
+    if (!text || !/LISTENING/i.test(text)) continue;
+    const parts = text.split(/\s+/);
+    if (parts.length < 5) continue;
+    const localAddress = parts[1] || '';
+    const pid = parts[4] || '';
+    if (localAddress.endsWith(`:${normalizedPort}`) && /^\d+$/.test(pid)) {
+      pids.add(pid);
+    }
+  }
+  return [...pids];
+}
+
 async function checkOpenClawGatewayReachable(gatewayUrl) {
   try {
+    const target = new URL(gatewayUrl);
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 1800);
-    const response = await fetch(gatewayUrl, {
+    const timer = setTimeout(() => controller.abort(), 4500);
+    const response = await fetch(target, {
       method: 'GET',
       redirect: 'manual',
       signal: controller.signal,
@@ -1352,7 +1381,27 @@ async function checkOpenClawGatewayReachable(gatewayUrl) {
     clearTimeout(timer);
     return response.status > 0;
   } catch {
-    return false;
+    try {
+      const target = new URL(gatewayUrl);
+      const port = Number(target.port || (target.protocol === 'https:' ? 443 : 80));
+      await new Promise((resolve, reject) => {
+        const socket = net.createConnection({ host: target.hostname, port });
+        const timer = setTimeout(() => socket.destroy(new Error('timeout')), 1500);
+        socket.once('connect', () => {
+          clearTimeout(timer);
+          socket.end();
+          resolve(true);
+        });
+        socket.once('error', (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+        socket.once('close', () => clearTimeout(timer));
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -2425,7 +2474,9 @@ export async function launchOpenClaw({ cwd } = {}) {
   }
 
   const binaryPath = binary.path || 'openclaw';
-  const commandText = `${binaryPath} gateway --force`;
+  const commandText = process.platform === 'win32'
+    ? buildWindowsCommand(binaryPath, ['gateway', '--force'])
+    : `${binaryPath} gateway --force`;
   if (process.platform === 'win32') {
     const message = launchWindowsBackgroundCommand(targetCwd, commandText, {
       toolLabel: 'OpenClaw Gateway',
@@ -2456,8 +2507,12 @@ export async function stopOpenClaw() {
   }
 
   if (process.platform === 'win32') {
-    const result = await runCommand('taskkill', ['/F', '/IM', 'openclaw.exe']);
-    attempts.push({ command: 'taskkill /F /IM openclaw.exe', ok: result.ok, stdout: result.stdout, stderr: result.stderr });
+    for (const pid of await findWindowsListeningPids(state.gatewayPort || '18789')) {
+      const result = await runCommand('taskkill', ['/F', '/T', '/PID', String(pid)]);
+      attempts.push({ command: `taskkill /F /T /PID ${pid}`, ok: result.ok, stdout: result.stdout, stderr: result.stderr });
+    }
+    const result = await runCommand('taskkill', ['/F', '/T', '/IM', 'openclaw.exe']);
+    attempts.push({ command: 'taskkill /F /T /IM openclaw.exe', ok: result.ok, stdout: result.stdout, stderr: result.stderr });
   } else {
     const result = await runCommand('pkill', ['-f', 'openclaw']);
     attempts.push({ command: 'pkill -f openclaw', ok: result.ok, stdout: result.stdout, stderr: result.stderr });
@@ -2536,6 +2591,7 @@ export async function onboardOpenClaw({ cwd, authChoice, apiKey, apiKeyType } = 
       timeout: 60000,
       maxBuffer: 1024 * 1024,
       encoding: 'utf-8',
+      windowsHide: true,
     });
   } catch (err) {
     stdout = err.stdout || '';
