@@ -72,6 +72,7 @@ const state = {
   openClawSetupContext: null,
   openClawLastRepair: null,
   openClawConfigView: localStorage.getItem('easyaiconfig_oc_config_view') === 'minimal' ? 'minimal' : 'full',
+  codexAuthView: localStorage.getItem('easyaiconfig_codex_auth_view') === 'api_key' ? 'api_key' : 'official',
   configStoreGuide: { recipeId: '', values: {} },
   configStoreAssistant: { recipeId: '', values: {}, missing: [] },
 };
@@ -648,6 +649,9 @@ function setActiveTool(toolId) {
   }
 
   if (toolId !== 'openclaw') {
+    if (state.current?.login?.loggedIn && state.codexAuthView !== 'api_key') {
+      state.codexAuthView = 'official';
+    }
     if (baseUrlField) baseUrlField.style.display = '';
     if (detectField) detectField.style.display = '';
     if (modelField) modelField.style.display = '';
@@ -674,6 +678,7 @@ function setActiveTool(toolId) {
         renderDefaultCodexModels(modelSelect, state.current?.summary?.model || '');
       }
     }
+    syncCodexAuthView();
     renderCurrentConfig();
     return;
   }
@@ -890,10 +895,17 @@ async function loadOpenClawQuickState() {
     var _lb = el('launchBtn');
     var _dqr = el('ocDashboardQuickRow');
     state._ocGatewayUrl = data.gatewayUrl || '';
-    if (data.gatewayReachable) {
+    const gatewayStatus = getOpenClawGatewayStatus(data);
+    if (gatewayStatus === 'online') {
       if (_lb) {
         _lb.innerHTML = '<span class="running-dot"></span>打开 Dashboard';
         _lb.classList.add('running');
+      }
+      if (_dqr) _dqr.classList.remove('hide');
+    } else if (gatewayStatus === 'warming') {
+      if (_lb) {
+        _lb.textContent = 'Gateway 启动中…';
+        _lb.classList.remove('running');
       }
       if (_dqr) _dqr.classList.remove('hide');
     } else {
@@ -954,6 +966,80 @@ async function fetchOpenClawStateData() {
   }
   state.openclawState = json.data;
   return json.data;
+}
+
+function getOpenClawGatewayStatus(data = {}) {
+  if (data.gatewayReachable) return 'online';
+  if (data.gatewayPortListening) return 'warming';
+  return 'offline';
+}
+
+function getOpenClawGatewayStatusLabel(data = {}) {
+  return ({ online: '在线', warming: '启动中', offline: '未启动' })[getOpenClawGatewayStatus(data)] || '未启动';
+}
+
+function syncCodexAuthView() {
+  const block = el('codexAuthBlock');
+  const panel = el('codexOfficialAuthPanel');
+  const baseUrlField = el('baseUrlInput')?.closest('.field');
+  const apiKeyField = el('apiKeyInput')?.closest('.field');
+  const detectField = el('detectBtn')?.closest('.field');
+  if (!block || !panel || state.activeTool !== 'codex') {
+    if (block) block.style.display = 'none';
+    return;
+  }
+
+  const login = state.current?.login || {};
+  const hasOfficialLogin = Boolean(login.loggedIn && login.method === 'chatgpt');
+  if (!hasOfficialLogin) {
+    state.codexAuthView = 'api_key';
+  }
+
+  block.style.display = 'grid';
+  document.querySelectorAll('[data-codex-auth-view]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.codexAuthView === state.codexAuthView);
+    if (button.dataset.codexAuthView === 'official') {
+      button.disabled = !hasOfficialLogin;
+      button.title = hasOfficialLogin ? '使用 Codex 官方登录' : '当前未检测到 Codex 官方登录';
+    }
+  });
+
+  if (state.codexAuthView === 'official' && hasOfficialLogin) {
+    if (baseUrlField) baseUrlField.style.display = 'none';
+    if (apiKeyField) apiKeyField.style.display = 'none';
+    if (detectField) detectField.style.display = 'none';
+    panel.classList.add('show');
+    panel.innerHTML = `
+      <div class="codex-auth-title">已识别 Codex 官方登录</div>
+      <div class="codex-auth-desc">当前设备已经存在 Codex 官方登录态。你可以直接启动使用；如果想改成代理 / 中转 / 国内平台，再切到「API Key」填写自定义配置。</div>
+      <div class="codex-auth-badges">
+        <span class="provider-pill ok">${escapeHtml(login.method === 'chatgpt' ? 'ChatGPT / OpenAI 已登录' : '已登录')}</span>
+        ${login.plan ? `<span class="provider-pill ok">${escapeHtml(login.plan)}</span>` : ''}
+        ${login.email ? `<span class="provider-pill muted">${escapeHtml(login.email)}</span>` : ''}
+        ${login.accountId ? `<span class="provider-pill muted">account: ${escapeHtml(login.accountId)}</span>` : ''}
+      </div>
+      <div class="codex-auth-actions">
+        <button type="button" class="secondary tiny-btn" data-codex-switch-api>切到 API Key 配置</button>
+        <button type="button" class="secondary tiny-btn" data-codex-refresh-login>重新检测登录状态</button>
+      </div>
+    `;
+  } else {
+    if (baseUrlField) baseUrlField.style.display = '';
+    if (apiKeyField) apiKeyField.style.display = '';
+    if (detectField) detectField.style.display = '';
+    panel.classList.remove('show');
+    panel.innerHTML = '';
+  }
+}
+
+function renderOpenClawPortOccupants(data = {}) {
+  const items = Array.isArray(data.gatewayPortOccupants) ? data.gatewayPortOccupants : [];
+  if (!items.length) return '无';
+  return items.map((item) => {
+    const label = item.label || `${item.name || '未知进程'} (PID ${item.pid || '-'})`;
+    const cmd = item.commandLine ? `<div class="tool-console-stat-sub"><span class="tool-console-code">${escapeHtml(item.commandLine)}</span></div>` : '';
+    return `<div>${escapeHtml(label)}${cmd}</div>`;
+  }).join('');
 }
 
 /* ── Provider Quick Import (Env Paste / Local Read) ── */
@@ -1461,11 +1547,11 @@ function renderOpenClawInstalledView(container, data) {
         <div class="oiv-row"><span>配置目录</span><code>${escapeHtml(data.configHome)}</code></div>
         <div class="oiv-row"><span>Gateway 端口</span><code>${escapeHtml(data.gatewayPort)}</code></div>
         <div class="oiv-row"><span>首次初始化</span><code>${data.configExists ? '已完成' : '未完成'}</code></div>
-        <div class="oiv-row"><span>Dashboard</span><code>${data.gatewayReachable ? '在线' : '未就绪'}</code></div>
+        <div class="oiv-row"><span>Dashboard</span><code>${getOpenClawGatewayStatusLabel(data)}</code></div>
       </div>
       <div class="oiv-actions">
         <button id="openclawOnboardBtn">${data.needsOnboarding ? '一键完成初始化' : '重新运行初始化'}</button>
-        <button class="secondary" id="openclawDashboardBtn">${data.gatewayReachable ? '打开 Dashboard' : '检测并打开 Dashboard'}</button>
+        <button class="secondary" id="openclawDashboardBtn">${data.gatewayReachable ? '打开 Dashboard' : data.gatewayPortListening ? '等待 Dashboard 就绪' : '检测并打开 Dashboard'}</button>
         <button class="secondary" id="openclawRefreshBtn">刷新状态</button>
       </div>
     </div>
@@ -1482,6 +1568,11 @@ function renderOpenClawInstalledView(container, data) {
     try {
       if (data.gatewayReachable) {
         await repairOpenClawDashboard({ silent: true });
+        return;
+      }
+      if (data.gatewayPortListening) {
+        await repairOpenClawDashboard({ silent: true });
+        flash('Gateway 已启动，正在等待 Dashboard 就绪', 'info');
         return;
       }
       await runOpenClawOnboardFlow({ autoOpenDashboard: true });
@@ -1530,6 +1621,12 @@ function renderOnboardModelConfigHtml() {
   const { claudeProviders, openaiProviders } = _buildOnboardLocalProviders();
   const totalCount = claudeProviders.length + openaiProviders.length;
   const checkSvg = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>';
+  const presetHtml = OPENCLAW_CN_PROVIDER_PRESETS.map((preset) => `
+    <button class="omc-preset-chip" type="button" data-omc-preset="${escapeHtml(preset.id)}">
+      <span class="omc-preset-name">${escapeHtml(preset.label)}</span>
+      <span class="omc-preset-tip">${escapeHtml(preset.tip)}</span>
+    </button>
+  `).join('');
 
   let localCardsHtml = '';
   if (totalCount === 0) {
@@ -1572,6 +1669,11 @@ function renderOnboardModelConfigHtml() {
         <span id="omcFilledBadge" class="omc-filled-badge" style="display:none">&#10003; 已填入</span>
       </div>
       <div class="omc-subtitle">选择或输入你的 AI 模型 Provider，支持自动加载本地 Codex / Claude Code 配置</div>
+
+      <div class="omc-preset-block">
+        <div class="omc-preset-title">国内宝宝一键预设</div>
+        <div class="omc-preset-list">${presetHtml}</div>
+      </div>
 
       <div class="omc-source-tabs">
         <button class="omc-source-tab is-active" data-omc-tab="local">本地配置</button>
@@ -1746,20 +1848,23 @@ function syncOpenClawSetupDialogSurface() {
 }
 
 function renderOpenClawSetupDialog({ stateData, command = '', terminalMessage = '', autoOpenDashboard = false, elapsedMs = 0, timedOut = false }) {
+  const gatewayStatus = getOpenClawGatewayStatus(stateData);
+  const gatewayReady = gatewayStatus === 'online';
+  const gatewayWarming = gatewayStatus === 'warming';
   const steps = [
     { title: '后台初始化已开始', done: Boolean(terminalMessage), desc: terminalMessage || '正在准备初始化任务…' },
     { title: '自动生成首次配置', done: Boolean(stateData?.configExists), desc: stateData?.configExists ? '已检测到 OpenClaw 配置文件。' : '正在后台自动生成首次配置，一般不需要你手动处理。' },
-    { title: '等待本地 Gateway 就绪', done: Boolean(stateData?.gatewayReachable), desc: stateData?.gatewayReachable ? `Dashboard 已在线：${stateData.gatewayUrl}` : '配置完成后，这里会自动检测本地 Dashboard 是否已启动。' },
+    { title: '等待本地 Gateway 就绪', done: gatewayReady, desc: gatewayReady ? `Dashboard 已在线：${stateData.gatewayUrl}` : gatewayWarming ? `Gateway 端口已启动：${stateData.gatewayUrl}` : '配置完成后，这里会自动检测本地 Dashboard 是否已启动。' },
   ];
-  const showModelConfig = Boolean(stateData?.configExists || stateData?.gatewayReachable || timedOut);
+  const showModelConfig = Boolean(stateData?.configExists || gatewayReady || gatewayWarming || timedOut);
   return `
     <div class="install-tracker">
       <div class="install-tracker-top">
         <div>
-          <div class="install-tracker-status">${stateData?.gatewayReachable ? '初始化完成' : timedOut ? '后台初始化仍在进行' : '正在自动初始化'}</div>
-          <div class="install-tracker-summary">${stateData?.gatewayReachable ? 'OpenClaw 已准备好，建议先确认模型配置再打开 Dashboard。' : stateData?.configExists ? '配置已生成，正在等待 Gateway 启动。' : '终端已经自动打开，请跟着向导完成。'}</div>
+          <div class="install-tracker-status">${gatewayReady ? '初始化完成' : timedOut ? '后台初始化仍在进行' : '正在自动初始化'}</div>
+          <div class="install-tracker-summary">${gatewayReady ? 'OpenClaw 已准备好，建议先确认模型配置再打开 Dashboard。' : gatewayWarming ? 'Gateway 已启动，正在等待控制面板完全就绪。' : stateData?.configExists ? '配置已生成，正在等待 Gateway 启动。' : '后台初始化已经开始，正在自动完成首次配置。'}</div>
         </div>
-        <div class="install-tracker-percent">${stateData?.gatewayReachable ? '100%' : stateData?.configExists ? '75%' : '35%'}</div>
+        <div class="install-tracker-percent">${gatewayReady ? '100%' : gatewayWarming ? '90%' : stateData?.configExists ? '75%' : '35%'}</div>
       </div>
       <div class="install-tracker-hint">${timedOut ? '如果后台任务还在处理，不用重新安装；稍等片刻后点“刷新状态”即可。' : '这个步骤已经尽量自动化了；通常不需要你再打开终端。'}</div>
       <div class="install-tracker-detail">${escapeHtml(command || 'openclaw onboard --install-daemon')}</div>
@@ -1769,8 +1874,8 @@ function renderOpenClawSetupDialog({ stateData, command = '', terminalMessage = 
           <div class="install-tracker-note-card">
             <div class="install-tracker-note-title">你现在该做什么</div>
             <ul class="install-tracker-list">
-              <li>看新弹出的终端窗口，按 OpenClaw 向导一步一步完成。</li>
-              <li>这个窗口会自动帮你检测有没有配置成功。</li>
+              <li>不需要额外打开终端，当前窗口会自动帮你检测初始化进度。</li>
+              <li>如果 Gateway 先显示“启动中”，通常只是在等待控制面板完全就绪。</li>
               <li>${autoOpenDashboard ? '一旦检测成功，会自动打开 Dashboard。' : '检测成功后你就可以直接打开 Dashboard。'}</li>
             </ul>
           </div>
@@ -1778,7 +1883,7 @@ function renderOpenClawSetupDialog({ stateData, command = '', terminalMessage = 
             <div class="install-tracker-note-title">当前状态</div>
             <ul class="install-tracker-list">
               <li>配置文件：${stateData?.configExists ? '已检测到' : '还没检测到'}</li>
-              <li>Gateway：${stateData?.gatewayReachable ? '已在线' : '未就绪'}</li>
+              <li>Gateway：${getOpenClawGatewayStatusLabel(stateData)}</li>
               <li>已等待：${formatRelativeDuration(new Date(Date.now() - elapsedMs).toISOString(), new Date().toISOString())}</li>
             </ul>
           </div>
@@ -1867,6 +1972,22 @@ function bindOnboardModelConfigEvents() {
   const manualKey = document.getElementById('omcManualApiKey');
   if (manualUrl) manualUrl.addEventListener('input', () => { omc.baseUrl = manualUrl.value.trim(); omc.confirmStatus = ''; _updateOmcFilledBadge(); });
   if (manualKey) manualKey.addEventListener('input', () => { omc.apiKey = manualKey.value.trim(); omc.confirmStatus = ''; _updateOmcFilledBadge(); });
+
+  document.querySelectorAll('[data-omc-preset]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const preset = OPENCLAW_CN_PROVIDER_PRESETS.find((item) => item.id === button.dataset.omcPreset);
+      if (!preset) return;
+      omc.selectedProviderKey = '';
+      omc.selectedProviderKind = preset.providerKind || 'openai';
+      omc.baseUrl = preset.baseUrl;
+      omc.model = preset.model;
+      omc.detectedModels = preset.model ? [preset.model] : [];
+      omc.detectStatus = `已应用 ${preset.label} 预设，请填入对应 API Key 后直接确认或检测模型。`;
+      omc.confirmStatus = `建议使用 <code>${escapeHtml(preset.envKey || 'OPENAI_API_KEY')}</code> 保存该渠道的 Key。`;
+      syncOnboardModelConfigForm();
+      flash(`已应用 ${preset.label} 预设`, 'success');
+    });
+  });
 
   // Paste import
   const pasteBtn = document.getElementById('omcPasteParseBtn');
@@ -3119,7 +3240,7 @@ function deriveOpenClawDashboardAuthDiagnostics(data = {}, lastRepair = null) {
   if (!data.gatewayReachable) {
     return {
       tone: 'error',
-      summary: '未就绪',
+      summary: getOpenClawGatewayStatusLabel(data),
       detail: 'Gateway 尚未运行，Dashboard 认证还没有开始。',
       session: '不可用',
       issues: [],
@@ -3184,6 +3305,7 @@ function buildCodexConsoleView() {
   const data = state.current || {};
   const providers = data.providers || [];
   const active = data.activeProvider || null;
+  const login = data.login || {};
   const health = active ? state.providerHealth[active.key] : null;
   const issues = [];
 
@@ -3193,11 +3315,14 @@ function buildCodexConsoleView() {
   if (!data.configExists) {
     issues.push({ tone: 'warn', title: '还没有 Codex 配置', copy: '当前作用域尚未写入 config.toml，建议先完成一次快速配置。', action: { type: 'goto-quick-tool', tool: 'codex', label: '去快速配置' } });
   }
-  if (!providers.length) {
+  if (!providers.length && !login.loggedIn) {
     issues.push({ tone: 'error', title: '没有可用 Provider', copy: '当前配置里还没有保存任何 Provider，Codex 启动后通常无法正常请求模型。', action: { type: 'goto-page', page: 'providers', label: '去看 Provider' } });
   }
   if (active && !active.hasApiKey) {
     issues.push({ tone: 'error', title: '当前 Provider 缺少密钥', copy: `活动 Provider "${active.name}" 已选中，但没有检测到可用 API Key。`, action: { type: 'goto-quick-tool', tool: 'codex', label: '去补 Key' } });
+  }
+  if (!active && login.loggedIn) {
+    issues.push({ tone: 'warn', title: '已识别官方登录态', copy: '当前检测到 Codex 官方登录，可直接使用 OpenAI 官方线路；如果你想改成代理/中转，再单独保存 Provider。', action: { type: 'goto-quick-tool', tool: 'codex', label: '去快速配置' } });
   }
   if (health?.checked && !health.ok) {
     issues.push({ tone: 'warn', title: '当前 Provider 连通性异常', copy: `已对 "${active?.name || '当前 Provider'}" 做过检测，但结果不通过。`, action: { type: 'refresh-console', label: '重新检测' } });
@@ -3206,8 +3331,8 @@ function buildCodexConsoleView() {
   const summary = [
     renderToolConsoleStat('安装状态', data.codexBinary?.installed ? (data.codexBinary.version || '已安装') : '未安装', data.codexBinary?.path ? `<span class="tool-console-code">${escapeHtml(data.codexBinary.path)}</span>` : '', { icon: 'install' }),
     renderToolConsoleStat('作用域', data.scope === 'project' ? '项目级' : '全局', data.rootPath ? `<span class="tool-console-code">${escapeHtml(data.rootPath)}</span>` : '', { icon: 'scope' }),
-    renderToolConsoleStat('活动 Provider', active?.name || '未选择', active?.baseUrl ? `<span class="tool-console-code">${escapeHtml(active.baseUrl)}</span>` : '还没有可用 Provider', { icon: 'provider' }),
-    renderToolConsoleStat('健康检测', health?.loading ? '检测中' : health?.checked ? (health.ok ? '通过' : '失败') : '未检测', active ? `模型：${escapeHtml(data.summary?.model || '-')}` : '先保存 Provider 再检测', { icon: 'health' }),
+    renderToolConsoleStat('活动 Provider', active?.name || (login.loggedIn ? 'OpenAI 官方登录' : '未选择'), active?.baseUrl ? `<span class="tool-console-code">${escapeHtml(active.baseUrl)}</span>` : login.loggedIn ? (login.plan || login.email || 'ChatGPT / OpenAI 认证已就绪') : '还没有可用 Provider', { icon: 'provider' }),
+    renderToolConsoleStat('健康检测', active ? (health?.loading ? '检测中' : health?.checked ? (health.ok ? '通过' : '失败') : '未检测') : login.loggedIn ? '已登录' : '未检测', active ? `模型：${escapeHtml(data.summary?.model || '-')}` : login.loggedIn ? '官方登录模式通常无需额外 Provider' : '先保存 Provider 再检测', { icon: 'health' }),
   ].join('');
 
   const providerBody = providers.length
@@ -3225,7 +3350,7 @@ function buildCodexConsoleView() {
           body: `<div class="tool-console-list compact">${renderToolConsoleRow('Base URL', `<span class="tool-console-code">${escapeHtml(provider.baseUrl || '-')}</span>`, { html: true })}${renderToolConsoleRow('密钥来源', provider.keySource || provider.resolvedKeyName || '-')}</div>`,
         });
       }).join('')}</div>`
-    : '<div class="tool-console-empty">当前没有已保存的 Codex Provider。</div>';
+    : login.loggedIn ? '<div class="tool-console-empty">当前未保存自定义 Provider，但已识别到 Codex 官方登录态，可直接使用官方 OpenAI 线路。</div>' : '<div class="tool-console-empty">当前没有已保存的 Codex Provider。</div>';
 
   const main = [
     renderToolConsoleCard('状态总览', '安装、配置与当前模型', `<div class="tool-console-list">${renderToolConsoleRow('配置文件', `<span class="tool-console-code">${escapeHtml(data.configPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('环境变量文件', `<span class="tool-console-code">${escapeHtml(data.envPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('Sandbox', data.summary?.sandboxMode || '默认')}${renderToolConsoleRow('审批策略', data.summary?.approvalPolicy || '默认')}${renderToolConsoleRow('推理强度', data.summary?.reasoningEffort || '默认')}</div>`, { icon: 'status' }),
@@ -3299,7 +3424,9 @@ function buildOpenClawConsoleView() {
   if (!data.binary?.installed) issues.push({ tone: 'error', title: 'OpenClaw 未安装', copy: '当前还没检测到 openclaw 命令，先去"工具安装"完成安装。', action: { type: 'goto-page', page: 'tools', label: '去安装' } });
   if (!data.configExists) issues.push({ tone: 'warn', title: 'openclaw.json 尚未生成', copy: '说明还没完成初始化或还没真正保存过配置。', action: { type: 'goto-quick-tool', tool: 'openclaw', label: '去快速配置' } });
   if (data.needsOnboarding) issues.push({ tone: 'warn', title: 'OpenClaw 仍需初始化', copy: '当前还没有生成 `openclaw.json`，先完成首次初始化。', action: { type: 'launch-openclaw', label: '启动并初始化' } });
-  if (!data.gatewayReachable) issues.push({ tone: 'warn', title: 'Dashboard 未在线', copy: '当前没探测到本地 Gateway，很多渠道回调和控制面板操作都会失效。', action: { type: 'launch-openclaw', label: '启动 Gateway' } });
+  if (!data.gatewayReachable && !data.gatewayPortListening) issues.push({ tone: 'warn', title: 'Dashboard 未在线', copy: '当前没探测到本地 Gateway，很多渠道回调和控制面板操作都会失效。', action: { type: 'launch-openclaw', label: '启动 Gateway' } });
+  if (!data.gatewayReachable && data.gatewayPortListening) issues.push({ tone: 'warn', title: 'Gateway 正在启动中', copy: '端口已经监听，但控制面板还没完全就绪。通常再等几秒就会恢复。', action: { type: 'refresh-console', label: '重新检测' } });
+  if (data.gatewayPortConflict) issues.push({ tone: 'error', title: `端口 ${data.gatewayPort || '18789'} 已被其他进程占用`, copy: '这会导致 OpenClaw Gateway 无法正常启动或一直显示启动中。', action: { type: 'kill-openclaw-port', label: '结束占用进程' } });
   if (!providers.length) issues.push({ tone: 'error', title: '没有配置模型 Provider', copy: 'OpenClaw 已安装，但 `models.providers` 里还没有可用模型源。', action: { type: 'goto-config-editor-tool', tool: 'openclaw', label: '去配置 Provider' } });
   if (!quick.model) issues.push({ tone: 'error', title: '默认 Agent 模型未设置', copy: '当前没有检测到 `agents.defaults.model.primary`，聊天入口通常无法正常出结果。', action: { type: 'goto-config-editor-tool', tool: 'openclaw', label: '去设置模型' } });
   if (providers.length && !quick.hasApiKey) issues.push({ tone: 'error', title: '默认 Provider 缺少 API Key', copy: `已检测到默认模型 ${quick.model || '-'}，但没有找到它对应的 API Key。`, action: { type: 'goto-quick-tool', tool: 'openclaw', label: '去补 Key' } });
@@ -3336,9 +3463,9 @@ function buildOpenClawConsoleView() {
     : '<div class="tool-console-empty">当前还没有接入聊天渠道。</div>';
 
   const main = [
-    renderToolConsoleCard('Gateway 状态', '进程、认证与 Dashboard 引导链接', `<div class="tool-console-list">${renderToolConsoleRow('配置文件', `<span class="tool-console-code">${escapeHtml(data.configPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('Gateway HTTP', data.gatewayReachable ? '在线' : '未就绪')}${renderToolConsoleRow('Bind', gatewayBind)}${renderToolConsoleRow('Auth', gatewayAuth)}${renderToolConsoleRow('Token', data.gatewayTokenReady ? '已就绪' : '缺失')}${renderToolConsoleRow('Dashboard URL', data.dashboardUrl ? `<span class="tool-console-code">${escapeHtml(data.dashboardUrl)}</span>` : '-', { html: Boolean(data.dashboardUrl) })}${renderToolConsoleRow('Onboarding', data.needsOnboarding ? '待完成' : '已完成')}</div>`, { icon: 'runtime' }),
+    renderToolConsoleCard('Gateway 状态', '进程、认证与 Dashboard 引导链接', `<div class="tool-console-list">${renderToolConsoleRow('配置文件', `<span class="tool-console-code">${escapeHtml(data.configPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('Gateway 状态', getOpenClawGatewayStatusLabel(data))}${renderToolConsoleRow('Gateway HTTP', data.gatewayReachable ? '在线' : data.gatewayPortListening ? '等待面板就绪' : '未就绪')}${renderToolConsoleRow('端口占用', renderOpenClawPortOccupants(data), { html: true })}${renderToolConsoleRow('Bind', gatewayBind)}${renderToolConsoleRow('Auth', gatewayAuth)}${renderToolConsoleRow('Token', data.gatewayTokenReady ? '已就绪' : '缺失')}${renderToolConsoleRow('Dashboard URL', data.dashboardUrl ? `<span class="tool-console-code">${escapeHtml(data.dashboardUrl)}</span>` : '-', { html: Boolean(data.dashboardUrl) })}${renderToolConsoleRow('Onboarding', data.needsOnboarding ? '待完成' : '已完成')}</div>`, { icon: 'runtime' }),
     renderToolConsoleCard('Dashboard 认证状态', 'Control UI 认证、令牌化链接与浏览器会话', `<div class="tool-console-list">${renderToolConsoleRow('状态', dashboardAuth.summary)}${renderToolConsoleRow('认证模式', gatewayAuth)}${renderToolConsoleRow('令牌化 URL', /[?&]token=/.test(String(data.dashboardUrl || '')) ? '已就绪' : '缺失')}${renderToolConsoleRow('浏览器会话', dashboardAuth.session)}${renderToolConsoleRow('诊断', dashboardAuth.detail)}${renderToolConsoleRow('修复备注', (dashboardAuth.notes || []).length ? (dashboardAuth.notes || []).join(' | ') : '无')}</div>`, { icon: 'issues', iconTone: dashboardAuth.tone === 'error' ? 'error' : dashboardAuth.tone === 'ok' ? 'ok' : 'warn' }),
-    renderToolConsoleCard('修复结果', '最近一次一键修复的执行结果', lastRepair ? `<div class="tool-console-list">${renderToolConsoleRow('Token 生成', lastRepair.tokenGenerated ? '是' : '否')}${renderToolConsoleRow('要求重启', lastRepair.restartRequired ? '是' : '否')}${renderToolConsoleRow('修复后 Gateway', lastRepair.gatewayReachable ? '在线' : '未就绪')}${renderToolConsoleRow('修复后 URL', lastRepair.dashboardUrl ? `<span class="tool-console-code">${escapeHtml(lastRepair.dashboardUrl)}</span>` : '-', { html: Boolean(lastRepair.dashboardUrl) })}${renderToolConsoleRow('备注', (lastRepair.notes || []).length ? escapeHtml(lastRepair.notes.join(' | ')) : '无')}</div>` : '<div class="tool-console-empty">还没有执行过“一键修复并打开”。</div>', { icon: 'actions' }),
+    renderToolConsoleCard('修复结果', '最近一次一键修复的执行结果', lastRepair ? `<div class="tool-console-list">${renderToolConsoleRow('Token 生成', lastRepair.tokenGenerated ? '是' : '否')}${renderToolConsoleRow('要求重启', lastRepair.restartRequired ? '是' : '否')}${renderToolConsoleRow('修复后 Gateway', getOpenClawGatewayStatusLabel(lastRepair))}${renderToolConsoleRow('修复后 URL', lastRepair.dashboardUrl ? `<span class="tool-console-code">${escapeHtml(lastRepair.dashboardUrl)}</span>` : '-', { html: Boolean(lastRepair.dashboardUrl) })}${renderToolConsoleRow('备注', (lastRepair.notes || []).length ? escapeHtml(lastRepair.notes.join(' | ')) : '无')}</div>` : '<div class="tool-console-empty">还没有执行过“一键修复并打开”。</div>', { icon: 'actions' }),
     renderToolConsoleCard('异常检测', '优先指出启动、模型、认证和暴露风险', renderToolConsoleIssueList(issues, 'OpenClaw 侧暂未发现明显阻塞项。'), { icon: 'issues', iconTone: issues.length ? (issues.some(i => i.tone === 'error') ? 'error' : 'warn') : 'ok' }),
   ].join('');
 
@@ -3346,12 +3473,13 @@ function buildOpenClawConsoleView() {
     renderToolConsoleCard('渠道与 Provider', '接入的渠道和模型源', `${channelBody}${renderToolConsoleGroupLabel('Provider')}${providerBody}`, { icon: 'channels' }),
     renderToolConsoleCard('快速操作', '检测、启动、停止', `<div class="tool-console-actions">${[
       { type: 'refresh-console', label: '重新检测', primary: true },
-      data.gatewayReachable ? { type: 'open-openclaw-dashboard', label: '打开 Dashboard' } : { type: 'launch-openclaw', label: '启动 OpenClaw' },
+      data.gatewayReachable ? { type: 'open-openclaw-dashboard', label: '打开 Dashboard' } : data.gatewayPortListening ? { type: 'refresh-console', label: '查看启动状态' } : { type: 'launch-openclaw', label: '启动 OpenClaw' },
       { type: 'repair-openclaw-dashboard', label: '一键修复并打开' },
+      data.gatewayPortOccupants?.length ? { type: 'kill-openclaw-port', label: '结束端口占用' } : null,
       { type: 'stop-openclaw', label: '停止 Gateway' },
       { type: 'goto-config-editor-tool', tool: 'openclaw', label: '打开配置编辑' },
       { type: 'goto-quick-tool', tool: 'openclaw', label: '切到快速配置' },
-    ].map(renderToolConsoleAction).join('')}</div>`, { icon: 'actions' }),
+    ].filter(Boolean).map(renderToolConsoleAction).join('')}</div>`, { icon: 'actions' }),
   ].join('');
 
   // Build activity panel (agent grid + issues log)
@@ -3428,11 +3556,13 @@ function getToolStatusDot(tool) {
     const data = state.current || {};
     if (!data.codexBinary?.installed) return 'error';
     const active = data.activeProvider;
+    const login = data.login || {};
     if (active) {
       const health = state.providerHealth[active.key];
       if (health?.checked && !health.ok) return 'warning';
       if (health?.checked && health.ok) return 'online';
     }
+    if (login.loggedIn) return 'online';
     return data.configExists ? 'online' : 'warning';
   }
   if (tool === 'claudecode') {
@@ -3499,12 +3629,44 @@ function renderToolConsole() {
 async function stopOpenClawGateway({ manual = true } = {}) {
   const result = await api('/api/openclaw/stop', { method: 'POST' });
   if (!result.ok) {
-    if (manual) flash(result.error || '停止 OpenClaw 失败', 'error');
+    if (manual) flash(result.error || '停止 Gateway 失败', 'error');
     return result;
   }
   await sleep(700);
   await loadOpenClawQuickState();
   if (manual) flash('OpenClaw Gateway 已停止', 'success');
+  return result;
+}
+
+async function killOpenClawPortOccupants({ manual = true } = {}) {
+  const data = state.openclawState || await fetchOpenClawStateData();
+  const occupants = Array.isArray(data.gatewayPortOccupants) ? data.gatewayPortOccupants : [];
+  if (!occupants.length) {
+    if (manual) flash(`未检测到 ${data.gatewayPort || '18789'} 端口占用进程`, 'info');
+    return { ok: true, data: { killed: [] } };
+  }
+
+  const confirmed = await openUpdateDialog({
+    eyebrow: 'OpenClaw',
+    title: `结束 ${data.gatewayPort || '18789'} 端口占用`,
+    body: `<p>将尝试结束以下进程：</p><div class="install-cmd-block">${occupants.map((item) => escapeHtml(item.label || `${item.name || '未知进程'} (PID ${item.pid || '-'})`)).join('<br>')}</div>`,
+    confirmText: '结束进程',
+    cancelText: '取消',
+    tone: 'danger',
+  });
+  if (!confirmed) return { ok: false, cancelled: true };
+
+  const result = await api('/api/openclaw/port-kill', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!result.ok) {
+    if (manual) flash(result.error || '结束端口占用进程失败', 'error');
+    return result;
+  }
+  await loadOpenClawQuickState();
+  if (manual) flash(result.data?.message || '端口占用进程已结束', 'success');
   return result;
 }
 
@@ -3608,6 +3770,12 @@ async function handleToolConsoleAction(button) {
 
   if (action === 'repair-openclaw-dashboard') {
     await repairOpenClawDashboard();
+    renderToolConsole();
+    return;
+  }
+
+  if (action === 'kill-openclaw-port') {
+    await killOpenClawPortOccupants({ manual: true });
     renderToolConsole();
     return;
   }
@@ -3873,7 +4041,26 @@ const OPENCLAW_PROTOCOL_META = {
   },
 };
 
+const OPENCLAW_CN_PROVIDER_PRESETS = [
+  { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek/deepseek-chat', providerKind: 'openai', envKey: 'DEEPSEEK_API_KEY', tip: '官方直连，适合 DeepSeek Chat / Reasoner' },
+  { id: 'siliconflow', label: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', model: 'siliconflow/deepseek-ai/DeepSeek-V3', providerKind: 'openai', envKey: 'SILICONFLOW_API_KEY', tip: '国内常用聚合线路，模型选择多' },
+  { id: 'bailian', label: '阿里百炼', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'bailian/qwen-plus', providerKind: 'openai', envKey: 'DASHSCOPE_API_KEY', tip: 'Qwen 生态，国内访问稳定' },
+  { id: 'volcengine', label: '火山方舟', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: 'volcengine/doubao-seed-1-6-thinking-250715', providerKind: 'openai', envKey: 'ARK_API_KEY', tip: '豆包 / 多模型接入，适合国内网络' },
+  { id: 'zhipu', label: '智谱', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'zhipu/glm-4.5', providerKind: 'openai', envKey: 'ZHIPU_API_KEY', tip: 'GLM 系列，OpenAI 兼容接入' },
+];
+
 const OPENCLAW_MODEL_PRESETS = [
+  {
+    label: '国内推荐',
+    options: [
+      { value: 'deepseek/deepseek-chat', label: 'DeepSeek · DeepSeek Chat', apis: ['openai-completions'] },
+      { value: 'deepseek/deepseek-reasoner', label: 'DeepSeek · DeepSeek Reasoner', apis: ['openai-completions'] },
+      { value: 'siliconflow/deepseek-ai/DeepSeek-V3', label: '硅基流动 · DeepSeek V3', apis: ['openai-completions'] },
+      { value: 'bailian/qwen-plus', label: '阿里百炼 · Qwen Plus', apis: ['openai-completions'] },
+      { value: 'volcengine/doubao-seed-1-6-thinking-250715', label: '火山方舟 · 豆包 Thinking', apis: ['openai-completions'] },
+      { value: 'zhipu/glm-4.5', label: '智谱 · GLM-4.5', apis: ['openai-completions'] },
+    ],
+  },
   {
     label: 'OpenAI / GPT',
     options: [
@@ -4354,6 +4541,11 @@ function inferOpenClawBuiltInEnvKey(modelRef = '', apiMode = '') {
     anthropic: 'ANTHROPIC_API_KEY',
     openrouter: 'OPENROUTER_API_KEY',
     moonshot: 'MOONSHOT_API_KEY',
+    deepseek: 'DEEPSEEK_API_KEY',
+    siliconflow: 'SILICONFLOW_API_KEY',
+    bailian: 'DASHSCOPE_API_KEY',
+    volcengine: 'ARK_API_KEY',
+    zhipu: 'ZHIPU_API_KEY',
     'kimi-coding': 'KIMI_API_KEY',
     together: 'TOGETHER_API_KEY',
     google: 'GEMINI_API_KEY',
@@ -4378,6 +4570,11 @@ function inferOpenClawProviderFromEnvKey(envKey = '', apiMode = '') {
   if (upper.includes('ANTHROPIC')) return 'anthropic';
   if (upper.includes('OPENROUTER')) return 'openrouter';
   if (upper.includes('MOONSHOT')) return 'moonshot';
+  if (upper.includes('DEEPSEEK')) return 'deepseek';
+  if (upper.includes('SILICONFLOW')) return 'siliconflow';
+  if (upper.includes('DASHSCOPE') || upper.includes('BAILIAN')) return 'bailian';
+  if (upper.includes('ARK')) return 'volcengine';
+  if (upper.includes('ZHIPU') || upper.includes('BIGMODEL')) return 'zhipu';
   if (upper.includes('GEMINI') || upper.includes('GOOGLE')) return 'google';
   if (upper.includes('KIMI')) return 'kimi-coding';
   if (upper.includes('TOGETHER')) return 'together';
@@ -4739,6 +4936,7 @@ function setApiKeyFieldState(provider) {
     maskedValue: provider?.maskedApiKey || '',
     actualValue: cachedValue,
     hasStored: Boolean(provider?.hasApiKey),
+    inferred: Boolean(provider?.inferred),
     revealed: false,
     dirty: false,
   };
@@ -4757,6 +4955,7 @@ function currentApiKeyContext() {
 function canUseStoredApiKey({ baseUrl, providerKey } = currentApiKeyContext()) {
   return Boolean(
     state.apiKeyField.hasStored
+    && !state.apiKeyField.inferred
     && providerKey
     && baseUrl
     && state.apiKeyField.providerKey === providerKey
@@ -7550,7 +7749,7 @@ function resolveCodexProviderForSave(baseUrl) {
       providerKey: cachedProvider.key,
       providerLabel: String(cachedProvider.name || ''),
       envKey: String(cachedProvider.envKey || ''),
-      reuseExisting: true,
+      reuseExisting: !cachedProvider.inferred,
     };
   }
 
@@ -7560,7 +7759,7 @@ function resolveCodexProviderForSave(baseUrl) {
       providerKey: matchedByBaseUrl.key,
       providerLabel: String(matchedByBaseUrl.name || ''),
       envKey: String(matchedByBaseUrl.envKey || ''),
-      reuseExisting: true,
+      reuseExisting: !matchedByBaseUrl.inferred,
     };
   }
 
@@ -7574,6 +7773,17 @@ function resolveCodexProviderForSave(baseUrl) {
 }
 
 function currentPayload() {
+  if (state.activeTool === 'codex' && state.codexAuthView === 'official' && state.current?.login?.loggedIn) {
+    return {
+      scope: el('scopeSelect').value,
+      projectPath: el('projectPathInput').value.trim(),
+      codexHome: el('codexHomeInput').value.trim(),
+      providerKey: '',
+      baseUrl: '',
+      apiKey: '',
+      model: el('modelSelect').value,
+    };
+  }
   const baseUrl = normalizeBaseUrl(el('baseUrlInput').value);
   const provider = resolveCodexProviderForSave(baseUrl);
   const payload = {
@@ -7733,7 +7943,7 @@ function renderCurrentConfig() {
       `<span class="provider-pill ok">${escapeHtml(getOpenClawProtocolMeta(quick?.api || 'openai-completions').label)}</span>`,
       quick?.baseUrl ? `<span class="current-url">${escapeHtml(quick.baseUrl)}</span>` : '官方默认端点',
       `<span class="provider-pill ${quick?.hasApiKey ? 'ok' : 'warn'}">${quick?.hasApiKey ? '已保存 Key' : '缺少 Key'}</span>`,
-      `<span class="provider-pill ${ocState?.gatewayReachable ? 'ok' : 'muted'}">${ocState?.gatewayReachable ? 'Dashboard 在线' : 'Dashboard 未启动'}</span>`,
+      `<span class="provider-pill ${ocState?.gatewayReachable ? 'ok' : ocState?.gatewayPortListening ? 'warn' : 'muted'}">${ocState?.gatewayReachable ? 'Dashboard 在线' : ocState?.gatewayPortListening ? 'Gateway 启动中' : 'Dashboard 未启动'}</span>`,
     ];
     el('currentConfigMeta').innerHTML = meta.join('<span class="meta-sep">·</span>');
 
@@ -7752,12 +7962,15 @@ function renderCurrentConfig() {
 
   // ── Codex tab (default) ──
   const active = state.current?.activeProvider || null;
+  const login = state.current?.login || {};
   const model = state.current?.summary?.model || el('modelSelect').value || '未选择模型';
-  const providerName = active ? (active.name || active.key) : '未配置';
-  const status = active ? providerHealthLabel(active) : { text: '未配置', tone: 'muted' };
+  const providerName = active ? (active.name || active.key) : (login.loggedIn ? 'OpenAI 官方登录' : '未配置');
+  const status = active ? providerHealthLabel(active) : login.loggedIn ? { text: '已登录', tone: 'ok' } : { text: '未配置', tone: 'muted' };
   el('currentConfigMain').innerHTML = `<span class="current-provider">${escapeHtml(providerName)}</span><span class="current-model">${escapeHtml(model || '-')}</span>`;
   el('currentConfigMeta').innerHTML = active
-    ? `状态 <span class="provider-pill ${status.tone}">${escapeHtml(status.text)}</span><span class="meta-sep">·</span><span class="current-url">${escapeHtml(active.baseUrl || '-')}</span>`
+    ? `状态 <span class="provider-pill ${status.tone}">${escapeHtml(status.text)}</span>${active.inferred ? '<span class="meta-sep">·</span><span class="provider-pill ok">自动识别</span>' : ''}<span class="meta-sep">·</span><span class="current-url">${escapeHtml(active.baseUrl || '-')}</span>`
+    : login.loggedIn
+      ? `状态 <span class="provider-pill ok">已登录</span><span class="meta-sep">·</span><span class="current-url">${escapeHtml(login.plan || login.email || 'ChatGPT / OpenAI 官方认证')}</span>`
     : '当前还没有可用 Provider';
 
   const providers = state.current?.providers || [];
@@ -7767,6 +7980,7 @@ function renderCurrentConfig() {
       <button class="provider-option ${provider.isActive ? 'active' : ''}" data-load-provider="${escapeHtml(provider.key)}">
         <span class="provider-option-main">
           <strong>${escapeHtml(provider.name || provider.key)}</strong>
+          ${provider.inferred ? '<span class="provider-pill ok">自动识别</span>' : ''}
           <span>${escapeHtml(provider.baseUrl || '-')}</span>
         </span>
         <span class="provider-option-side">
@@ -7780,11 +7994,17 @@ function renderCurrentConfig() {
   el('providerDropdown').classList.toggle('hide', !state.providerDropdownOpen);
   el('providerSwitchBtn').setAttribute('aria-expanded', String(state.providerDropdownOpen));
 
-  state.quickTips = [
-    '检测模型后自动推荐最新可用模型',
-    '保存后写入 Codex 配置并保留备份',
-    '未安装 Codex 时，启动会弹窗引导自动安装',
-  ];
+  state.quickTips = login.loggedIn
+    ? [
+      '已识别 Codex 官方登录，可直接启动使用',
+      '切到「API Key」可改用代理 / 中转 / 国内平台',
+      '如果只想用官方线路，通常无需再手动填写 URL 和 Key',
+    ]
+    : [
+      '检测模型后自动推荐最新可用模型',
+      '保存后写入 Codex 配置并保留备份',
+      '未安装 Codex 时，启动会弹窗引导自动安装',
+    ];
   renderQuickRailSupportPanel();
 }
 
@@ -7931,7 +8151,7 @@ function fillFromProvider(provider) {
   renderModelOptions([], model);
   renderCurrentConfig();
   el('detectionMeta').textContent = provider.hasApiKey
-    ? `已载入 ${provider.name || provider.key}，Key 已保存，可点击右侧眼睛查看`
+    ? `已载入 ${provider.name || provider.key}${provider.inferred ? '（来自 OpenAI 认证自动识别）' : ''}，Key 已保存，可点击右侧眼睛查看`
     : `已载入 ${provider.name || provider.key}，但未发现 Key`;
 }
 
@@ -8132,6 +8352,7 @@ async function loadState({ preserveForm = true } = {}) {
   fillAdvancedFromState();
   renderStatus();
   renderProviders();
+  syncCodexAuthView();
   renderCurrentConfig();
 
   // Skip Codex form restoration when non-Codex tool is active
@@ -8150,6 +8371,7 @@ async function loadState({ preserveForm = true } = {}) {
     syncApiKeyToggle();
     state.metaDirty = snapshot.metaDirty;
     renderModelOptions([], snapshot.selectedModel);
+    syncCodexAuthView();
     renderCurrentConfig();
     refreshProviderHealth();
     syncShortcutActiveState();
@@ -8157,6 +8379,7 @@ async function loadState({ preserveForm = true } = {}) {
     return;
   }
   fillFromProvider(state.current.activeProvider || state.current.providers?.[0]);
+  syncCodexAuthView();
   renderCurrentConfig();
 
   // Auto-trigger provider health check so the card doesn't stay "待检测"
@@ -8256,6 +8479,9 @@ function _getDetectParams() {
 
 async function detectModels() {
   const params = _getDetectParams();
+  if (state.activeTool === 'codex' && state.codexAuthView === 'official') {
+    return flash('官方登录模式下无需手动检测 URL / Key；直接启动即可。', 'info');
+  }
   if (!params.baseUrl || (!params.apiKey && !params.useStored)) return flash('先填 URL 和 API Key', 'error');
   setBusy('detectBtn', true, '检测中...');
   const json = await api(params.useStored ? '/api/provider/test-saved' : '/api/provider/test', {
@@ -8405,7 +8631,9 @@ async function saveConfigOnly() {
   const payload = currentPayload();
   if (payload.baseUrl && payload.baseUrl !== el('baseUrlInput').value.trim()) el('baseUrlInput').value = payload.baseUrl;
   const canReuseStoredKey = canUseStoredApiKey({ baseUrl: payload.baseUrl, providerKey: payload.providerKey });
-  if (!payload.baseUrl || (!payload.apiKey && !canReuseStoredKey)) return flash('先填 URL 和 API Key', 'error');
+  if (!(state.activeTool === 'codex' && state.codexAuthView === 'official' && state.current?.login?.loggedIn)) {
+    if (!payload.baseUrl || (!payload.apiKey && !canReuseStoredKey)) return flash('先填 URL 和 API Key', 'error');
+  }
 
   setBusy('saveBtn', true, '保存中...');
   const saved = await api('/api/config/save', {
@@ -8574,7 +8802,7 @@ async function launchOpenClawOnly() {
   const launchSteps = [
     { key: 'check', title: '检查安装状态', desc: '确认 openclaw 是否已安装', status: 'running' },
     { key: 'config', title: '检查配置与初始化', desc: '检测配置文件和 onboard 状态', status: 'pending' },
-    { key: 'gateway', title: '启动 Gateway 服务', desc: '在终端中启动 openclaw gateway', status: 'pending' },
+    { key: 'gateway', title: '启动 Gateway 服务', desc: '后台启动 openclaw gateway', status: 'pending' },
     { key: 'ready', title: '打开 Dashboard', desc: '等待 Dashboard 上线并自动打开', status: 'pending' },
   ];
   let currentStep = 0;
@@ -8647,7 +8875,7 @@ async function launchOpenClawOnly() {
             <div class="install-tracker-note-card">
               <div class="install-tracker-note-title">你现在该做什么</div>
               <ul class="install-tracker-list">
-                <li>${currentStep <= 1 ? '不需要操作，自动检测中。' : currentStep === 2 ? (isBackgroundLaunch ? '不需要操作，Gateway 正在后台启动，日志会显示在这里。' : '如果终端弹出来了，保持它运行就行。') : '一切就绪，Dashboard 马上打开。'}</li>
+                <li>${currentStep <= 1 ? '不需要操作，自动检测中。' : currentStep === 2 ? '不需要操作，Gateway 状态会自动显示在这里。' : '一切就绪，Dashboard 马上打开。'}</li>
               </ul>
             </div>
           </div>
@@ -8795,8 +9023,13 @@ async function launchOpenClawOnly() {
             await loadOpenClawQuickState();
             return;
           }
+          if (refreshed.gatewayPortListening) {
+            pushLog(`Gateway 端口已启动：${refreshed.gatewayUrl || gatewayUrl}`);
+            hint = 'Gateway 进程已启动，正在等待控制面板就绪…';
+            updateDialog('启动中', 'Gateway 已启动，等待控制面板就绪…');
+          }
           if (attempt % 5 === 4) {
-            pushLog(`第 ${attempt + 1} 次检测：Gateway=${refreshed.gatewayReachable ? '在线' : '未响应'}`);
+            pushLog(`第 ${attempt + 1} 次检测：Gateway=${refreshed.gatewayReachable ? '在线' : refreshed.gatewayPortListening ? '启动中' : '未响应'}`);
           }
         } catch { /* ignore */ }
       }
@@ -8882,31 +9115,37 @@ async function launchOpenClawOnly() {
       return;
     }
 
-    // Gateway not running — launch it
-    pushLog('Gateway 未运行，正在启动…');
-    detail = '正在启动 Gateway…';
-    hint = '启动后这里会自动显示日志并检测服务状态。';
-    updateDialog('启动中', '正在启动 Gateway 服务…');
+    if (stateData.gatewayPortListening) {
+      pushLog('Gateway 已在启动中，继续等待就绪…');
+      detail = `Gateway 端口已启动：${gatewayUrl}`;
+      hint = '服务进程已经起来了，正在等待控制面板完全就绪。';
+      updateDialog('启动中', 'Gateway 已启动，等待控制面板就绪…');
+    } else {
+      pushLog('Gateway 未运行，正在启动…');
+      detail = '正在启动 Gateway…';
+      hint = '启动后这里会自动显示日志并检测服务状态。';
+      updateDialog('启动中', '正在启动 Gateway 服务…');
 
-    pushLog('调用 /api/openclaw/launch …');
-    const launchJson = await api('/api/openclaw/launch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cwd: state.current?.launch?.cwd || '' }),
-    });
-    if (!launchJson.ok) {
-      throw new Error(launchJson.error || '启动 Gateway 失败');
-    }
+      pushLog('调用 /api/openclaw/launch …');
+      const launchJson = await api('/api/openclaw/launch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cwd: state.current?.launch?.cwd || '' }),
+      });
+      if (!launchJson.ok) {
+        throw new Error(launchJson.error || '启动 Gateway 失败');
+      }
 
-    isBackgroundLaunch = Boolean(launchJson.data?.background);
-    terminalMsg = launchJson.data?.message || '启动命令已发送';
-    pushLog(terminalMsg);
-    pushLog(`命令：${launchJson.data?.command || 'openclaw gateway start'}`);
-    detail = launchJson.data?.command || 'openclaw gateway start';
-    hint = isBackgroundLaunch
-      ? '已在后台启动，正在等待 Gateway 服务响应…'
-      : '终端已打开，正在等待 Gateway 服务响应…';
+      isBackgroundLaunch = Boolean(launchJson.data?.background);
+      terminalMsg = launchJson.data?.message || '启动命令已发送';
+      pushLog(terminalMsg);
+      if (launchJson.data?.command) pushLog(`命令：${launchJson.data.command}`);
+      detail = launchJson.data?.command || 'openclaw gateway start';
+      hint = isBackgroundLaunch
+        ? '已在后台启动，正在等待 Gateway 服务响应…'
+      : '启动命令已发送，正在等待 Gateway 服务响应…';
     updateDialog('启动中', isBackgroundLaunch ? 'Gateway 已在后台启动，等待服务响应…' : 'Gateway 命令已执行，等待服务响应…');
+    }
 
     // === STEP 3: poll until gateway is reachable ===
     for (let attempt = 0; attempt < 40; attempt++) {
@@ -8928,11 +9167,19 @@ async function launchOpenClawOnly() {
           await loadOpenClawQuickState();
           return;
         }
-        if (attempt % 5 === 4) {
-          pushLog(`第 ${attempt + 1} 次轮询：Gateway 仍未响应`);
+        if (refreshed.gatewayPortListening) {
+          launchSteps[2].desc = 'Gateway 已启动，等待控制面板就绪';
+          detail = `Gateway 端口已启动：${refreshed.gatewayUrl || gatewayUrl}`;
+          hint = `Gateway 已启动，正在等待控制面板响应…（第 ${attempt + 1} 次检测）`;
+          updateDialog('启动中', 'Gateway 已启动，等待控制面板就绪…');
         }
-        hint = `正在等待 Gateway 响应…（第 ${attempt + 1} 次检测）`;
-        updateDialog('启动中', 'Gateway 启动中，等待服务响应…');
+        if (attempt % 5 === 4) {
+          pushLog(`第 ${attempt + 1} 次轮询：Gateway ${refreshed.gatewayPortListening ? '启动中' : '仍未响应'}`);
+        }
+        if (!refreshed.gatewayPortListening) {
+          hint = `正在等待 Gateway 响应…（第 ${attempt + 1} 次检测）`;
+          updateDialog('启动中', 'Gateway 启动中，等待服务响应…');
+        }
       } catch { /* ignore */ }
     }
 
@@ -8941,7 +9188,7 @@ async function launchOpenClawOnly() {
     hint = 'Gateway 可能需要手动检查。你也可以直接在浏览器访问 Dashboard 地址试试。';
     launchSteps[2].desc = 'Gateway 未在预期时间内响应';
     stopTimer();
-    updateDialog('等待超时', isBackgroundLaunch ? 'Gateway 还未就绪，请查看日志并稍后重试' : 'Gateway 还未就绪，请检查终端');
+    updateDialog('等待超时', 'Gateway 还未就绪，请查看日志并稍后重试');
     setUpdateDialogLocked(false);
     patchUpdateDialog({ confirmText: '关闭', confirmDisabled: false });
   } catch (e) {
@@ -9265,10 +9512,10 @@ async function runWizardEnvCheck() {
 
     await new Promise(r => setTimeout(r, 150));
     // Config
-    if (env.config.exists && env.config.hasProviders) {
+    if (env.config.exists && (env.config.hasProviders || env.config.hasLogin)) {
       setWcItemStatus('wcConfig', 'wcConfigStatus', 'ok', '已配置');
     } else if (env.config.exists) {
-      setWcItemStatus('wcConfig', 'wcConfigStatus', 'warn', '无 Provider');
+      setWcItemStatus('wcConfig', 'wcConfigStatus', 'warn', env.config.hasLogin ? '已登录官方账号' : '无 Provider');
     } else {
       setWcItemStatus('wcConfig', 'wcConfigStatus', 'warn', '未创建');
     }
@@ -9300,10 +9547,12 @@ async function runWizardEnvCheck() {
     } else {
       lines.push(`${_pkg} 下一步选择要安装的 AI 工具`);
     }
-    if (!env.config.hasProviders) {
+    if (!env.config.hasProviders && !env.config.hasLogin) {
       lines.push(`${_bolt} 需要配置 API Provider`);
+    } else if (env.login?.loggedIn) {
+      lines.push(`${_ok} 已识别 Codex 官方登录：${escapeHtml(env.login.plan || env.login.email || 'OpenAI / ChatGPT')}`);
     }
-    if (toolsInstalled.length > 0 && env.config.hasProviders) {
+    if (toolsInstalled.length > 0 && (env.config.hasProviders || env.config.hasLogin)) {
       lines.push(`${_ok} 环境已就绪！可以跳过向导，直接使用主界面。`);
     }
     el('wizardEnvSummary').innerHTML = lines.join('<br>');
@@ -9789,6 +10038,26 @@ function bindEvents() {
   });
   el('apiKeyToggleBtn').addEventListener('click', toggleApiKeyVisibility);
   el('detectBtn').addEventListener('click', detectModels);
+  el('codexAuthTabs')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-codex-auth-view]');
+    if (!button) return;
+    state.codexAuthView = button.dataset.codexAuthView === 'api_key' ? 'api_key' : 'official';
+    localStorage.setItem('easyaiconfig_codex_auth_view', state.codexAuthView);
+    syncCodexAuthView();
+  });
+  el('codexOfficialAuthPanel')?.addEventListener('click', async (event) => {
+    if (event.target.closest('[data-codex-switch-api]')) {
+      state.codexAuthView = 'api_key';
+      localStorage.setItem('easyaiconfig_codex_auth_view', state.codexAuthView);
+      syncCodexAuthView();
+      flash('已切换到 API Key 配置模式', 'success');
+      return;
+    }
+    if (event.target.closest('[data-codex-refresh-login]')) {
+      await loadState({ preserveForm: true });
+      flash('Codex 登录状态已刷新', 'success');
+    }
+  });
 
   // Model refresh button (inline, next to model select)
   el('modelRefreshBtn')?.addEventListener('click', () => {

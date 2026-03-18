@@ -239,6 +239,14 @@
                   </div>
 
                   <div class="flow-grid">
+                    <div class="codex-auth-block" id="codexAuthBlock">
+                      <div class="codex-auth-tabs" id="codexAuthTabs">
+                        <button type="button" class="codex-auth-tab active" data-codex-auth-view="official">官方登录</button>
+                        <button type="button" class="codex-auth-tab" data-codex-auth-view="api_key">API Key</button>
+                      </div>
+                      <div class="codex-auth-panel" id="codexOfficialAuthPanel"></div>
+                    </div>
+
                     <label class="field field-wide">
                       <span>Base URL</span>
                       <input id="baseUrlInput" placeholder="https://your-provider.com/v1" />

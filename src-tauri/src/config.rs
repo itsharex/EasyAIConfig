@@ -5,6 +5,41 @@ struct ScopePaths {
   env_path: PathBuf,
 }
 
+fn summarize_codex_login(auth_json: &Value) -> Value {
+  let api_key = auth_json.get("OPENAI_API_KEY").and_then(Value::as_str).unwrap_or("").trim();
+  let tokens = auth_json.get("tokens").and_then(Value::as_object);
+  let access_token = tokens.and_then(|item| item.get("access_token")).and_then(Value::as_str).unwrap_or("").trim();
+  let account_id = tokens.and_then(|item| item.get("account_id")).and_then(Value::as_str).unwrap_or("").trim();
+
+  if !access_token.is_empty() {
+    return json!({
+      "loggedIn": true,
+      "method": "chatgpt",
+      "email": "",
+      "plan": "",
+      "accountId": account_id,
+    });
+  }
+
+  if !api_key.is_empty() {
+    return json!({
+      "loggedIn": true,
+      "method": "api_key",
+      "email": "",
+      "plan": "",
+      "accountId": "",
+    });
+  }
+
+  json!({
+    "loggedIn": false,
+    "method": "",
+    "email": "",
+    "plan": "",
+    "accountId": "",
+  })
+}
+
 fn scope_paths(scope: &str, project_path: &str, codex_home: &Path) -> Result<ScopePaths, String> {
   if scope == "project" {
     if project_path.trim().is_empty() {
@@ -52,6 +87,7 @@ pub(crate) fn load_state(query: &Value) -> Result<Value, String> {
   let env_content = read_text(&paths.env_path)?;
   let auth_content = read_text(&codex_home.join("auth.json"))?;
   let auth_json = serde_json::from_str::<Value>(&auth_content).unwrap_or_else(|_| json!({}));
+  let login = summarize_codex_login(&auth_json);
   let config = parse_toml_config(&config_content)?;
   let env = parse_env(&env_content);
   let flat_auth = flatten_auth_json(&auth_json);
@@ -86,6 +122,7 @@ pub(crate) fn load_state(query: &Value) -> Result<Value, String> {
     "config": config,
     "providers": providers,
     "activeProvider": active_provider,
+    "login": login,
     "summary": {
       "model": get_string(&config_object, "model"),
       "modelProvider": get_string(&config_object, "model_provider"),

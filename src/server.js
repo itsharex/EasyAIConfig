@@ -13,6 +13,7 @@ import {
   installCodex,
   installOpenClaw,
   installOpenClawRemote,
+  killOpenClawPortOccupants,
   cancelOpenClawInstallTask,
   getOpenClawInstallTask,
   getOpenClawDashboardUrl,
@@ -381,6 +382,14 @@ export async function startServer() {
   app.post('/api/openclaw/stop', async (_req, res) => {
     try {
       ok(res, { data: await stopOpenClaw() });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/openclaw/port-kill', async (req, res) => {
+    try {
+      ok(res, { data: await killOpenClawPortOccupants(req.body || {}) });
     } catch (error) {
       fail(res, error);
     }

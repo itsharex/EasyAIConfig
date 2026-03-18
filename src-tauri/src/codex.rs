@@ -1584,6 +1584,21 @@ pub(crate) fn check_setup_environment(query: &Value) -> Result<Value, String> {
   // 4. Check config files
   let global_config_path = codex_home.join("config.toml");
   let global_env_path = codex_home.join(".env");
+  let auth_content = read_text(&codex_home.join("auth.json"))?;
+  let auth_json = serde_json::from_str::<Value>(&auth_content).unwrap_or_else(|_| json!({}));
+  let login = {
+    let api_key = auth_json.get("OPENAI_API_KEY").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let tokens = auth_json.get("tokens").and_then(Value::as_object);
+    let access_token = tokens.and_then(|item| item.get("access_token")).and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let account_id = tokens.and_then(|item| item.get("account_id")).and_then(Value::as_str).unwrap_or("").trim().to_string();
+    if !access_token.is_empty() {
+      json!({ "loggedIn": true, "method": "chatgpt", "email": "", "plan": "", "accountId": account_id })
+    } else if !api_key.is_empty() {
+      json!({ "loggedIn": true, "method": "api_key", "email": "", "plan": "", "accountId": "" })
+    } else {
+      json!({ "loggedIn": false, "method": "", "email": "", "plan": "", "accountId": "" })
+    }
+  };
   let config_content = read_text(&global_config_path)?;
   let env_content = read_text(&global_env_path)?;
   let config_exists = !config_content.trim().is_empty();
@@ -1611,7 +1626,8 @@ pub(crate) fn check_setup_environment(query: &Value) -> Result<Value, String> {
     (false, false)
   };
 
-  let needs_setup = !codex_installed || !config_exists || !has_providers;
+  let has_login = login.get("loggedIn").and_then(Value::as_bool).unwrap_or(false);
+  let needs_setup = !codex_installed || (!config_exists && !has_login) || (!has_providers && !has_login);
 
   Ok(json!({
     "node": {
@@ -1634,9 +1650,11 @@ pub(crate) fn check_setup_environment(query: &Value) -> Result<Value, String> {
       "envExists": env_exists,
       "hasProviders": has_providers,
       "hasActiveProvider": has_active_provider,
+      "hasLogin": has_login,
       "configPath": global_config_path.to_string_lossy().to_string(),
       "envPath": global_env_path.to_string_lossy().to_string(),
     },
+    "login": login,
     "needsSetup": needs_setup,
     "codexHome": codex_home.to_string_lossy().to_string(),
   }))
@@ -2063,7 +2081,7 @@ fn launch_terminal_for_tool(cwd: &Path, binary_path: &str, tool_label: &str) -> 
   launch_terminal_command(cwd, binary_path, tool_label)
 }
 
-fn check_openclaw_gateway_reachable(gateway_url: &str) -> bool {
+fn probe_openclaw_gateway(gateway_url: &str) -> (bool, bool) {
   let http_ok = reqwest::blocking::Client::builder()
     .connect_timeout(std::time::Duration::from_millis(500))
     .timeout(std::time::Duration::from_millis(4500))
@@ -2074,10 +2092,10 @@ fn check_openclaw_gateway_reachable(gateway_url: &str) -> bool {
     .map(|response| response.status().as_u16() > 0)
     .unwrap_or(false);
   if http_ok {
-    return true;
+    return (true, true);
   }
 
-  reqwest::Url::parse(gateway_url)
+  let port_listening = reqwest::Url::parse(gateway_url)
     .ok()
     .and_then(|url| {
       let host = url.host_str()?.to_string();
@@ -2087,7 +2105,103 @@ fn check_openclaw_gateway_reachable(gateway_url: &str) -> bool {
         std::time::Duration::from_millis(1500),
       ).ok()
     })
-    .is_some()
+    .is_some();
+  (false, port_listening)
+}
+
+fn parse_windows_csv_line(line: &str) -> Vec<String> {
+  let mut values = Vec::new();
+  let mut current = String::new();
+  let mut in_quotes = false;
+  let chars: Vec<char> = line.chars().collect();
+  let mut index = 0usize;
+  while index < chars.len() {
+    let ch = chars[index];
+    if ch == '"' {
+      if in_quotes && index + 1 < chars.len() && chars[index + 1] == '"' {
+        current.push('"');
+        index += 2;
+        continue;
+      }
+      in_quotes = !in_quotes;
+      index += 1;
+      continue;
+    }
+    if ch == ',' && !in_quotes {
+      values.push(current.trim().to_string());
+      current.clear();
+      index += 1;
+      continue;
+    }
+    current.push(ch);
+    index += 1;
+  }
+  values.push(current.trim().to_string());
+  values
+}
+
+fn inspect_openclaw_port_occupants(port: &str) -> Vec<Value> {
+  if !cfg!(target_os = "windows") {
+    return Vec::new();
+  }
+
+  let output = match create_command("netstat").args(["-ano", "-p", "tcp"]).output() {
+    Ok(out) => out,
+    Err(_) => return Vec::new(),
+  };
+  let stdout = String::from_utf8_lossy(&output.stdout);
+  let mut seen = HashSet::new();
+  let mut items = Vec::new();
+  for line in stdout.lines() {
+    let text = line.trim();
+    if !text.contains("LISTENING") {
+      continue;
+    }
+    let parts = text.split_whitespace().collect::<Vec<_>>();
+    if parts.len() < 5 {
+      continue;
+    }
+    let local_addr = parts[1];
+    let pid = parts[4];
+    if !local_addr.ends_with(&format!(":{}", port)) || !seen.insert(pid.to_string()) {
+      continue;
+    }
+
+    let mut name = String::from("未知进程");
+    let mut command_line = String::new();
+
+    let ps_script = format!("$p = Get-CimInstance Win32_Process -Filter \"ProcessId = {}\" | Select-Object ProcessId,Name,CommandLine; if ($p) {{ $p | ConvertTo-Json -Compress }}", pid);
+    if let Ok(ps_out) = create_command("powershell.exe").args(["-NoProfile", "-NonInteractive", "-Command", &ps_script]).output() {
+      let ps_text = String::from_utf8_lossy(&ps_out.stdout).trim().to_string();
+      if !ps_text.is_empty() {
+        if let Ok(parsed) = serde_json::from_str::<Value>(&ps_text) {
+          name = parsed.get("Name").and_then(Value::as_str).unwrap_or("未知进程").to_string();
+          command_line = parsed.get("CommandLine").and_then(Value::as_str).unwrap_or("").to_string();
+        }
+      }
+    }
+
+    if name == "未知进程" {
+      if let Ok(task_out) = create_command("tasklist").args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"]).output() {
+        if let Some(first_line) = String::from_utf8_lossy(&task_out.stdout).lines().find(|line| !line.trim().is_empty() && !line.trim().starts_with("INFO:")) {
+          let cols = parse_windows_csv_line(first_line);
+          if let Some(first) = cols.first() {
+            name = first.to_string();
+          }
+        }
+      }
+    }
+
+    let likely_openclaw = format!("{} {}", name, command_line).to_lowercase().contains("openclaw");
+    items.push(json!({
+      "pid": pid.parse::<u32>().unwrap_or(0),
+      "name": name,
+      "commandLine": command_line,
+      "likelyOpenClaw": likely_openclaw,
+      "label": format!("{} (PID {})", if name.is_empty() { "未知进程" } else { &name }, pid),
+    }));
+  }
+  items
 }
 
 fn normalize_openclaw_control_ui_base_path(value: &str) -> String {
@@ -2175,7 +2289,8 @@ pub(crate) fn load_openclaw_state() -> Result<Value, String> {
     .and_then(Value::as_str).unwrap_or("token").to_string();
 
   let gateway_url = format!("http://127.0.0.1:{}/", gateway_port);
-  let gateway_reachable = check_openclaw_gateway_reachable(&gateway_url);
+  let (gateway_http_ready, gateway_port_listening) = probe_openclaw_gateway(&gateway_url);
+  let gateway_port_occupants = inspect_openclaw_port_occupants(&gateway_port);
   let needs_onboarding = binary.get("installed").and_then(Value::as_bool).unwrap_or(false) && !config_exists;
   let dashboard_url = build_openclaw_dashboard_url(&gateway_url, &config, &gateway_token);
 
@@ -2193,7 +2308,12 @@ pub(crate) fn load_openclaw_state() -> Result<Value, String> {
     "gatewayPort": gateway_port,
     "gatewayUrl": gateway_url,
     "dashboardUrl": dashboard_url,
-    "gatewayReachable": gateway_reachable,
+    "gatewayReachable": gateway_http_ready,
+    "gatewayHttpReady": gateway_http_ready,
+    "gatewayPortListening": gateway_port_listening,
+    "gatewayStatus": if gateway_http_ready { "online" } else if gateway_port_listening { "warming" } else { "offline" },
+    "gatewayPortOccupants": gateway_port_occupants.clone(),
+    "gatewayPortConflict": gateway_port_occupants.iter().any(|item| !item.get("likelyOpenClaw").and_then(Value::as_bool).unwrap_or(false)),
     "needsOnboarding": needs_onboarding,
     "installMethods": if cfg!(target_os = "windows") {
       json!(["domestic", "wsl", "script"])
@@ -2271,7 +2391,8 @@ pub(crate) fn repair_openclaw_dashboard_auth(body: &Value) -> Result<Value, Stri
     gateway_token = state.get("gatewayToken").and_then(Value::as_str).unwrap_or("").to_string();
     if !gateway_token.is_empty() {
       token_generated = true;
-      restart_required = state.get("gatewayReachable").and_then(Value::as_bool).unwrap_or(false);
+      restart_required = state.get("gatewayReachable").and_then(Value::as_bool).unwrap_or(false)
+        || state.get("gatewayPortListening").and_then(Value::as_bool).unwrap_or(false);
     }
   }
 
@@ -2297,9 +2418,16 @@ pub(crate) fn repair_openclaw_dashboard_auth(body: &Value) -> Result<Value, Stri
 
   let mut launch = Value::Null;
   state = load_openclaw_state()?;
-  if restart_required || !state.get("gatewayReachable").and_then(Value::as_bool).unwrap_or(false) {
+  if restart_required || (!state.get("gatewayReachable").and_then(Value::as_bool).unwrap_or(false)
+    && !state.get("gatewayPortListening").and_then(Value::as_bool).unwrap_or(false)) {
     launch = launch_openclaw(&json!({ "cwd": cwd.to_string_lossy().to_string() }))?;
-    for _ in 0..20 {
+  } else if state.get("gatewayPortListening").and_then(Value::as_bool).unwrap_or(false)
+    && !state.get("gatewayReachable").and_then(Value::as_bool).unwrap_or(false) {
+    notes.push("Gateway 端口已监听，正在等待 HTTP 控制面板就绪".to_string());
+  }
+
+  if !state.get("gatewayReachable").and_then(Value::as_bool).unwrap_or(false) {
+    for _ in 0..30 {
       std::thread::sleep(Duration::from_millis(1000));
       state = load_openclaw_state()?;
       if state.get("gatewayReachable").and_then(Value::as_bool).unwrap_or(false) {
@@ -2318,6 +2446,9 @@ pub(crate) fn repair_openclaw_dashboard_auth(body: &Value) -> Result<Value, Stri
     "tokenGenerated": token_generated,
     "restartRequired": restart_required,
     "gatewayReachable": state.get("gatewayReachable").cloned().unwrap_or(Value::Bool(false)),
+    "gatewayHttpReady": state.get("gatewayHttpReady").cloned().unwrap_or(Value::Bool(false)),
+    "gatewayPortListening": state.get("gatewayPortListening").cloned().unwrap_or(Value::Bool(false)),
+    "gatewayStatus": state.get("gatewayStatus").cloned().unwrap_or(json!("offline")),
     "gatewayUrl": state.get("gatewayUrl").cloned().unwrap_or(Value::Null),
     "gatewayToken": if gateway_token.is_empty() { Value::Null } else { json!(gateway_token) },
     "dashboardUrl": dashboard_url,
@@ -2370,6 +2501,18 @@ pub(crate) fn launch_openclaw(body: &Value) -> Result<Value, String> {
       "mode": "dashboard",
       "gatewayUrl": state.get("gatewayUrl").cloned().unwrap_or(Value::Null),
       "message": "OpenClaw Dashboard 已准备好",
+    }));
+  }
+
+  if state.get("gatewayPortListening").and_then(Value::as_bool).unwrap_or(false) {
+    return Ok(json!({
+      "ok": true,
+      "cwd": cwd.to_string_lossy().to_string(),
+      "mode": "warming",
+      "gatewayUrl": state.get("gatewayUrl").cloned().unwrap_or(Value::Null),
+      "command": "",
+      "background": true,
+      "message": "OpenClaw Gateway 正在启动，稍后会自动就绪",
     }));
   }
 
@@ -2986,7 +3129,8 @@ pub(crate) fn stop_openclaw_gateway() -> Result<Value, String> {
 
   thread::sleep(Duration::from_millis(900));
   let after = load_openclaw_state()?;
-  if !after.get("gatewayReachable").and_then(Value::as_bool).unwrap_or(false) {
+  if !after.get("gatewayReachable").and_then(Value::as_bool).unwrap_or(false)
+    && !after.get("gatewayPortListening").and_then(Value::as_bool).unwrap_or(false) {
     let method_text = if methods.is_empty() { "none".to_string() } else { methods.join(" -> ") };
     return Ok(json!({
       "stopped": true,
@@ -3001,6 +3145,49 @@ pub(crate) fn stop_openclaw_gateway() -> Result<Value, String> {
   }
 
   Ok(json!({ "stopped": false, "message": "未找到运行中的 OpenClaw 进程" }))
+}
+
+pub(crate) fn kill_openclaw_port_occupants(body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let target_pid = object.get("pid").and_then(Value::as_u64).unwrap_or(0) as u32;
+  let state = load_openclaw_state()?;
+  let occupants = state.get("gatewayPortOccupants").and_then(Value::as_array).cloned().unwrap_or_default();
+  let selected = occupants.into_iter().filter(|item| {
+    let pid = item.get("pid").and_then(Value::as_u64).unwrap_or(0) as u32;
+    target_pid == 0 || pid == target_pid
+  }).collect::<Vec<_>>();
+
+  if selected.is_empty() {
+    return Ok(json!({
+      "ok": true,
+      "killed": [],
+      "message": format!("未检测到 {} 端口占用进程", state.get("gatewayPort").and_then(Value::as_str).unwrap_or("18789")),
+    }));
+  }
+
+  let mut killed: Vec<Value> = Vec::new();
+  let mut failed: Vec<Value> = Vec::new();
+  for item in selected {
+    let pid = item.get("pid").and_then(Value::as_u64).unwrap_or(0).to_string();
+    let ok = if cfg!(target_os = "windows") {
+      create_command("taskkill").args(["/F", "/T", "/PID", &pid]).output().map(|out| out.status.success()).unwrap_or(false)
+    } else {
+      Command::new("kill").args(["-9", &pid]).output().map(|out| out.status.success()).unwrap_or(false)
+    };
+    if ok { killed.push(item); } else { failed.push(item); }
+  }
+
+  let after = load_openclaw_state()?;
+  Ok(json!({
+    "ok": failed.is_empty(),
+    "killed": killed,
+    "failed": failed,
+    "gatewayPort": after.get("gatewayPort").cloned().unwrap_or(json!("18789")),
+    "gatewayUrl": after.get("gatewayUrl").cloned().unwrap_or(Value::Null),
+    "gatewayStatus": after.get("gatewayStatus").cloned().unwrap_or(json!("offline")),
+    "gatewayPortOccupants": after.get("gatewayPortOccupants").cloned().unwrap_or(json!([])),
+    "message": if failed.is_empty() { "端口占用进程已结束" } else { "部分端口占用进程结束失败" },
+  }))
 }
 
 pub(crate) fn uninstall_openclaw(body: &Value) -> Result<Value, String> {

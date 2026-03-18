@@ -9,7 +9,7 @@ use crate::codex::{
   run_openclaw_install_script, start_openclaw_install_task, get_openclaw_install_task,
   cancel_openclaw_install_task,
   install_openclaw_remote,
-  onboard_openclaw, open_url_in_browser, stop_openclaw_gateway, uninstall_openclaw,
+  onboard_openclaw, open_url_in_browser, stop_openclaw_gateway, kill_openclaw_port_occupants, uninstall_openclaw,
 };
 use crate::config::{
   get_provider_secret, list_backups, load_state, pick_directory, restore_backup, save_config,
@@ -71,6 +71,7 @@ async fn dispatch(app: tauri::AppHandle, path: &str, method: &str, query: &Value
     },
     ("/api/openclaw/onboard", "POST") => onboard_openclaw(body),
     ("/api/openclaw/stop", "POST") => stop_openclaw_gateway(),
+    ("/api/openclaw/port-kill", "POST") => kill_openclaw_port_occupants(body),
     ("/api/open-url", "POST") => open_url_in_browser(body),
     ("/api/backups", "GET") => list_backups(),
     ("/api/backups/restore", "POST") => restore_backup(body),

@@ -11643,7 +11643,7 @@ button.about-link-card {
 .install-tracker-detail,
 .install-tracker-list,
 .install-tracker-empty {
-  font-size: 0.76rem;
+  font-size: 0.82rem;
 }
 
 .install-step-desc {
@@ -11686,18 +11686,36 @@ button.about-link-card {
 
 .install-tracker-log {
   margin: 0;
-  min-height: 180px;
-  max-height: min(34vh, 360px);
+  min-height: 280px;
+  max-height: min(48vh, 560px);
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  line-height: 1.55;
+  line-height: 1.72;
   scroll-behavior: smooth;
   overscroll-behavior: contain;
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
+  resize: vertical;
+  tab-size: 2;
+  scrollbar-width: thin;
+}
+
+.install-tracker-log::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.install-tracker-log::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+}
+
+.install-tracker-log::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 999px;
 }
 
 @media (max-width: 980px) {
@@ -11963,6 +11981,127 @@ button.about-link-card {
   color: var(--muted);
   margin-bottom: 14px;
   line-height: 1.4;
+}
+
+.omc-preset-block {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.omc-preset-title {
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.omc-preset-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.omc-preset-chip {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.omc-preset-chip:hover {
+  transform: translateY(-1px);
+  border-color: rgba(96, 165, 250, 0.45);
+  background: rgba(96, 165, 250, 0.08);
+}
+
+.omc-preset-name {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.omc-preset-tip {
+  font-size: 0.7rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.codex-auth-block {
+  display: none;
+  grid-column: 1 / -1;
+  gap: 10px;
+}
+
+.codex-auth-tabs {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  width: fit-content;
+  background: rgba(255, 255, 255, 0.035);
+  border-radius: 10px;
+  padding: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.045);
+}
+
+.codex-auth-tab {
+  height: 30px;
+  min-width: 96px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.codex-auth-tab.active {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.codex-auth-panel {
+  display: none;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.codex-auth-panel.show {
+  display: grid;
+  gap: 8px;
+}
+
+.codex-auth-title {
+  font-size: 0.83rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.codex-auth-desc {
+  font-size: 0.74rem;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.codex-auth-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.codex-auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 /* Source tabs - local / manual / paste */

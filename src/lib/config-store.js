@@ -1100,6 +1100,59 @@ async function readAuthJson(codexHome) {
   }
 }
 
+function decodeJwtPayload(token) {
+  const input = String(token || '').trim();
+  if (!input.includes('.')) return {};
+  try {
+    const payload = input.split('.')[1] || '';
+    const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
+    return JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function summarizeCodexLogin(authJson = {}) {
+  const apiKey = String(authJson.OPENAI_API_KEY || authJson.CODEX_API_KEY || authJson.CODEX_CLI_API_KEY || '').trim();
+  const tokens = authJson.tokens && typeof authJson.tokens === 'object' ? authJson.tokens : null;
+  const accessToken = String(tokens?.access_token || '').trim();
+  const idToken = String(tokens?.id_token || '').trim();
+  const claims = decodeJwtPayload(idToken);
+  const authClaims = claims['https://api.openai.com/auth'] || {};
+
+  if (accessToken) {
+    return {
+      loggedIn: true,
+      method: 'chatgpt',
+      email: String(claims.email || '').trim(),
+      plan: String(authClaims.chatgpt_plan_type || '').trim(),
+      userId: String(authClaims.chatgpt_user_id || authClaims.user_id || claims.user_id || '').trim(),
+      accountId: String(tokens?.account_id || '').trim(),
+    };
+  }
+
+  if (apiKey) {
+    return {
+      loggedIn: true,
+      method: 'api_key',
+      email: '',
+      plan: '',
+      userId: '',
+      accountId: '',
+    };
+  }
+
+  return {
+    loggedIn: false,
+    method: '',
+    email: '',
+    plan: '',
+    userId: '',
+    accountId: '',
+  };
+}
+
 function normalizeToken(value) {
   return String(value || '')
     .toLowerCase()
@@ -1254,6 +1307,46 @@ function summarizeProviders(config, envFile, authJson) {
   return providers;
 }
 
+function buildImplicitCodexProvider(envFile = {}, authJson = {}) {
+  const runtimeEnv = process.env || {};
+  const pick = (...keys) => {
+    for (const key of keys) {
+      if (envFile[key]) return { key, value: envFile[key], source: '.env' };
+      if (runtimeEnv[key]) return { key, value: runtimeEnv[key], source: 'system-env' };
+      if (authJson[key]) return { key, value: authJson[key], source: 'auth.json' };
+    }
+    return null;
+  };
+
+  const secret = pick('OPENAI_API_KEY', 'CODEX_API_KEY', 'CODEX_CLI_API_KEY');
+  if (!secret?.value) return null;
+
+  const baseUrl = String(
+    envFile.OPENAI_BASE_URL
+    || envFile.CODEX_BASE_URL
+    || runtimeEnv.OPENAI_BASE_URL
+    || runtimeEnv.CODEX_BASE_URL
+    || authJson.OPENAI_BASE_URL
+    || authJson.CODEX_BASE_URL
+    || 'https://api.openai.com/v1'
+  ).trim();
+
+  return {
+    key: 'openai',
+    name: 'OpenAI（自动识别）',
+    baseUrl,
+    envKey: secret.key,
+    wireApi: 'responses',
+    hasInlineBearerToken: false,
+    isActive: true,
+    hasApiKey: true,
+    maskedApiKey: maskSecretValue(secret.value),
+    keySource: secret.source,
+    resolvedKeyName: secret.key,
+    inferred: true,
+  };
+}
+
 async function readScopeState({ scope = 'global', projectPath = '', codexHome = defaultCodexHome() } = {}) {
   const normalizedCodexHome = path.resolve(codexHome);
   const paths = scopePaths({ scope, projectPath, codexHome: normalizedCodexHome });
@@ -1368,7 +1461,83 @@ async function findWindowsListeningPids(port) {
   return [...pids];
 }
 
-async function checkOpenClawGatewayReachable(gatewayUrl) {
+function parseWindowsCsvLine(line = '') {
+  const values = [];
+  let current = '';
+  let inQuotes = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (char === ',' && !inQuotes) {
+      values.push(current);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  values.push(current);
+  return values.map((item) => item.trim());
+}
+
+async function inspectWindowsProcess(pid) {
+  const normalizedPid = String(pid || '').trim();
+  if (!/^\d+$/.test(normalizedPid)) return null;
+
+  const psCommand = `$p = Get-CimInstance Win32_Process -Filter \"ProcessId = ${normalizedPid}\" | Select-Object ProcessId,Name,CommandLine; if ($p) { $p | ConvertTo-Json -Compress }`;
+  const psResult = await runCommand('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', psCommand]);
+  if (psResult.ok && String(psResult.stdout || '').trim()) {
+    try {
+      const parsed = JSON.parse(String(psResult.stdout || '').trim());
+      const name = String(parsed.Name || '').trim();
+      const commandLine = String(parsed.CommandLine || '').trim();
+      return {
+        pid: Number(parsed.ProcessId || normalizedPid),
+        name: name || '未知进程',
+        commandLine,
+        likelyOpenClaw: /openclaw/i.test(`${name} ${commandLine}`),
+      };
+    } catch { /* ignore */ }
+  }
+
+  const tasklist = await runCommand('tasklist', ['/FI', `PID eq ${normalizedPid}`, '/FO', 'CSV', '/NH']);
+  const firstLine = String(tasklist.stdout || '').split(/\r?\n/).find((line) => line.trim() && !/^INFO:/i.test(line.trim()));
+  if (!firstLine) return null;
+  const [name] = parseWindowsCsvLine(firstLine);
+  return {
+    pid: Number(normalizedPid),
+    name: name || '未知进程',
+    commandLine: '',
+    likelyOpenClaw: /openclaw/i.test(String(name || '')),
+  };
+}
+
+async function inspectOpenClawPortOccupants(port) {
+  const normalizedPort = String(port || '').trim();
+  if (!normalizedPort) return [];
+  if (process.platform === 'win32') {
+    const pids = await findWindowsListeningPids(normalizedPort);
+    const items = await Promise.all(pids.map((pid) => inspectWindowsProcess(pid)));
+    return items.filter(Boolean).map((item) => ({
+      ...item,
+      label: `${item.name} (PID ${item.pid})`,
+    }));
+  }
+  return [];
+}
+
+async function probeOpenClawGateway(gatewayUrl) {
+  let httpReady = false;
+  let portListening = false;
+
   try {
     const target = new URL(gatewayUrl);
     const controller = new AbortController();
@@ -1379,8 +1548,10 @@ async function checkOpenClawGatewayReachable(gatewayUrl) {
       signal: controller.signal,
     });
     clearTimeout(timer);
-    return response.status > 0;
-  } catch {
+    httpReady = response.status > 0;
+  } catch { /* ignore */ }
+
+  if (!httpReady) {
     try {
       const target = new URL(gatewayUrl);
       const port = Number(target.port || (target.protocol === 'https:' ? 443 : 80));
@@ -1398,11 +1569,17 @@ async function checkOpenClawGatewayReachable(gatewayUrl) {
         });
         socket.once('close', () => clearTimeout(timer));
       });
-      return true;
-    } catch {
-      return false;
-    }
+      portListening = true;
+    } catch { /* ignore */ }
   }
+
+  if (httpReady) portListening = true;
+  return {
+    httpReady,
+    portListening,
+    reachable: httpReady,
+    status: httpReady ? 'online' : portListening ? 'warming' : 'offline',
+  };
 }
 
 export async function checkSetupEnvironment({ codexHome = defaultCodexHome() } = {}) {
@@ -1425,6 +1602,8 @@ export async function checkSetupEnvironment({ codexHome = defaultCodexHome() } =
   // 4. Check config files
   const globalConfigPath = path.join(normalizedCodexHome, 'config.toml');
   const globalEnvPath = path.join(normalizedCodexHome, '.env');
+  const authJson = await readAuthJson(normalizedCodexHome);
+  const login = summarizeCodexLogin(authJson);
   const configContent = await readText(globalConfigPath);
   const envContent = await readText(globalEnvPath);
   const configExists = Boolean(configContent.trim());
@@ -1442,7 +1621,7 @@ export async function checkSetupEnvironment({ codexHome = defaultCodexHome() } =
   }
 
   // Determine overall readiness
-  const needsSetup = !codexBinary.installed || !configExists || !hasProviders;
+  const needsSetup = !codexBinary.installed || (!configExists && !login.loggedIn) || (!hasProviders && !login.loggedIn);
 
   return {
     node: {
@@ -1465,9 +1644,11 @@ export async function checkSetupEnvironment({ codexHome = defaultCodexHome() } =
       envExists,
       hasProviders,
       hasActiveProvider,
+      hasLogin: login.loggedIn,
       configPath: globalConfigPath,
       envPath: globalEnvPath,
     },
+    login,
     needsSetup,
     codexHome: normalizedCodexHome,
   };
@@ -1480,7 +1661,10 @@ export async function loadState({ scope = 'global', projectPath = '', codexHome 
     codexHome,
   });
   const providers = summarizeProviders(config, env, authJson);
-  const activeProvider = providers.find((provider) => provider.isActive) || null;
+  const implicitProvider = providers.length ? null : buildImplicitCodexProvider(env, authJson);
+  if (implicitProvider) providers.push(implicitProvider);
+  const activeProvider = providers.find((provider) => provider.isActive) || providers[0] || null;
+  const login = summarizeCodexLogin(authJson);
   const codexBinary = findCodexBinary();
 
   return {
@@ -1498,9 +1682,10 @@ export async function loadState({ scope = 'global', projectPath = '', codexHome 
     config,
     providers,
     activeProvider,
+    login,
     summary: {
       model: config.model || '',
-      modelProvider: config.model_provider || '',
+      modelProvider: config.model_provider || activeProvider?.key || '',
       providerBaseUrl: activeProvider?.baseUrl || '',
       envKey: activeProvider?.resolvedKeyName || activeProvider?.envKey || '',
       approvalPolicy: config.approval_policy || '',
@@ -2198,7 +2383,8 @@ export async function loadOpenClawState() {
 
   const gatewayPort = process.env.OPENCLAW_GATEWAY_PORT || String(config.gateway?.port || '18789');
   const gatewayUrl = `http://127.0.0.1:${gatewayPort}/`;
-  const gatewayReachable = await checkOpenClawGatewayReachable(gatewayUrl);
+  const gatewayProbe = await probeOpenClawGateway(gatewayUrl);
+  const gatewayPortOccupants = await inspectOpenClawPortOccupants(gatewayPort);
   const needsOnboarding = binary.installed && !configExists;
   const gatewayAuthMode = String(config.gateway?.auth?.mode || 'token');
   const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN || config.gateway?.auth?.token || null;
@@ -2218,7 +2404,12 @@ export async function loadOpenClawState() {
     gatewayPort,
     gatewayUrl,
     dashboardUrl,
-    gatewayReachable,
+    gatewayReachable: gatewayProbe.httpReady,
+    gatewayHttpReady: gatewayProbe.httpReady,
+    gatewayPortListening: gatewayProbe.portListening,
+    gatewayStatus: gatewayProbe.status,
+    gatewayPortOccupants,
+    gatewayPortConflict: gatewayPortOccupants.some((item) => !item.likelyOpenClaw),
     needsOnboarding,
     installMethods: process.platform === 'win32' ? ['domestic', 'wsl', 'script'] : ['script', 'npm', 'source', 'docker'],
   };
@@ -2288,9 +2479,13 @@ export async function repairOpenClawDashboardAuth({ cwd } = {}) {
 
   let launch = null;
   state = await loadOpenClawState();
-  if (!state.gatewayReachable || restartRequired) {
+  if ((!state.gatewayReachable && !state.gatewayPortListening) || restartRequired) {
     launch = await launchOpenClaw({ cwd: targetCwd });
-    for (let attempt = 0; attempt < 20; attempt++) {
+  } else if (state.gatewayPortListening && !state.gatewayReachable) {
+    notes.push('Gateway 端口已监听，正在等待 HTTP 控制面板就绪');
+  }
+  if (!state.gatewayReachable) {
+    for (let attempt = 0; attempt < 30; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 1000));
       state = await loadOpenClawState();
       if (state.gatewayReachable) break;
@@ -2305,6 +2500,9 @@ export async function repairOpenClawDashboardAuth({ cwd } = {}) {
     tokenGenerated,
     restartRequired,
     gatewayReachable: state.gatewayReachable,
+    gatewayHttpReady: state.gatewayHttpReady,
+    gatewayPortListening: state.gatewayPortListening,
+    gatewayStatus: state.gatewayStatus,
     gatewayUrl: state.gatewayUrl,
     gatewayToken: state.gatewayToken,
     dashboardUrl,
@@ -2473,6 +2671,18 @@ export async function launchOpenClaw({ cwd } = {}) {
     };
   }
 
+  if (state.gatewayPortListening) {
+    return {
+      ok: true,
+      cwd: targetCwd,
+      mode: 'warming',
+      gatewayUrl: state.gatewayUrl,
+      command: '',
+      background: true,
+      message: 'OpenClaw Gateway 正在启动，稍后会自动就绪',
+    };
+  }
+
   const binaryPath = binary.path || 'openclaw';
   const commandText = process.platform === 'win32'
     ? buildWindowsCommand(binaryPath, ['gateway', '--force'])
@@ -2520,7 +2730,7 @@ export async function stopOpenClaw() {
 
   await new Promise((resolve) => setTimeout(resolve, 900));
   const after = await loadOpenClawState();
-  if (after.gatewayReachable) {
+  if (after.gatewayReachable || after.gatewayPortListening) {
     throw new Error('OpenClaw Gateway 仍在运行，请手动检查终端进程');
   }
 
@@ -2530,6 +2740,37 @@ export async function stopOpenClaw() {
     gatewayReachable: after.gatewayReachable,
     gatewayUrl: after.gatewayUrl,
     message: 'OpenClaw Gateway 已停止',
+  };
+}
+
+export async function killOpenClawPortOccupants({ pid } = {}) {
+  const state = await loadOpenClawState();
+  const targetPid = Number(pid || 0);
+  const occupants = (state.gatewayPortOccupants || []).filter((item) => !targetPid || Number(item.pid) === targetPid);
+  if (!occupants.length) {
+    return { ok: true, killed: [], message: `未检测到 ${state.gatewayPort || '18789'} 端口占用进程` };
+  }
+
+  const killed = [];
+  const failed = [];
+  for (const occupant of occupants) {
+    const result = process.platform === 'win32'
+      ? await runCommand('taskkill', ['/F', '/T', '/PID', String(occupant.pid)])
+      : await runCommand('kill', ['-9', String(occupant.pid)]);
+    if (result.ok) killed.push({ ...occupant, stdout: result.stdout, stderr: result.stderr });
+    else failed.push({ ...occupant, stdout: result.stdout, stderr: result.stderr });
+  }
+
+  const after = await loadOpenClawState();
+  return {
+    ok: failed.length === 0,
+    killed,
+    failed,
+    gatewayPort: after.gatewayPort,
+    gatewayUrl: after.gatewayUrl,
+    gatewayStatus: after.gatewayStatus,
+    gatewayPortOccupants: after.gatewayPortOccupants,
+    message: failed.length ? '部分端口占用进程结束失败' : '端口占用进程已结束',
   };
 }
 
