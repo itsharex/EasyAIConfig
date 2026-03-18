@@ -74,6 +74,20 @@ function getToolDef(toolId) {
   return TOOL_REGISTRY[toolId] || TOOL_REGISTRY.codex;
 }
 
+function withWindowsHide(options = {}) {
+  return process.platform === 'win32'
+    ? { ...options, windowsHide: options.windowsHide ?? true }
+    : options;
+}
+
+function runSpawn(command, args, options = {}) {
+  return spawn(command, args, withWindowsHide(options));
+}
+
+function runSpawnSync(command, args, options = {}) {
+  return spawnSync(command, args, withWindowsHide(options));
+}
+
 function toolBinaryCandidates(toolId) {
   const tool = getToolDef(toolId);
   const binaryName = tool.binaryName;
@@ -105,7 +119,7 @@ function toolBinaryCandidates(toolId) {
     if (unixCandidate && existsSync(unixCandidate)) addCandidate(unixCandidate);
   }
 
-  const lookupResult = spawnSync(
+  const lookupResult = runSpawnSync(
     process.platform === 'win32' ? 'where' : 'which',
     [binaryName],
     { encoding: 'utf8' }
@@ -125,8 +139,8 @@ function readBinaryVersion(binPath) {
   if (!binPath) return { installed: false, version: null, path: null };
   const lower = binPath.toLowerCase();
   const result = process.platform === 'win32' && lower.endsWith('.ps1')
-    ? spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', binPath, '--version'], { encoding: 'utf8' })
-    : spawnSync(binPath, ['--version'], { encoding: 'utf8' });
+    ? runSpawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', binPath, '--version'], { encoding: 'utf8' })
+    : runSpawnSync(binPath, ['--version'], { encoding: 'utf8' });
   return {
     installed: result.status === 0,
     version: result.status === 0 ? (result.stdout || result.stderr || '').trim() : null,
@@ -207,13 +221,13 @@ function compareCodexVersions(left, right) {
 
 function commandExists(command) {
   const lookup = process.platform === 'win32' ? 'where' : 'which';
-  const result = spawnSync(lookup, [command], { encoding: 'utf8' });
+  const result = runSpawnSync(lookup, [command], { encoding: 'utf8' });
   return result.status === 0 ? (result.stdout || '').split(/\r?\n/).find(Boolean) || null : null;
 }
 
 function runCommand(command, args, options = {}) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const child = runSpawn(command, args, {
       cwd: options.cwd,
       env: { ...process.env, ...(options.env || {}) },
       shell: false,
@@ -376,12 +390,12 @@ async function pathExists(targetPath) {
 }
 
 function npmGlobalPrefix() {
-  const result = spawnSync(npmCommand(), ['prefix', '-g'], { encoding: 'utf8' });
+  const result = runSpawnSync(npmCommand(), ['prefix', '-g'], { encoding: 'utf8' });
   return result.status === 0 ? String(result.stdout || '').trim() : '';
 }
 
 function npmGlobalRoot() {
-  const result = spawnSync(npmCommand(), ['root', '-g'], { encoding: 'utf8' });
+  const result = runSpawnSync(npmCommand(), ['root', '-g'], { encoding: 'utf8' });
   return result.status === 0 ? String(result.stdout || '').trim() : '';
 }
 
@@ -741,7 +755,7 @@ function flushOpenClawInstallChunk(task) {
 
 function runTrackedCommand(task, command, args, options = {}) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, {
+    const child = runSpawn(command, args, {
       cwd: options.cwd,
       env: { ...process.env, ...(options.env || {}) },
       shell: false,
@@ -796,8 +810,8 @@ async function runOpenClawInstallTask(task) {
       throw new Error('未检测到 `curl`，无法执行脚本安装。请先安装 curl，或改用 npm 安装。');
     }
     if (!isScript) {
-      const nodeResult = spawnSync('node', ['--version'], { encoding: 'utf8' });
-      const npmResult = spawnSync(npmCommand(), ['--version'], { encoding: 'utf8' });
+      const nodeResult = runSpawnSync('node', ['--version'], { encoding: 'utf8' });
+      const npmResult = runSpawnSync(npmCommand(), ['--version'], { encoding: 'utf8' });
       if (nodeResult.status !== 0) throw new Error('未检测到 Node.js，请先安装 Node.js 18+。');
       if (npmResult.status !== 0) throw new Error('未检测到 npm，请先修复 npm 环境后重试。');
       pushOpenClawInstallLog(task, 'stdout', `Node.js ${String(nodeResult.stdout || '').trim()} / npm ${String(npmResult.stdout || '').trim()}`);
@@ -871,7 +885,7 @@ function compareVersions(left, right) {
 
 function codexCandidates() {
   const paths = new Set();
-  const whichResult = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['-a', 'codex'], { encoding: 'utf8' });
+  const whichResult = runSpawnSync(process.platform === 'win32' ? 'where' : 'which', ['-a', 'codex'], { encoding: 'utf8' });
   if (whichResult.status === 0) {
     for (const line of (whichResult.stdout || '').split(/\r?\n/)) {
       if (line.trim()) paths.add(line.trim());
@@ -891,7 +905,7 @@ function codexCandidates() {
 
 function findCodexBinary() {
   const candidates = codexCandidates().map((candidatePath) => {
-    const result = spawnSync(candidatePath, ['--version'], { encoding: 'utf8' });
+    const result = runSpawnSync(candidatePath, ['--version'], { encoding: 'utf8' });
     return {
       path: candidatePath,
       installed: result.status === 0,
@@ -1346,13 +1360,13 @@ export async function checkSetupEnvironment({ codexHome = defaultCodexHome() } =
   const normalizedCodexHome = path.resolve(codexHome);
 
   // 1. Check Node.js
-  const nodeResult = spawnSync('node', ['--version'], { encoding: 'utf8' });
+  const nodeResult = runSpawnSync('node', ['--version'], { encoding: 'utf8' });
   const nodeInstalled = nodeResult.status === 0;
   const nodeVersion = nodeInstalled ? (nodeResult.stdout || '').trim() : null;
   const nodeMajor = nodeVersion ? parseInt((nodeVersion.match(/v?(\d+)/) || [])[1] || '0', 10) : 0;
 
   // 2. Check npm
-  const npmResult = spawnSync(npmCommand(), ['--version'], { encoding: 'utf8' });
+  const npmResult = runSpawnSync(npmCommand(), ['--version'], { encoding: 'utf8' });
   const npmInstalled = npmResult.status === 0;
   const npmVersion = npmInstalled ? (npmResult.stdout || '').trim() : null;
 
@@ -2166,11 +2180,10 @@ export async function getOpenClawDashboardUrl({ cwd } = {}) {
   if (!state.binary?.installed) throw new Error('OpenClaw 尚未安装');
   const targetCwd = path.resolve(cwd || process.cwd());
   const binaryPath = state.binary.path || 'openclaw';
-  const result = spawnSync(binaryPath, ['dashboard', '--no-open'], {
+  const result = runSpawnSync(binaryPath, ['dashboard', '--no-open'], {
     cwd: targetCwd,
     encoding: 'utf8',
     timeout: 12000,
-    windowsHide: true,
   });
   const merged = `${result.stdout || ''}\n${result.stderr || ''}`;
   const url = extractUrlFromText(merged) || state.dashboardUrl || state.gatewayUrl;

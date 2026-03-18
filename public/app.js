@@ -8582,6 +8582,7 @@ async function launchOpenClawOnly() {
   let hint = '稍等一下，马上就好。';
   let gatewayUrl = '';
   let terminalMsg = '';
+  let isBackgroundLaunch = false;
   const launchLogs = [];
   let launchTimerId = null;
   let lastStatusLabel = '启动中';
@@ -8646,7 +8647,7 @@ async function launchOpenClawOnly() {
             <div class="install-tracker-note-card">
               <div class="install-tracker-note-title">你现在该做什么</div>
               <ul class="install-tracker-list">
-                <li>${currentStep <= 1 ? '不需要操作，自动检测中。' : currentStep === 2 ? '如果终端弹出来了，保持它运行就行。' : '一切就绪，Dashboard 马上打开。'}</li>
+                <li>${currentStep <= 1 ? '不需要操作，自动检测中。' : currentStep === 2 ? (isBackgroundLaunch ? '不需要操作，Gateway 正在后台启动，日志会显示在这里。' : '如果终端弹出来了，保持它运行就行。') : '一切就绪，Dashboard 马上打开。'}</li>
               </ul>
             </div>
           </div>
@@ -8810,14 +8811,17 @@ async function launchOpenClawOnly() {
         throw new Error(launchJson.error || '启动 Gateway 失败');
       }
 
+      isBackgroundLaunch = Boolean(launchJson.data?.background);
       terminalMsg = launchJson.data?.message || '启动命令已发送';
       pushLog(terminalMsg);
       if (launchJson.data?.command) {
         pushLog(`命令：${launchJson.data.command}`);
       }
       detail = launchJson.data?.command || 'openclaw gateway start';
-      hint = '已补发 Gateway 启动命令，正在等待服务响应…';
-      updateDialog('启动中', 'Gateway 启动命令已发送，等待服务响应…');
+      hint = isBackgroundLaunch
+        ? '已补发后台启动命令，正在等待 Gateway 服务响应…'
+        : '已补发 Gateway 启动命令，正在等待服务响应…';
+      updateDialog('启动中', isBackgroundLaunch ? 'Gateway 已在后台启动，等待服务响应…' : 'Gateway 启动命令已发送，等待服务响应…');
 
       for (let attempt = 0; attempt < 20; attempt++) {
         await sleep(1500);
@@ -8846,7 +8850,7 @@ async function launchOpenClawOnly() {
       pushLog('Gateway 还未就绪，但初始化已完成');
       hint = '初始化已完成，但 Gateway 尚未响应。可稍后再试，或用管理员 PowerShell 重新初始化。';
       stopTimer();
-      updateDialog('初始化完成', 'Gateway 仍未就绪，请检查终端');
+      updateDialog('初始化完成', isBackgroundLaunch ? 'Gateway 仍未就绪，请查看这里的日志' : 'Gateway 仍未就绪，请检查终端');
       setUpdateDialogLocked(false);
       patchUpdateDialog({ confirmText: '关闭', confirmDisabled: false });
       return;
@@ -8880,8 +8884,8 @@ async function launchOpenClawOnly() {
 
     // Gateway not running — launch it
     pushLog('Gateway 未运行，正在启动…');
-    detail = '正在通过终端启动 Gateway…';
-    hint = '终端会自动打开。Gateway 启动后这里会自动检测。';
+    detail = '正在启动 Gateway…';
+    hint = '启动后这里会自动显示日志并检测服务状态。';
     updateDialog('启动中', '正在启动 Gateway 服务…');
 
     pushLog('调用 /api/openclaw/launch …');
@@ -8894,12 +8898,15 @@ async function launchOpenClawOnly() {
       throw new Error(launchJson.error || '启动 Gateway 失败');
     }
 
+    isBackgroundLaunch = Boolean(launchJson.data?.background);
     terminalMsg = launchJson.data?.message || '启动命令已发送';
     pushLog(terminalMsg);
     pushLog(`命令：${launchJson.data?.command || 'openclaw gateway start'}`);
     detail = launchJson.data?.command || 'openclaw gateway start';
-    hint = '终端已打开，正在等待 Gateway 服务响应…';
-    updateDialog('启动中', 'Gateway 命令已执行，等待服务响应…');
+    hint = isBackgroundLaunch
+      ? '已在后台启动，正在等待 Gateway 服务响应…'
+      : '终端已打开，正在等待 Gateway 服务响应…';
+    updateDialog('启动中', isBackgroundLaunch ? 'Gateway 已在后台启动，等待服务响应…' : 'Gateway 命令已执行，等待服务响应…');
 
     // === STEP 3: poll until gateway is reachable ===
     for (let attempt = 0; attempt < 40; attempt++) {
@@ -8934,7 +8941,7 @@ async function launchOpenClawOnly() {
     hint = 'Gateway 可能需要手动检查。你也可以直接在浏览器访问 Dashboard 地址试试。';
     launchSteps[2].desc = 'Gateway 未在预期时间内响应';
     stopTimer();
-    updateDialog('等待超时', 'Gateway 还未就绪，请检查终端');
+    updateDialog('等待超时', isBackgroundLaunch ? 'Gateway 还未就绪，请查看日志并稍后重试' : 'Gateway 还未就绪，请检查终端');
     setUpdateDialogLocked(false);
     patchUpdateDialog({ confirmText: '关闭', confirmDisabled: false });
   } catch (e) {

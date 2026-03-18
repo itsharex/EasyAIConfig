@@ -223,6 +223,8 @@ fn full_path_env() -> String {
 fn create_command(program: &str) -> Command {
   let mut cmd = Command::new(program);
   cmd.env("PATH", full_path_env());
+  #[cfg(target_os = "windows")]
+  cmd.creation_flags(CREATE_NO_WINDOW);
   cmd
 }
 
@@ -530,7 +532,7 @@ fn infer_openclaw_install_step(task: &mut OpenClawInstallTask, line: &str) {
 
 fn terminate_openclaw_install_process(pid: u32) {
   if cfg!(target_os = "windows") {
-    let _ = Command::new("taskkill")
+    let _ = create_command("taskkill")
       .args(["/PID", &pid.to_string(), "/T", "/F"])
       .stdin(Stdio::null())
       .output();
@@ -1449,7 +1451,7 @@ fn launch_codex_terminal_command(cwd: &Path) -> Result<String, String> {
   }
 
   if cfg!(target_os = "windows") {
-    create_command("cmd.exe")
+    Command::new("cmd.exe")
       .args([
         "/c",
         "start",
@@ -2023,7 +2025,7 @@ fn launch_terminal_command(cwd: &Path, command_text: &str, tool_label: &str) -> 
   }
 
   if cfg!(target_os = "windows") {
-    create_command("cmd.exe")
+    Command::new("cmd.exe")
       .args([
         "/c", "start", "", "cmd", "/k",
         &format!("cd /d \"{}\" && {}", cwd_text, command_text),
@@ -2918,7 +2920,7 @@ pub(crate) fn stop_openclaw_gateway() -> Result<Value, String> {
 
   // Fallback: kill process by name
   let kill_result = if cfg!(target_os = "windows") {
-    Command::new("taskkill").args(["/F", "/IM", "openclaw.exe"]).output()
+    create_command("taskkill").args(["/F", "/IM", "openclaw.exe"]).output()
   } else {
     Command::new("pkill").args(["-f", "openclaw.*gateway"]).output()
   };
