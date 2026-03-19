@@ -1,5 +1,6 @@
 use serde::Serialize;
 use serde_json::{json, Value};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -1542,6 +1543,414 @@ pub(crate) fn launch_codex(body: &Value) -> Result<Value, String> {
   }
   let message = launch_codex_terminal_command(&cwd)?;
   Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
+}
+
+pub(crate) fn login_codex(body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let cwd = {
+    let input = get_string(&object, "cwd");
+    if input.is_empty() { home_dir()? } else { PathBuf::from(input) }
+  };
+  let codex_binary = find_codex_binary();
+  if !codex_binary.get("installed").and_then(Value::as_bool).unwrap_or(false) {
+    return Err("Codex 尚未安装，请先点击安装".to_string());
+  }
+  let binary_path = codex_binary
+    .get("path")
+    .and_then(Value::as_str)
+    .filter(|text| !text.trim().is_empty())
+    .unwrap_or("codex");
+  let command = format!("\"{}\" login", binary_path.replace('"', "\\\""));
+  let message = launch_terminal_command(&cwd, &command, "Codex 登录")?;
+  Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
+}
+
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexUsageTotals {
+  input: u64,
+  cached_input: u64,
+  output: u64,
+  reasoning: u64,
+  total: u64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexUsageProviderStat {
+  provider: String,
+  totals: CodexUsageTotals,
+  events: u64,
+}
+
+#[derive(Clone)]
+struct CodexUsageSessionStat {
+  session_id: String,
+  provider: String,
+  cwd: String,
+  totals: CodexUsageTotals,
+  updated_at_ms: i64,
+  updated_at: String,
+}
+
+struct CodexUsageSessionFile {
+  path: PathBuf,
+  modified_ms: u64,
+}
+
+const CODEX_USAGE_CACHE_TTL_SECS: i64 = 60;
+
+fn codex_usage_num(value: Option<&Value>) -> u64 {
+  value
+    .and_then(|item| item.as_u64().or_else(|| item.as_i64().and_then(|num| if num >= 0 { Some(num as u64) } else { None })))
+    .unwrap_or(0)
+}
+
+fn add_codex_usage_totals(target: &mut CodexUsageTotals, usage: &Value) {
+  target.input += codex_usage_num(usage.get("input_tokens"));
+  target.cached_input += codex_usage_num(usage.get("cached_input_tokens"));
+  target.output += codex_usage_num(usage.get("output_tokens"));
+  target.reasoning += codex_usage_num(usage.get("reasoning_output_tokens"));
+  target.total += codex_usage_num(usage.get("total_tokens"));
+}
+
+fn list_jsonl_files(root: &Path) -> Vec<PathBuf> {
+  let mut result = Vec::new();
+  let mut stack = vec![root.to_path_buf()];
+  while let Some(dir) = stack.pop() {
+    let Ok(entries) = fs::read_dir(&dir) else { continue; };
+    for entry in entries.flatten() {
+      let path = entry.path();
+      if path.is_dir() {
+        stack.push(path);
+      } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
+        result.push(path);
+      }
+    }
+  }
+  result
+}
+
+fn file_modified_ms(path: &Path) -> u64 {
+  fs::metadata(path)
+    .ok()
+    .and_then(|meta| meta.modified().ok())
+    .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+    .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+    .unwrap_or(0)
+}
+
+fn codex_usage_cache_path(_codex_home: &Path, _day_count: i64) -> Result<PathBuf, String> {
+  let cache_dir = app_home()?.join("cache");
+  ensure_dir(&cache_dir)?;
+  Ok(cache_dir.join("metrics.db"))
+}
+
+fn codex_usage_cache_key(sessions_root: &Path, day_count: i64) -> String {
+  format!("{}::{}", sessions_root.to_string_lossy(), day_count)
+}
+
+fn open_codex_usage_cache_db(db_path: &Path) -> Result<Connection, String> {
+  let connection = Connection::open(db_path).map_err(|error| error.to_string())?;
+  connection.execute(
+    "CREATE TABLE IF NOT EXISTS codex_usage_cache (
+      cache_key TEXT PRIMARY KEY,
+      sessions_root TEXT NOT NULL,
+      day_count INTEGER NOT NULL,
+      file_count INTEGER NOT NULL,
+      latest_mtime_ms INTEGER NOT NULL,
+      generated_at TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    )",
+    [],
+  ).map_err(|error| error.to_string())?;
+  Ok(connection)
+}
+
+fn list_recent_session_files(root: &Path, window_start_day: chrono::NaiveDate) -> Vec<CodexUsageSessionFile> {
+  list_jsonl_files(root)
+    .into_iter()
+    .filter_map(|path| {
+      if let Some(file_day) = session_file_day(&path, root) {
+        if file_day < window_start_day {
+          return None;
+        }
+      }
+      Some(CodexUsageSessionFile {
+        modified_ms: file_modified_ms(&path),
+        path,
+      })
+    })
+    .collect()
+}
+
+fn read_codex_usage_cache(cache_path: &Path, sessions_root: &Path, day_count: i64, file_count: u64, latest_mtime_ms: u64) -> Option<Value> {
+  let connection = open_codex_usage_cache_db(cache_path).ok()?;
+  let cache_key = codex_usage_cache_key(sessions_root, day_count);
+  let row = connection.query_row(
+    "SELECT sessions_root, day_count, file_count, latest_mtime_ms, generated_at, payload_json FROM codex_usage_cache WHERE cache_key = ?1",
+    [cache_key],
+    |row| {
+      Ok((
+        row.get::<_, String>(0)?,
+        row.get::<_, i64>(1)?,
+        row.get::<_, u64>(2)?,
+        row.get::<_, u64>(3)?,
+        row.get::<_, String>(4)?,
+        row.get::<_, String>(5)?,
+      ))
+    },
+  ).optional().ok()??;
+  if row.0 != sessions_root.to_string_lossy() {
+    return None;
+  }
+  if row.1 != day_count {
+    return None;
+  }
+  if let Ok(generated_at) = chrono::DateTime::parse_from_rfc3339(&row.4) {
+    let age_secs = chrono::Utc::now().signed_duration_since(generated_at.with_timezone(&chrono::Utc)).num_seconds();
+    if age_secs >= 0 && age_secs <= CODEX_USAGE_CACHE_TTL_SECS {
+      return serde_json::from_str::<Value>(&row.5).ok();
+    }
+  }
+  if row.2 != file_count {
+    return None;
+  }
+  if row.3 != latest_mtime_ms {
+    return None;
+  }
+  serde_json::from_str::<Value>(&row.5).ok()
+}
+
+fn write_codex_usage_cache(cache_path: &Path, sessions_root: &Path, day_count: i64, file_count: u64, latest_mtime_ms: u64, payload: &Value) {
+  let Ok(connection) = open_codex_usage_cache_db(cache_path) else { return; };
+  let payload_json = serde_json::to_string(payload).unwrap_or_default();
+  let generated_at = payload.get("generatedAt").and_then(Value::as_str).unwrap_or_default();
+  let _ = connection.execute(
+    "INSERT INTO codex_usage_cache (cache_key, sessions_root, day_count, file_count, latest_mtime_ms, generated_at, payload_json)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT(cache_key) DO UPDATE SET
+       sessions_root = excluded.sessions_root,
+       day_count = excluded.day_count,
+       file_count = excluded.file_count,
+       latest_mtime_ms = excluded.latest_mtime_ms,
+       generated_at = excluded.generated_at,
+       payload_json = excluded.payload_json",
+    params![
+      codex_usage_cache_key(sessions_root, day_count),
+      sessions_root.to_string_lossy().to_string(),
+      day_count,
+      file_count,
+      latest_mtime_ms,
+      generated_at,
+      payload_json,
+    ],
+  );
+}
+
+fn session_file_day(file_path: &Path, sessions_root: &Path) -> Option<chrono::NaiveDate> {
+  let relative = file_path.strip_prefix(sessions_root).ok()?;
+  let mut parts = relative.components();
+  let year = parts.next()?.as_os_str().to_str()?.parse::<i32>().ok()?;
+  let month = parts.next()?.as_os_str().to_str()?.parse::<u32>().ok()?;
+  let day = parts.next()?.as_os_str().to_str()?.parse::<u32>().ok()?;
+  chrono::NaiveDate::from_ymd_opt(year, month, day)
+}
+
+pub(crate) fn get_codex_usage_metrics(query: &Value) -> Result<Value, String> {
+  let query_object = parse_json_object(query);
+  let codex_home = {
+    let input = get_string(&query_object, "codexHome");
+    if input.is_empty() { default_codex_home()? } else { PathBuf::from(input) }
+  };
+  let day_count = get_string(&query_object, "days")
+    .parse::<i64>()
+    .ok()
+    .map(|days| days.clamp(1, 90))
+    .unwrap_or(30);
+  let force_refresh = matches!(get_string(&query_object, "force").as_str(), "1" | "true" | "yes");
+  let window_start = chrono::Utc::now() - chrono::Duration::days(day_count);
+  let window_start_day = window_start.date_naive();
+  let sessions_root = codex_home.join("sessions");
+  let cache_path = codex_usage_cache_path(&codex_home, day_count)?;
+  let session_files = list_recent_session_files(&sessions_root, window_start_day);
+  let file_count = session_files.len() as u64;
+  let latest_mtime_ms = session_files.iter().map(|item| item.modified_ms).max().unwrap_or(0);
+
+  if !force_refresh {
+    if let Some(payload) = read_codex_usage_cache(&cache_path, &sessions_root, day_count, file_count, latest_mtime_ms) {
+      return Ok(payload);
+    }
+  }
+
+  let mut totals = CodexUsageTotals::default();
+  let mut by_day: BTreeMap<String, CodexUsageTotals> = BTreeMap::new();
+  let mut by_provider: BTreeMap<String, CodexUsageProviderStat> = BTreeMap::new();
+  let mut by_session: BTreeMap<String, CodexUsageSessionStat> = BTreeMap::new();
+
+  for file_entry in session_files {
+    let file_path = file_entry.path;
+    let Ok(file) = File::open(&file_path) else { continue; };
+    let reader = BufReader::new(file);
+    let mut session_id = String::new();
+    let mut provider = String::new();
+    let mut cwd = String::new();
+
+    for line in reader.lines().map_while(Result::ok) {
+      let trimmed = line.trim();
+      if trimmed.is_empty() {
+        continue;
+      }
+      let Ok(event) = serde_json::from_str::<Value>(trimmed) else { continue; };
+      if event.get("type").and_then(Value::as_str) == Some("session_meta") {
+        if let Some(payload) = event.get("payload").and_then(Value::as_object) {
+          if session_id.is_empty() {
+            session_id = payload.get("id").and_then(Value::as_str).unwrap_or("").trim().to_string();
+          }
+          if provider.is_empty() {
+            provider = payload.get("model_provider").and_then(Value::as_str).unwrap_or("").trim().to_string();
+          }
+          if cwd.is_empty() {
+            cwd = payload.get("cwd").and_then(Value::as_str).unwrap_or("").trim().to_string();
+          }
+        }
+        continue;
+      }
+
+      let payload = event.get("payload").and_then(Value::as_object);
+      if event.get("type").and_then(Value::as_str) != Some("event_msg")
+        || payload.and_then(|item| item.get("type")).and_then(Value::as_str) != Some("token_count") {
+        continue;
+      }
+
+      let ts_raw = event.get("timestamp").and_then(Value::as_str).unwrap_or("");
+      let Ok(ts) = chrono::DateTime::parse_from_rfc3339(ts_raw) else { continue; };
+      let ts_utc = ts.with_timezone(&chrono::Utc);
+      if ts_utc < window_start {
+        continue;
+      }
+
+      let usage = payload
+        .and_then(|item| item.get("info"))
+        .and_then(Value::as_object)
+        .and_then(|info| info.get("last_token_usage").or_else(|| info.get("total_token_usage")));
+      let Some(usage) = usage else { continue; };
+
+      add_codex_usage_totals(&mut totals, usage);
+
+      let day_key = ts_utc.format("%Y-%m-%d").to_string();
+      add_codex_usage_totals(by_day.entry(day_key).or_default(), usage);
+
+      let provider_key = if provider.trim().is_empty() { "unknown".to_string() } else { provider.clone() };
+      let provider_stat = by_provider.entry(provider_key.clone()).or_insert_with(|| CodexUsageProviderStat {
+        provider: provider_key.clone(),
+        totals: CodexUsageTotals::default(),
+        events: 0,
+      });
+      add_codex_usage_totals(&mut provider_stat.totals, usage);
+      provider_stat.events += 1;
+
+      let session_key = if session_id.trim().is_empty() {
+        file_path.file_stem().and_then(|name| name.to_str()).unwrap_or("unknown").to_string()
+      } else {
+        session_id.clone()
+      };
+      let updated_at = ts_utc.to_rfc3339();
+      let session_stat = by_session.entry(session_key.clone()).or_insert_with(|| CodexUsageSessionStat {
+        session_id: session_key.clone(),
+        provider: provider_key.clone(),
+        cwd: cwd.clone(),
+        totals: CodexUsageTotals::default(),
+        updated_at_ms: ts_utc.timestamp_millis(),
+        updated_at: updated_at.clone(),
+      });
+      add_codex_usage_totals(&mut session_stat.totals, usage);
+      if ts_utc.timestamp_millis() > session_stat.updated_at_ms {
+        session_stat.updated_at_ms = ts_utc.timestamp_millis();
+        session_stat.updated_at = updated_at;
+      }
+      if session_stat.cwd.is_empty() && !cwd.is_empty() {
+        session_stat.cwd = cwd.clone();
+      }
+      if session_stat.provider.is_empty() {
+        session_stat.provider = provider_key;
+      }
+    }
+  }
+
+  let daily = by_day
+    .into_iter()
+    .map(|(date, totals)| json!({
+      "date": date,
+      "input": totals.input,
+      "cachedInput": totals.cached_input,
+      "output": totals.output,
+      "reasoning": totals.reasoning,
+      "total": totals.total,
+    }))
+    .collect::<Vec<_>>();
+
+  let mut providers = by_provider.into_values().collect::<Vec<_>>();
+  providers.sort_by(|left, right| right.totals.total.cmp(&left.totals.total));
+
+  let mut sessions = by_session.into_values().collect::<Vec<_>>();
+  sessions.sort_by(|left, right| right.updated_at_ms.cmp(&left.updated_at_ms));
+  sessions.truncate(12);
+
+  let payload = json!({
+    "ok": true,
+    "days": day_count,
+    "generatedAt": chrono::Utc::now().to_rfc3339(),
+    "source": sessions_root.to_string_lossy().to_string(),
+    "totals": {
+      "input": totals.input,
+      "cachedInput": totals.cached_input,
+      "output": totals.output,
+      "reasoning": totals.reasoning,
+      "total": totals.total,
+    },
+    "daily": daily,
+    "providers": providers,
+    "sessions": sessions.into_iter().map(|item| json!({
+      "sessionId": item.session_id,
+      "provider": item.provider,
+      "cwd": item.cwd,
+      "updatedAt": item.updated_at,
+      "input": item.totals.input,
+      "cachedInput": item.totals.cached_input,
+      "output": item.totals.output,
+      "reasoning": item.totals.reasoning,
+      "total": item.totals.total,
+    })).collect::<Vec<_>>(),
+  });
+  write_codex_usage_cache(&cache_path, &sessions_root, day_count, file_count, latest_mtime_ms, &payload);
+  Ok(payload)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use std::time::Instant;
+
+  #[test]
+  fn probe_codex_usage_metrics_runtime() {
+    let started = Instant::now();
+    let result = get_codex_usage_metrics(&json!({ "days": "30" })).expect("metrics");
+    let first_elapsed = started.elapsed().as_millis();
+    let cached_started = Instant::now();
+    let cached_result = get_codex_usage_metrics(&json!({ "days": "30" })).expect("cached metrics");
+    let second_elapsed = cached_started.elapsed().as_millis();
+    eprintln!(
+      "probe_codex_usage_metrics_runtime first_elapsed_ms={} second_elapsed_ms={} total={} daily={} sessions={}",
+      first_elapsed,
+      second_elapsed,
+      result.get("totals").and_then(|v| v.get("total")).and_then(Value::as_u64).unwrap_or(0),
+      result.get("daily").and_then(Value::as_array).map(|v| v.len()).unwrap_or(0),
+      result.get("sessions").and_then(Value::as_array).map(|v| v.len()).unwrap_or(0),
+    );
+    assert!(cached_result.get("generatedAt").and_then(Value::as_str).is_some());
+    assert!(second_elapsed < first_elapsed);
+  }
 }
 
 pub(crate) fn check_setup_environment(query: &Value) -> Result<Value, String> {

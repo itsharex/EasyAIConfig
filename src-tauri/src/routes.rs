@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 
 use crate::codex::{
   check_setup_environment, codex_npm_action, get_codex_release_info, launch_codex,
+  login_codex, get_codex_usage_metrics,
   list_tools, load_claudecode_state, save_claudecode_config, save_claudecode_raw_config,
   launch_claudecode, load_openclaw_state, launch_openclaw, save_openclaw_config,
   get_openclaw_dashboard_url,
@@ -37,6 +38,8 @@ async fn dispatch(app: tauri::AppHandle, path: &str, method: &str, query: &Value
     ("/api/codex/update", "POST") => codex_npm_action(&["install", "-g", &format!("{}@latest", OPENAI_CODEX_PACKAGE)]),
     ("/api/codex/uninstall", "POST") => codex_npm_action(&["uninstall", "-g", OPENAI_CODEX_PACKAGE]),
     ("/api/codex/launch", "POST") => launch_codex(body),
+    ("/api/codex/login", "POST") => login_codex(body),
+    ("/api/dashboard/codex-usage", "GET") => get_codex_usage_metrics(query),
     ("/api/claudecode/state", "GET") => load_claudecode_state(),
     ("/api/claudecode/config-save", "POST") => save_claudecode_config(body),
     ("/api/claudecode/raw-save", "POST") => save_claudecode_raw_config(body),

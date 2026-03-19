@@ -54,6 +54,12 @@ const state = {
   tools: [],
   toolLastPage: {},
   consoleTool: 'codex',
+  dashboardTool: 'overview',
+  dashboardMetrics: { codex: null },
+  dashboardLoading: false,
+  dashboardRefreshing: false,
+  dashboardMetricsFetchedAt: 0,
+  dashboardAutoRefreshTimer: null,
   consoleRefreshing: false,
   // Wizard
   wizardSelectedTool: 'codex',
@@ -593,6 +599,7 @@ function setActiveTool(toolId) {
   const heroSubtitle = document.querySelector('.hero-subtitle');
   const sectionTitle = document.querySelector('.flow-section .section-title');
   const modelChips = el('modelChips');
+  const codexAuthBlock = el('codexAuthBlock');
 
   if (baseUrlLabel) baseUrlLabel.textContent = 'Base URL';
   if (apiKeyLabel) apiKeyLabel.textContent = 'API Key';
@@ -600,6 +607,7 @@ function setActiveTool(toolId) {
   if (modelLabel) modelLabel.textContent = '可用模型';
   if (protocolField) protocolField.classList.add('hide');
   if (modelChips) modelChips.classList.add('hide');
+  if (codexAuthBlock) codexAuthBlock.style.display = 'none';
 
   // Show/hide model refresh button based on tool
   const modelRefreshBtn = el('modelRefreshBtn');
@@ -991,7 +999,7 @@ function syncCodexAuthView() {
 
   const login = state.current?.login || {};
   const hasOfficialLogin = Boolean(login.loggedIn && login.method === 'chatgpt');
-  if (!hasOfficialLogin) {
+  if (!hasOfficialLogin && state.codexAuthView !== 'official') {
     state.codexAuthView = 'api_key';
   }
 
@@ -999,17 +1007,17 @@ function syncCodexAuthView() {
   document.querySelectorAll('[data-codex-auth-view]').forEach((button) => {
     button.classList.toggle('active', button.dataset.codexAuthView === state.codexAuthView);
     if (button.dataset.codexAuthView === 'official') {
-      button.disabled = !hasOfficialLogin;
-      button.title = hasOfficialLogin ? '使用 Codex 官方登录' : '当前未检测到 Codex 官方登录';
+      button.disabled = false;
+      button.title = hasOfficialLogin ? '使用 Codex 官方登录' : '使用 Codex 官方账号登录';
     }
   });
 
-  if (state.codexAuthView === 'official' && hasOfficialLogin) {
+  if (state.codexAuthView === 'official') {
     if (baseUrlField) baseUrlField.style.display = 'none';
     if (apiKeyField) apiKeyField.style.display = 'none';
     if (detectField) detectField.style.display = 'none';
     panel.classList.add('show');
-    panel.innerHTML = `
+    panel.innerHTML = hasOfficialLogin ? `
       <div class="codex-auth-title">已识别 Codex 官方登录</div>
       <div class="codex-auth-desc">当前设备已经存在 Codex 官方登录态。你可以直接启动使用；如果想改成代理 / 中转 / 国内平台，再切到「API Key」填写自定义配置。</div>
       <div class="codex-auth-badges">
@@ -1020,6 +1028,14 @@ function syncCodexAuthView() {
       </div>
       <div class="codex-auth-actions">
         <button type="button" class="secondary tiny-btn" data-codex-switch-api>切到 API Key 配置</button>
+        <button type="button" class="secondary tiny-btn" data-codex-refresh-login>重新检测登录状态</button>
+      </div>
+    ` : `
+      <div class="codex-auth-title">尚未检测到 Codex 官方登录</div>
+      <div class="codex-auth-desc">当前你的 <code>~/.codex/auth.json</code> 里只有 API Key，没有官方登录产生的 <code>tokens.access_token</code> / <code>id_token</code>，所以之前这里被前端直接禁用了。现在可以直接点下面按钮拉起 <code>codex login</code>。</div>
+      <div class="codex-auth-actions">
+        <button type="button" class="tiny-btn" data-codex-start-login>立即官方登录</button>
+        <button type="button" class="secondary tiny-btn" data-codex-switch-api>改用 API Key</button>
         <button type="button" class="secondary tiny-btn" data-codex-refresh-login>重新检测登录状态</button>
       </div>
     `;
@@ -3047,6 +3063,7 @@ const PAGE_META = {
   quick: { eyebrow: 'QUICK SETUP', title: '一键配置', subtitle: '输入 URL 和 API Key，剩下交给 EasyAIConfig。' },
   providers: { eyebrow: 'Providers', title: 'Provider 与备份', subtitle: '集中查看已发现配置、检测状态与历史备份。' },
   console: { eyebrow: 'Console', title: '运行控制台', subtitle: '集中查看 Codex、Claude Code、OpenClaw 的运行状态、异常检测与快速修复入口。' },
+  dashboard: { eyebrow: 'Dashboard', title: '数据看板', subtitle: '集中查看 Codex、Claude Code、OpenClaw 的状态、用量与趋势。' },
   tools: { eyebrow: 'Tools', title: '工具安装与管理', subtitle: '安装、更新、重装或卸载 AI 编程工具。' },
   tasks: { eyebrow: 'Tasks', title: '任务管理', subtitle: '查看当前进行中和历史安装任务。' },
   about: { eyebrow: 'About', title: '关于 EasyAIConfig', subtitle: '查看桌面版本、更新源与当前运行信息。' },
@@ -3076,6 +3093,328 @@ const OPENCLAW_CHANNEL_LABELS = {
   irc: 'IRC',
   msteams: 'Teams',
 };
+
+const DASHBOARD_AUTO_REFRESH_MS = 60 * 1000;
+
+function formatDashboardMetric(value, { compact = true } = {}) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return '-';
+  if (!compact || Math.abs(num) < 1000) return String(Math.round(num));
+  return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: num >= 1_000_000_000 ? 2 : 1 }).format(num);
+}
+
+function formatDashboardMetricFull(value) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num)) return '-';
+  return Math.round(num).toLocaleString('en-US');
+}
+
+function formatDashboardUpdatedAt(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `上次更新 ${date.toLocaleString()}`;
+}
+
+function stopDashboardAutoRefresh() {
+  if (state.dashboardAutoRefreshTimer) {
+    clearInterval(state.dashboardAutoRefreshTimer);
+    state.dashboardAutoRefreshTimer = null;
+  }
+}
+
+function startDashboardAutoRefresh() {
+  stopDashboardAutoRefresh();
+  state.dashboardAutoRefreshTimer = setInterval(() => {
+    if (state.activePage !== 'dashboard' || document.hidden) return;
+    refreshDashboardData({ silent: true }).catch(() => {});
+  }, DASHBOARD_AUTO_REFRESH_MS);
+}
+
+function formatDashboardMeta(value) {
+  return typeof value === 'number' ? formatDashboardMetric(value) : String(value ?? '0');
+}
+
+function renderDashboardLoadingCard() {
+  return `
+    <div class="dashboard-grid dashboard-grid-single dashboard-grid-loading">
+      <section class="dashboard-card dashboard-panel span-12 dashboard-loading-panel">
+        <div class="dashboard-loading-copy">
+          <div class="dashboard-loading-badge">首次统计中</div>
+          <div class="dashboard-loading-text">正在扫描本地 Codex sessions 并计算最近 30 天 token 用量，首次会稍慢，后续将直接走客户端缓存。</div>
+        </div>
+        <div class="dashboard-loading-title"></div>
+        <div class="dashboard-loading-sub"></div>
+        <div class="dashboard-loading-stats">
+          ${Array.from({ length: 5 }, () => '<div class="dashboard-loading-stat"></div>').join('')}
+        </div>
+        <div class="dashboard-loading-chart"></div>
+      </section>
+    </div>`;
+}
+
+function renderDashboardPage() {
+  const root = el('dashboardPage');
+  if (!root) return;
+
+  const codex = state.current || {};
+  const claude = state.claudeCodeState || {};
+  const openclaw = state.openclawState || {};
+  const codexMetrics = state.dashboardMetrics.codex || { totals: { input: 0, cachedInput: 0, output: 0, reasoning: 0, total: 0 }, daily: [], providers: [], sessions: [] };
+  const openclawChannels = getOpenClawConsoleChannels(openclaw.config || {});
+  const openclawProviders = getOpenClawConsoleProviders(openclaw.config || {});
+  const dashboardTool = state.dashboardTool || 'overview';
+  const isLoading = Boolean(state.dashboardLoading);
+  const hasCodexMetrics = Boolean(state.dashboardMetrics.codex);
+  const lastUpdated = formatDashboardUpdatedAt(codexMetrics.generatedAt);
+
+  const tabs = [
+    { key: 'overview', label: '总览' },
+    { key: 'codex', label: 'Codex' },
+    { key: 'claudecode', label: 'Claude Code' },
+    { key: 'openclaw', label: 'OpenClaw' },
+  ];
+
+  const miniBars = (items = []) => `
+    <div class="dashboard-mini-bars">
+      ${items.map((item) => {
+        const width = Math.max(10, Math.min(100, Number(item.value || 0)));
+        const meta = formatDashboardMeta(item.meta ?? item.value ?? 0);
+        const fullMeta = typeof (item.meta ?? item.value) === 'number' ? formatDashboardMetricFull(item.meta ?? item.value) : meta;
+        return `<div class="dashboard-mini-bar"><span>${escapeHtml(item.label)}</span><div class="dashboard-mini-bar-track"><div class="dashboard-mini-bar-fill" style="width:${width}%"></div></div><strong title="${escapeHtml(fullMeta)}">${escapeHtml(meta)}</strong></div>`;
+      }).join('')}
+    </div>
+  `;
+
+  const overviewHtml = `
+    <div class="dashboard-grid dashboard-grid-top">
+      ${[
+        { title: 'Codex', status: codex.login?.loggedIn ? '官方登录已就绪' : codex.activeProvider?.hasApiKey ? 'API Key 已配置' : '待配置', meta: codex.summary?.model || '未设置默认模型' },
+        { title: 'Claude Code', status: claude.login?.loggedIn ? '已登录' : claude.maskedApiKey ? 'API Key 已配置' : '待配置', meta: claude.model || '未设置默认模型' },
+        { title: 'OpenClaw', status: getOpenClawGatewayStatusLabel(openclaw), meta: openclaw.gatewayUrl || '未检测到 Gateway 地址' },
+      ].map((item, index) => `
+        <section class="dashboard-card dashboard-anim-card" style="--dashboard-delay:${index * 40}ms">
+          <div class="dashboard-card-title">${escapeHtml(item.title)}</div>
+          <div class="dashboard-card-value">${escapeHtml(item.status)}</div>
+          <div class="dashboard-card-sub">${escapeHtml(item.meta)}</div>
+        </section>
+      `).join('')}
+    </div>
+    <div class="dashboard-grid dashboard-grid-main">
+      <section class="dashboard-card dashboard-card-wide dashboard-anim-card" style="--dashboard-delay:40ms">
+        <div class="dashboard-card-title">Codex</div>
+        <div class="dashboard-card-sub">先做认证、Provider、模型与本地统计能力总览。</div>
+        ${miniBars([
+          { label: '登录', value: codex.login?.loggedIn ? 100 : 14, meta: codex.login?.loggedIn ? '已识别' : '待配置' },
+          { label: 'Provider', value: Math.min(100, (codex.summary?.providerCount || 0) * 20), meta: codex.summary?.providerCount || 0 },
+          { label: 'Token 统计', value: codexMetrics.totals?.total ? 100 : 24, meta: codexMetrics.totals?.total ? formatDashboardMetric(codexMetrics.totals.total) : '准备中' },
+        ])}
+      </section>
+      <section class="dashboard-card dashboard-card-wide dashboard-anim-card" style="--dashboard-delay:80ms">
+        <div class="dashboard-card-title">OpenClaw</div>
+        <div class="dashboard-card-sub">优先展示 Gateway、Provider、渠道与 usage/cost 接入能力。</div>
+        ${miniBars([
+          { label: 'Gateway', value: openclaw.gatewayReachable ? 100 : openclaw.gatewayPortListening ? 72 : 12, meta: getOpenClawGatewayStatusLabel(openclaw) },
+          { label: '渠道', value: Math.min(100, openclawChannels.length * 18), meta: openclawChannels.length },
+          { label: 'Provider', value: Math.min(100, openclawProviders.length * 18), meta: openclawProviders.length },
+          { label: 'Usage/Cost', value: 94, meta: '能力完整' },
+        ])}
+      </section>
+      <section class="dashboard-card dashboard-card-wide dashboard-anim-card" style="--dashboard-delay:120ms">
+        <div class="dashboard-card-title">Claude Code</div>
+        <div class="dashboard-card-sub">第一版先展示登录、模型与 API Key 状态。</div>
+        ${miniBars([
+          { label: '登录', value: claude.login?.loggedIn ? 100 : 14, meta: claude.login?.loggedIn ? '已登录' : '未登录' },
+          { label: '模型', value: claude.model ? 88 : 16, meta: claude.model || '未设置' },
+          { label: 'Token 统计', value: 24, meta: '建议后续补' },
+        ])}
+      </section>
+    </div>`;
+
+  const codexHtml = (!hasCodexMetrics && isLoading) ? renderDashboardLoadingCard() : `
+    <div class="dashboard-grid dashboard-grid-single">
+      <section class="dashboard-card dashboard-panel span-12 dashboard-anim-card" style="--dashboard-delay:20ms">
+        <div class="dashboard-card-headline">
+          <div>
+            <div class="dashboard-card-title">Codex · Token 趋势</div>
+            <div class="dashboard-card-sub">近 ${escapeHtml(String(codexMetrics.days || 30))} 天本地会话 token 统计</div>
+          </div>
+          <div class="dashboard-inline-stats">
+            ${renderDashboardStatCard('总', codexMetrics.totals.total || 0, 'tokens')}
+            ${renderDashboardStatCard('输入', codexMetrics.totals.input || 0, 'input')}
+            ${renderDashboardStatCard('输出', codexMetrics.totals.output || 0, 'output')}
+            ${renderDashboardStatCard('缓存', codexMetrics.totals.cachedInput || 0, 'cache')}
+            ${renderDashboardStatCard('推理', codexMetrics.totals.reasoning || 0, 'reasoning')}
+          </div>
+        </div>
+        ${renderDashboardLineChart((codexMetrics.daily || []).slice(-30).map((item) => ({ label: item.date.slice(5), value: item.total || 0 })), { stroke: '#5b8cff' })}
+      </section>
+      <section class="dashboard-card dashboard-panel span-6 dashboard-anim-card" style="--dashboard-delay:80ms">
+        <div class="dashboard-card-title">Codex · Input / Output / Cache / Reasoning</div>
+        ${renderDashboardStackChart([
+          { label: '输入', value: codexMetrics.totals.input || 0 },
+          { label: '缓存', value: codexMetrics.totals.cachedInput || 0 },
+          { label: '输出', value: codexMetrics.totals.output || 0 },
+          { label: '推理', value: codexMetrics.totals.reasoning || 0 },
+        ])}
+      </section>
+      <section class="dashboard-card dashboard-panel span-3 dashboard-anim-card" style="--dashboard-delay:120ms">
+        <div class="dashboard-card-title">Top Provider</div>
+        ${miniBars((codexMetrics.providers || []).slice(0, 5).map((item) => ({
+          label: item.provider,
+          value: codexMetrics.totals.total ? (item.totals.total / codexMetrics.totals.total) * 100 : 0,
+          meta: item.totals.total,
+        })))}
+      </section>
+      <section class="dashboard-card dashboard-panel span-3 dashboard-anim-card" style="--dashboard-delay:160ms">
+        <div class="dashboard-card-title">最近活跃会话</div>
+        <div class="dashboard-list">
+          ${(codexMetrics.sessions || []).slice(0, 8).map((item) => `<div class="dashboard-row"><span>${escapeHtml(item.provider || 'unknown')}</span><strong title="${escapeHtml(formatDashboardMetricFull(item.total || 0))}">${escapeHtml(formatDashboardMetric(item.total || 0))}</strong></div>`).join('') || '<div class="dashboard-empty-note">暂无可用会话统计。</div>'}
+        </div>
+      </section>
+    </div>`;
+
+  const claudeHtml = `
+    <div class="dashboard-grid dashboard-grid-single">
+      <section class="dashboard-card dashboard-panel span-6 dashboard-anim-card" style="--dashboard-delay:20ms">
+        <div class="dashboard-card-title">Claude Code · 状态</div>
+        <div class="dashboard-list">
+          <div class="dashboard-row"><span>登录状态</span><strong>${escapeHtml(claude.login?.loggedIn ? '已登录' : '未登录')}</strong></div>
+          <div class="dashboard-row"><span>登录方式</span><strong>${escapeHtml(claude.login?.method || '未检测')}</strong></div>
+          <div class="dashboard-row"><span>当前模型</span><strong>${escapeHtml(claude.model || '未设置')}</strong></div>
+          <div class="dashboard-row"><span>API Key</span><strong>${escapeHtml(claude.maskedApiKey ? '已配置' : '未配置')}</strong></div>
+        </div>
+      </section>
+      <section class="dashboard-card dashboard-panel span-6 dashboard-anim-card" style="--dashboard-delay:80ms">
+        <div class="dashboard-card-title">Claude Code · 可行性</div>
+        ${miniBars([
+          { label: '登录', value: claude.login?.loggedIn ? 100 : 12, meta: claude.login?.loggedIn ? '已登录' : '未登录' },
+          { label: '模型', value: claude.model ? 88 : 16, meta: claude.model || '未设置' },
+          { label: 'Token', value: 24, meta: '后续补' },
+        ])}
+      </section>
+    </div>`;
+
+  const openclawHtml = `
+    <div class="dashboard-grid dashboard-grid-single">
+      <section class="dashboard-card dashboard-panel span-6 dashboard-anim-card" style="--dashboard-delay:20ms">
+        <div class="dashboard-card-title">OpenClaw · 运行状态</div>
+        <div class="dashboard-list">
+          <div class="dashboard-row"><span>Gateway 状态</span><strong>${escapeHtml(getOpenClawGatewayStatusLabel(openclaw))}</strong></div>
+          <div class="dashboard-row"><span>Gateway URL</span><strong>${escapeHtml(openclaw.gatewayUrl || '-')}</strong></div>
+          <div class="dashboard-row"><span>渠道数量</span><strong>${escapeHtml(String(openclawChannels.length))}</strong></div>
+          <div class="dashboard-row"><span>Provider 数量</span><strong>${escapeHtml(String(openclawProviders.length))}</strong></div>
+          <div class="dashboard-row"><span>端口冲突</span><strong>${escapeHtml(openclaw.gatewayPortConflict ? '有' : '无')}</strong></div>
+        </div>
+      </section>
+      <section class="dashboard-card dashboard-panel span-6 dashboard-anim-card" style="--dashboard-delay:80ms">
+        <div class="dashboard-card-title">OpenClaw · 数据能力</div>
+        ${miniBars([
+          { label: 'Gateway', value: openclaw.gatewayReachable ? 100 : openclaw.gatewayPortListening ? 72 : 12, meta: getOpenClawGatewayStatusLabel(openclaw) },
+          { label: '渠道', value: Math.min(100, openclawChannels.length * 18), meta: openclawChannels.length },
+          { label: 'Provider', value: Math.min(100, openclawProviders.length * 18), meta: openclawProviders.length },
+          { label: 'Usage', value: 94, meta: '可继续接入' },
+        ])}
+      </section>
+    </div>`;
+
+  const content = dashboardTool === 'codex'
+    ? codexHtml
+    : dashboardTool === 'claudecode'
+      ? claudeHtml
+      : dashboardTool === 'openclaw'
+        ? openclawHtml
+        : overviewHtml;
+
+  root.innerHTML = `
+    <div class="dashboard-shell ${isLoading ? 'is-loading' : ''}">
+      <div class="dashboard-toolbar">
+        <div class="dashboard-tabs">
+          ${tabs.map((item) => `<button type="button" class="dashboard-tab ${item.key === dashboardTool ? 'active' : ''}" data-dashboard-tool="${item.key}">${escapeHtml(item.label)}</button>`).join('')}
+        </div>
+        ${dashboardTool === 'codex' ? `<div class="dashboard-toolbar-actions"><div class="dashboard-fetch-state ${isLoading ? 'loading' : ''}">${escapeHtml(isLoading ? '正在统计本地 Codex token…' : (lastUpdated || '统计已完成'))}</div><button type="button" class="dashboard-refresh-btn ${state.dashboardRefreshing ? 'is-busy' : ''}" data-dashboard-refresh ${state.dashboardRefreshing ? 'disabled' : ''}>${escapeHtml(state.dashboardRefreshing ? '刷新中…' : '手动刷新')}</button></div>` : ''}
+      </div>
+      ${isLoading && !hasCodexMetrics ? '<div class="dashboard-inline-note">首次进入会先扫描本地会话文件，通常只需几秒，完成后会自动缓存。</div>' : ''}
+      ${content}
+    </div>
+  `;
+}
+
+function renderDashboardStatCard(label, value, sub = '') {
+  const compactValue = formatDashboardMetric(value);
+  const fullValue = formatDashboardMetricFull(value);
+  const subLabel = sub ? `${sub} · ${fullValue}` : fullValue;
+  return `<div class="dashboard-stat-card"><div class="dashboard-stat-label">${escapeHtml(label)}</div><div class="dashboard-stat-value" title="${escapeHtml(fullValue)}">${escapeHtml(compactValue)}</div>${subLabel ? `<div class="dashboard-stat-sub">${escapeHtml(subLabel)}</div>` : ''}</div>`;
+}
+
+function renderDashboardLineChart(series = [], { stroke = '#5b8cff' } = {}) {
+  if (!series.length) return '<div class="dashboard-empty-note">暂无趋势数据。</div>';
+  const width = 560;
+  const height = 180;
+  const padX = 10;
+  const padY = 14;
+  const values = series.map((item) => Number(item.value || 0));
+  const max = Math.max(...values, 1);
+  const step = series.length > 1 ? (width - padX * 2) / (series.length - 1) : 0;
+  const points = series.map((item, index) => {
+    const x = padX + step * index;
+    const y = height - padY - ((Number(item.value || 0) / max) * (height - padY * 2));
+    return `${x},${y}`;
+  }).join(' ');
+  return `
+    <div class="dashboard-chart">
+      <svg class="dashboard-chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="dashboardLineFill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="${stroke}" stop-opacity="0.28" />
+            <stop offset="100%" stop-color="${stroke}" stop-opacity="0.02" />
+          </linearGradient>
+        </defs>
+        <polyline fill="none" stroke="${stroke}" stroke-width="3" points="${points}" />
+      </svg>
+      <div class="dashboard-chart-legend">${series.map((item) => `<span title="${escapeHtml(formatDashboardMetricFull(item.value || 0))}"><span class="dashboard-legend-dot" style="background:${stroke}"></span>${escapeHtml(item.label)} · ${escapeHtml(formatDashboardMetric(item.value || 0))}</span>`).join('')}</div>
+    </div>
+  `;
+}
+
+function renderDashboardStackChart(items = []) {
+  if (!items.length) return '<div class="dashboard-empty-note">暂无结构分布数据。</div>';
+  const total = items.reduce((sum, item) => sum + Number(item.value || 0), 0) || 1;
+  return `
+    <div class="dashboard-chart">
+      <div class="dashboard-stack-track">${items.map((item, index) => `<div class="dashboard-stack-segment" style="width:${(Number(item.value || 0) / total) * 100}%;background:${['#5b8cff','#7c3aed','#22c55e','#f59e0b'][index % 4]}" title="${escapeHtml(formatDashboardMetricFull(item.value || 0))}"></div>`).join('')}</div>
+      <div class="dashboard-chart-legend">${items.map((item, index) => `<span title="${escapeHtml(formatDashboardMetricFull(item.value || 0))}"><span class="dashboard-legend-dot" style="background:${['#5b8cff','#7c3aed','#22c55e','#f59e0b'][index % 4]}"></span>${escapeHtml(item.label)} · ${escapeHtml(formatDashboardMetric(item.value || 0))}</span>`).join('')}</div>
+    </div>
+  `;
+}
+
+async function refreshDashboardData({ force = false, silent = false } = {}) {
+  if (state.dashboardRefreshing) return;
+  state.dashboardRefreshing = true;
+  state.dashboardLoading = !silent || !state.dashboardMetrics.codex;
+  if (state.activePage === 'dashboard') renderDashboardPage();
+
+  try {
+    await loadState({ preserveForm: true });
+    await loadClaudeCodeQuickState();
+    await loadOpenClawQuickState();
+
+    const params = new URLSearchParams({
+      codexHome: el('codexHomeInput')?.value?.trim() || state.current?.codexHome || '',
+      days: '30',
+    });
+    if (force) params.set('force', '1');
+    const json = await api(`/api/dashboard/codex-usage?${params.toString()}`, { timeoutMs: 20000 });
+    if (json.ok && json.data) {
+      state.dashboardMetrics.codex = json.data;
+      state.dashboardMetricsFetchedAt = Date.now();
+    }
+  } catch { /* ignore */ } finally {
+    state.dashboardLoading = false;
+    state.dashboardRefreshing = false;
+    if (state.activePage === 'dashboard') renderDashboardPage();
+  }
+}
 
 function getToolConsoleLabel(tool = 'codex') {
   return TOOL_CONSOLE_META[tool]?.label || tool;
@@ -3316,7 +3655,7 @@ function buildCodexConsoleView() {
     issues.push({ tone: 'warn', title: '还没有 Codex 配置', copy: '当前作用域尚未写入 config.toml，建议先完成一次快速配置。', action: { type: 'goto-quick-tool', tool: 'codex', label: '去快速配置' } });
   }
   if (!providers.length && !login.loggedIn) {
-    issues.push({ tone: 'error', title: '没有可用 Provider', copy: '当前配置里还没有保存任何 Provider，Codex 启动后通常无法正常请求模型。', action: { type: 'goto-page', page: 'providers', label: '去看 Provider' } });
+    issues.push({ tone: 'error', title: '没有可用 Provider', copy: '当前配置里还没有保存任何 Provider，Codex 启动后通常无法正常请求模型。', action: { type: 'goto-config-editor-tool', tool: 'codex', label: '去配 Provider' } });
   }
   if (active && !active.hasApiKey) {
     issues.push({ tone: 'error', title: '当前 Provider 缺少密钥', copy: `活动 Provider "${active.name}" 已选中，但没有检测到可用 API Key。`, action: { type: 'goto-quick-tool', tool: 'codex', label: '去补 Key' } });
@@ -3361,7 +3700,7 @@ function buildCodexConsoleView() {
   const side = [
     renderToolConsoleCard('推荐操作', '常用排错入口', `<div class="tool-console-actions">${[
       { type: 'refresh-console', label: '重新检测', primary: true },
-      { type: 'goto-page', page: 'providers', label: '查看 Provider' },
+      { type: 'goto-config-editor-tool', tool: 'codex', label: '查看 Provider' },
       { type: 'goto-config-editor-tool', tool: 'codex', label: '打开配置编辑' },
       { type: 'goto-quick-tool', tool: 'codex', label: '切到快速配置' },
     ].map(renderToolConsoleAction).join('')}</div>`, { icon: 'actions' }),
@@ -3436,10 +3775,9 @@ function buildOpenClawConsoleView() {
 
   const summary = [
     renderToolConsoleStat('安装状态', data.binary?.installed ? (data.binary.version || '已安装') : '未安装', data.binary?.path ? `<span class="tool-console-code">${escapeHtml(data.binary.path)}</span>` : '', { icon: 'install' }),
-    renderToolConsoleStat('Dashboard', data.gatewayReachable ? '在线' : '未启动', (data.dashboardUrl || data.gatewayUrl) ? `<span class="tool-console-code">${escapeHtml(data.dashboardUrl || data.gatewayUrl)}</span>` : '等待本地 Gateway 启动', { icon: 'dashboard' }),
+    renderToolConsoleStat('Dashboard', getOpenClawGatewayStatusLabel(data), (data.dashboardUrl || data.gatewayUrl) ? `<span class="tool-console-code">${escapeHtml(data.dashboardUrl || data.gatewayUrl)}</span>` : '等待本地 Gateway 启动', { icon: 'dashboard' }),
     renderToolConsoleStat('认证状态', dashboardAuth.summary, dashboardAuth.detail, { icon: 'runtime' }),
     renderToolConsoleStat('默认 Agent', quick.model || defaults.model?.primary || '未设置', defaults.thinkingDefault ? `thinking=${escapeHtml(defaults.thinkingDefault)}` : '建议先固定默认模型', { icon: 'agent' }),
-    renderToolConsoleStat('接入渠道', String(channels.length), channels.length ? channels.map((item) => item.label).slice(0, 3).join(' · ') : '尚未接入任何聊天渠道', { icon: 'channel' }),
   ].join('');
 
   const customAgentsBody = agentInfo.customAgents.length
@@ -3466,11 +3804,10 @@ function buildOpenClawConsoleView() {
     renderToolConsoleCard('Gateway 状态', '进程、认证与 Dashboard 引导链接', `<div class="tool-console-list">${renderToolConsoleRow('配置文件', `<span class="tool-console-code">${escapeHtml(data.configPath || '-')}</span>`, { html: true })}${renderToolConsoleRow('Gateway 状态', getOpenClawGatewayStatusLabel(data))}${renderToolConsoleRow('Gateway HTTP', data.gatewayReachable ? '在线' : data.gatewayPortListening ? '等待面板就绪' : '未就绪')}${renderToolConsoleRow('端口占用', renderOpenClawPortOccupants(data), { html: true })}${renderToolConsoleRow('Bind', gatewayBind)}${renderToolConsoleRow('Auth', gatewayAuth)}${renderToolConsoleRow('Token', data.gatewayTokenReady ? '已就绪' : '缺失')}${renderToolConsoleRow('Dashboard URL', data.dashboardUrl ? `<span class="tool-console-code">${escapeHtml(data.dashboardUrl)}</span>` : '-', { html: Boolean(data.dashboardUrl) })}${renderToolConsoleRow('Onboarding', data.needsOnboarding ? '待完成' : '已完成')}</div>`, { icon: 'runtime' }),
     renderToolConsoleCard('Dashboard 认证状态', 'Control UI 认证、令牌化链接与浏览器会话', `<div class="tool-console-list">${renderToolConsoleRow('状态', dashboardAuth.summary)}${renderToolConsoleRow('认证模式', gatewayAuth)}${renderToolConsoleRow('令牌化 URL', /[?&]token=/.test(String(data.dashboardUrl || '')) ? '已就绪' : '缺失')}${renderToolConsoleRow('浏览器会话', dashboardAuth.session)}${renderToolConsoleRow('诊断', dashboardAuth.detail)}${renderToolConsoleRow('修复备注', (dashboardAuth.notes || []).length ? (dashboardAuth.notes || []).join(' | ') : '无')}</div>`, { icon: 'issues', iconTone: dashboardAuth.tone === 'error' ? 'error' : dashboardAuth.tone === 'ok' ? 'ok' : 'warn' }),
     renderToolConsoleCard('修复结果', '最近一次一键修复的执行结果', lastRepair ? `<div class="tool-console-list">${renderToolConsoleRow('Token 生成', lastRepair.tokenGenerated ? '是' : '否')}${renderToolConsoleRow('要求重启', lastRepair.restartRequired ? '是' : '否')}${renderToolConsoleRow('修复后 Gateway', getOpenClawGatewayStatusLabel(lastRepair))}${renderToolConsoleRow('修复后 URL', lastRepair.dashboardUrl ? `<span class="tool-console-code">${escapeHtml(lastRepair.dashboardUrl)}</span>` : '-', { html: Boolean(lastRepair.dashboardUrl) })}${renderToolConsoleRow('备注', (lastRepair.notes || []).length ? escapeHtml(lastRepair.notes.join(' | ')) : '无')}</div>` : '<div class="tool-console-empty">还没有执行过“一键修复并打开”。</div>', { icon: 'actions' }),
-    renderToolConsoleCard('异常检测', '优先指出启动、模型、认证和暴露风险', renderToolConsoleIssueList(issues, 'OpenClaw 侧暂未发现明显阻塞项。'), { icon: 'issues', iconTone: issues.length ? (issues.some(i => i.tone === 'error') ? 'error' : 'warn') : 'ok' }),
   ].join('');
 
   const side = [
-    renderToolConsoleCard('渠道与 Provider', '接入的渠道和模型源', `${channelBody}${renderToolConsoleGroupLabel('Provider')}${providerBody}`, { icon: 'channels' }),
+    renderToolConsoleCard('启动提醒', '是否已启动与优先处理事项', `<div class="tool-console-list">${renderToolConsoleRow('当前状态', getOpenClawGatewayStatusLabel(data))}${renderToolConsoleRow('是否可打开 Dashboard', data.gatewayReachable ? '可以' : data.gatewayPortListening ? '稍等片刻' : '还不行')}${renderToolConsoleRow('异常数量', issues.length ? String(issues.length) : '0')}</div>${renderToolConsoleIssueList(issues.slice(0, 3), '当前没有明显异常。')}`, { icon: 'issues', iconTone: issues.length ? (issues.some(i => i.tone === 'error') ? 'error' : 'warn') : 'ok' }),
     renderToolConsoleCard('快速操作', '检测、启动、停止', `<div class="tool-console-actions">${[
       { type: 'refresh-console', label: '重新检测', primary: true },
       data.gatewayReachable ? { type: 'open-openclaw-dashboard', label: '打开 Dashboard' } : data.gatewayPortListening ? { type: 'refresh-console', label: '查看启动状态' } : { type: 'launch-openclaw', label: '启动 OpenClaw' },
@@ -3480,6 +3817,7 @@ function buildOpenClawConsoleView() {
       { type: 'goto-config-editor-tool', tool: 'openclaw', label: '打开配置编辑' },
       { type: 'goto-quick-tool', tool: 'openclaw', label: '切到快速配置' },
     ].filter(Boolean).map(renderToolConsoleAction).join('')}</div>`, { icon: 'actions' }),
+    renderToolConsoleCard('渠道与 Provider', '接入的渠道和模型源', `${channelBody}${renderToolConsoleGroupLabel('Provider')}${providerBody}`, { icon: 'channels' }),
   ].join('');
 
   // Build activity panel (agent grid + issues log)
@@ -5206,10 +5544,17 @@ function setPage(page = 'quick') {
   if (configActions) configActions.classList.toggle('hide', page !== 'configEditor');
 
   // Render tasks page on navigate
+  if (page !== 'dashboard') stopDashboardAutoRefresh();
   if (page === 'tasks') renderTasksPage();
   if (page === 'console') {
     renderToolConsole();
     if (!state.consoleRefreshing) void refreshToolConsoleData();
+  }
+  if (page === 'dashboard') {
+    if (!state.dashboardMetrics.codex) state.dashboardLoading = true;
+    renderDashboardPage();
+    startDashboardAutoRefresh();
+    void refreshDashboardData();
   }
   if (page === 'configEditor') {
     applyConfigEditorSearch();
@@ -5673,6 +6018,12 @@ function syncConfigEditorForTool() {
   // Show/hide OpenClaw header config switch
   const ocSwitch = el('ocHeaderConfigSwitch');
   if (ocSwitch) ocSwitch.classList.toggle('hide', tool !== 'openclaw');
+  if (tool === 'codex') {
+    const sections = [...document.querySelectorAll('[data-tool-editor="codex"] details.cfg-section')];
+    sections.forEach((section, index) => {
+      section.open = index === 0;
+    });
+  }
   refreshRawCodeEditors();
 }
 
@@ -8776,6 +9127,28 @@ async function launchCodex(buttonId = 'launchBtn', successMessage = 'Codex 已�
   return true;
 }
 
+async function launchCodexLogin(buttonId = '') {
+  const codexInstalled = state.current?.codexBinary?.installed;
+  if (!codexInstalled) {
+    const installed = await installCodex({ silent: true });
+    if (!installed) return false;
+  }
+
+  if (buttonId) setBusy(buttonId, true, '启动中...');
+  const launched = await api('/api/codex/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cwd: el('launchCwdInput').value.trim() || state.current?.launch?.cwd || '' }),
+  });
+  if (buttonId) setBusy(buttonId, false);
+  if (!launched.ok) {
+    flash(launched.error || '启动官方登录失败', 'error');
+    return false;
+  }
+  flash('已在终端中打开 codex login，完成浏览器授权后点“重新检测登录状态”', 'success');
+  return true;
+}
+
 async function launchCodexOnly() {
   if (state.activeTool === 'claudecode') {
     return launchClaudeCodeOnly();
@@ -10046,6 +10419,11 @@ function bindEvents() {
     syncCodexAuthView();
   });
   el('codexOfficialAuthPanel')?.addEventListener('click', async (event) => {
+    const loginButton = event.target.closest('[data-codex-start-login]');
+    if (loginButton) {
+      await launchCodexLogin();
+      return;
+    }
     if (event.target.closest('[data-codex-switch-api]')) {
       state.codexAuthView = 'api_key';
       localStorage.setItem('easyaiconfig_codex_auth_view', state.codexAuthView);
@@ -10542,6 +10920,20 @@ function bindEvents() {
     refreshToolConsoleData({ manual: true });
   });
 
+  el('dashboardPage')?.addEventListener('click', async (e) => {
+    const tab = e.target.closest('[data-dashboard-tool]');
+    if (tab) {
+      state.dashboardTool = tab.dataset.dashboardTool || 'overview';
+      renderDashboardPage();
+      return;
+    }
+    const refreshBtn = e.target.closest('[data-dashboard-refresh]');
+    if (refreshBtn) {
+      e.preventDefault();
+      await refreshDashboardData({ force: true });
+    }
+  });
+
   el('toolConsolePage')?.addEventListener('click', async (e) => {
     const button = e.target.closest('[data-console-action]');
     if (!button) return;
@@ -10722,6 +11114,10 @@ bindEvents();
 window.addEventListener('resize', () => {
   refreshRawCodeEditors();
   renderQuickRailSupportPanel();
+});
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (state.activePage === 'dashboard') void refreshDashboardData({ silent: true });
 });
 setPage('quick');
 applyDerivedMeta(true);

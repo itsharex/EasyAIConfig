@@ -9,6 +9,7 @@ import {
   checkSetupEnvironment,
   getProviderSecret,
   getCodexReleaseInfo,
+  getCodexUsageMetrics,
   installClaudeCode,
   installCodex,
   installOpenClaw,
@@ -21,6 +22,7 @@ import {
   repairOpenClawDashboardAuth,
   launchClaudeCode,
   launchCodex,
+  loginCodex,
   launchOpenClaw,
   listBackups,
   listTools,
@@ -196,6 +198,22 @@ export async function startServer() {
   app.post('/api/codex/launch', async (req, res) => {
     try {
       ok(res, { data: await launchCodex(req.body || {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/codex/login', async (req, res) => {
+    try {
+      ok(res, { data: await loginCodex(req.body || {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.get('/api/dashboard/codex-usage', async (req, res) => {
+    try {
+      ok(res, { data: await getCodexUsageMetrics({ codexHome: req.query.codexHome || undefined, days: req.query.days || undefined }) });
     } catch (error) {
       fail(res, error);
     }

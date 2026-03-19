@@ -176,6 +176,131 @@ function defaultCodexHome() {
     : path.join(os.homedir(), '.codex');
 }
 
+function createCodexUsageTotals() {
+  return {
+    input: 0,
+    cachedInput: 0,
+    output: 0,
+    reasoning: 0,
+    total: 0,
+  };
+}
+
+function addCodexUsageTotals(target, usage = {}) {
+  target.input += Number(usage.input_tokens || 0);
+  target.cachedInput += Number(usage.cached_input_tokens || 0);
+  target.output += Number(usage.output_tokens || 0);
+  target.reasoning += Number(usage.reasoning_output_tokens || 0);
+  target.total += Number(usage.total_tokens || 0);
+}
+
+async function listFilesRecursive(rootDir) {
+  const result = [];
+  async function walk(currentDir) {
+    let entries = [];
+    try {
+      entries = await fs.readdir(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else if (entry.isFile()) result.push(full);
+    }
+  }
+  await walk(rootDir);
+  return result;
+}
+
+export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), days = 30 } = {}) {
+  const normalizedCodexHome = path.resolve(codexHome);
+  const sessionsRoot = path.join(normalizedCodexHome, 'sessions');
+  const dayCount = Math.max(1, Math.min(90, Number(days) || 30));
+  const now = Date.now();
+  const windowStartMs = now - dayCount * 24 * 60 * 60 * 1000;
+  const totals = createCodexUsageTotals();
+  const byDay = new Map();
+  const byProvider = new Map();
+  const bySession = new Map();
+
+  for (const filePath of await listFilesRecursive(sessionsRoot)) {
+    if (!filePath.endsWith('.jsonl')) continue;
+    let content = '';
+    try {
+      content = await fs.readFile(filePath, 'utf8');
+    } catch {
+      continue;
+    }
+    let sessionId = '';
+    let provider = '';
+    let cwd = '';
+    for (const line of content.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      let event;
+      try { event = JSON.parse(line); } catch { continue; }
+      if (event.type === 'session_meta') {
+        sessionId = String(event.payload?.id || sessionId || '').trim();
+        provider = String(event.payload?.model_provider || provider || '').trim();
+        cwd = String(event.payload?.cwd || cwd || '').trim();
+        continue;
+      }
+      const payload = event.payload || {};
+      if (event.type !== 'event_msg' || payload.type !== 'token_count') continue;
+      const ts = Date.parse(String(event.timestamp || ''));
+      if (!Number.isFinite(ts) || ts < windowStartMs) continue;
+      const usage = payload.info?.last_token_usage || payload.info?.total_token_usage;
+      if (!usage) continue;
+
+      addCodexUsageTotals(totals, usage);
+      const dayKey = new Date(ts).toISOString().slice(0, 10);
+      if (!byDay.has(dayKey)) byDay.set(dayKey, createCodexUsageTotals());
+      addCodexUsageTotals(byDay.get(dayKey), usage);
+
+      const providerKey = provider || 'unknown';
+      if (!byProvider.has(providerKey)) byProvider.set(providerKey, { provider: providerKey, totals: createCodexUsageTotals(), events: 0 });
+      addCodexUsageTotals(byProvider.get(providerKey).totals, usage);
+      byProvider.get(providerKey).events += 1;
+
+      const sessionKey = sessionId || path.basename(filePath, '.jsonl');
+      if (!bySession.has(sessionKey)) {
+        bySession.set(sessionKey, {
+          sessionId: sessionKey,
+          provider: providerKey,
+          cwd,
+          totals: createCodexUsageTotals(),
+          updatedAt: ts,
+        });
+      }
+      const item = bySession.get(sessionKey);
+      addCodexUsageTotals(item.totals, usage);
+      item.updatedAt = Math.max(item.updatedAt || ts, ts);
+      if (!item.cwd && cwd) item.cwd = cwd;
+      if (!item.provider && providerKey) item.provider = providerKey;
+    }
+  }
+
+  const daily = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, sum]) => ({ date, ...sum }));
+  const providers = [...byProvider.values()].sort((a, b) => b.totals.total - a.totals.total);
+  const sessions = [...bySession.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12).map((item) => ({
+    sessionId: item.sessionId,
+    provider: item.provider,
+    cwd: item.cwd,
+    updatedAt: item.updatedAt,
+    ...item.totals,
+  }));
+
+  return {
+    ok: true,
+    days: dayCount,
+    source: path.join(normalizedCodexHome, 'sessions'),
+    totals,
+    daily,
+    providers,
+    sessions,
+  };
+}
+
 function appHome() {
   return path.join(os.homedir(), APP_HOME_DIRNAME);
 }
@@ -2030,6 +2155,23 @@ export async function launchCodex({ cwd } = {}) {
     binaryPath: codexBinary.path,
     binaryName: 'codex',
     toolLabel: 'Codex',
+  });
+  return { ok: true, cwd: targetCwd, message };
+}
+
+export async function loginCodex({ cwd } = {}) {
+  const targetCwd = path.resolve(cwd || process.cwd());
+  const codexBinary = findCodexBinary();
+  if (!codexBinary.installed) {
+    throw new Error('Codex 尚未安装，请先点击安装');
+  }
+
+  const binaryText = codexBinary.path ? `"${codexBinary.path}"` : 'codex';
+  const message = launchTerminalCommand(targetCwd, {
+    binaryPath: codexBinary.path,
+    binaryName: 'codex',
+    toolLabel: 'Codex 登录',
+    commandText: `${binaryText} login`,
   });
   return { ok: true, cwd: targetCwd, message };
 }
