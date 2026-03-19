@@ -28,6 +28,19 @@
 | 🖥️ **桌面客户端** | 基于 Tauri 的原生桌面应用（macOS / Windows / Linux） |
 | 🔄 **自动更新** | 支持 GitHub Releases 自动检查与安装更新 |
 | 🌗 **主题切换** | 深色 / 浅色主题自由切换 |
+| 📊 **数据看板** | Token 用量趋势、费用估算、模型分布、多工具统一监控 |
+
+## 📸 截图预览
+
+<p align="center">
+  <img src="assets/dashboard-codex.png" width="100%" alt="Codex Dashboard — Token 用量趋势、费用估算、模型分布" />
+</p>
+<p align="center"><em>Codex 数据看板 — 实时 Token 趋势、费用估算与模型分布</em></p>
+
+<p align="center">
+  <img src="assets/dashboard-claude-code.png" width="100%" alt="Claude Code Dashboard — 模型分布、Token 分布与消耗明细" />
+</p>
+<p align="center"><em>Claude Code 数据看板 — 多模型统计、Token 分布与消耗分析</em></p>
 
 ## 📦 安装
 

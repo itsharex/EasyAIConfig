@@ -55,6 +55,7 @@ const state = {
   toolLastPage: {},
   consoleTool: 'codex',
   dashboardTool: 'codex',
+  dashboardDays: Number(localStorage.getItem('easyaiconfig_dashboard_days') || 30) || 30,
   dashboardMetrics: { codex: null },
   dashboardLoading: false,
   dashboardRefreshing: false,
@@ -3226,6 +3227,16 @@ const CODEX_MODEL_PRICING = {
   'gpt-4.1-nano':      { input: 0.10,  output: 0.40,  cached: 0.025, label: 'GPT-4.1 Nano' },
   'gpt-4o':            { input: 2.50,  output: 10.00, cached: 1.25,  label: 'GPT-4o' },
   'gpt-4o-mini':       { input: 0.15,  output: 0.60,  cached: 0.075, label: 'GPT-4o Mini' },
+  // Anthropic Claude models
+  'claude-opus-4-5':           { input: 15.00, output: 75.00, cached: 1.50,  label: 'Claude Opus 4.5' },
+  'claude-opus-4-5-thinking':  { input: 15.00, output: 75.00, cached: 1.50,  label: 'Opus 4.5 Thinking' },
+  'claude-opus-4-6':           { input: 15.00, output: 75.00, cached: 1.50,  label: 'Claude Opus 4.6' },
+  'claude-opus-4.6':           { input: 15.00, output: 75.00, cached: 1.50,  label: 'Claude Opus 4.6' },
+  'claude-sonnet-4-5':         { input: 3.00,  output: 15.00, cached: 0.30,  label: 'Claude Sonnet 4.5' },
+  'claude-sonnet-4-5-thinking':{ input: 3.00,  output: 15.00, cached: 0.30,  label: 'Sonnet 4.5 Thinking' },
+  'claude-sonnet-4-6':         { input: 3.00,  output: 15.00, cached: 0.30,  label: 'Claude Sonnet 4.6' },
+  'claude-haiku-3-5':          { input: 0.80,  output: 4.00,  cached: 0.08,  label: 'Claude Haiku 3.5' },
+  'claude-haiku-4':            { input: 0.80,  output: 4.00,  cached: 0.08,  label: 'Claude Haiku 4' },
 };
 
 function lookupModelPricing(modelName) {
@@ -3246,7 +3257,8 @@ function calcModelCost(modelEntry) {
   if (!pricing) return null;
   const inp = (modelEntry.totals?.input || 0) / 1e6;
   const out = (modelEntry.totals?.output || 0) / 1e6;
-  const cached = (modelEntry.totals?.cachedInput || 0) / 1e6;
+  // Support both Codex (cachedInput) and Claude (cacheRead) field names
+  const cached = (modelEntry.totals?.cachedInput || modelEntry.totals?.cacheRead || 0) / 1e6;
   const reasoning = (modelEntry.totals?.reasoning || 0) / 1e6;
   // Reasoning tokens are charged at output rate
   const inputCost = inp * pricing.input;
@@ -3322,19 +3334,19 @@ function renderDashboardPage() {
     : (isLoading ? '正在统计本地 Codex token…' : (lastUpdated || '统计已完成'));
 
   const tabs = [
-    { key: 'codex', label: 'Codex' },
-    { key: 'claudecode', label: 'Claude Code' },
-    { key: 'openclaw', label: 'OpenClaw' },
+    { key: 'codex', label: 'Codex', dot: '#4ade80', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M9 9l3 3-3 3M15 15h3"/></svg>' },
+    { key: 'claudecode', label: 'Claude Code', dot: '#4ade80', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 3"/></svg>' },
+    { key: 'openclaw', label: 'OpenClaw', dot: '#fbbf24', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>' },
   ];
 
   // ── Stat strip ──
   const statStrip = (items = []) => `
-    <div class="db2-stat-strip">
-      ${items.map(({ label, value, sub, accent }) => `
-        <div class="db2-stat-item ${accent ? 'db2-stat-item--accent' : ''}">
-          <div class="db2-stat-label">${escapeHtml(label)}</div>
-          <div class="db2-stat-value">${escapeHtml(String(value))}</div>
-          ${sub ? `<div class="db2-stat-sub">${escapeHtml(String(sub))}</div>` : ''}
+    <div class="db2-stat-cards">
+      ${items.map(({ label, value, sub, accent, isCost }) => `
+        <div class="db2-stat-card ${accent ? 'db2-stat-card--accent' : ''} ${isCost ? 'db2-stat-card--cost' : ''}">
+          <div class="db2-sc-label">${escapeHtml(label)}</div>
+          <div class="db2-sc-value">${escapeHtml(String(value))}</div>
+          ${sub ? `<div class="db2-sc-sub">${escapeHtml(String(sub))}</div>` : ''}
         </div>
       `).join('')}
     </div>`;
@@ -3362,55 +3374,73 @@ function renderDashboardPage() {
     </div>`;
 
   // ── Codex Token percentage bar ──
-  const codexTotal = codexMetrics.totals?.total || 0;
-  const codexInput = codexMetrics.totals?.input || 0;
-  const codexOutput = codexMetrics.totals?.output || 0;
-  const codexCached = codexMetrics.totals?.cachedInput || 0;
-  const codexReasoning = codexMetrics.totals?.reasoning || 0;
+  // ── Filter daily data by calendar date cutoff ──
+  const daysWindow = state.dashboardDays || 30;
+  const codexCutoff = new Date(Date.now() - daysWindow * 86400000).toISOString().slice(0, 10);
+  const codexDaily = (codexMetrics.daily || []).filter(d => (d.date || '') >= codexCutoff);
+
+  // Recompute totals from the sliced window
+  const codexTotal = codexDaily.reduce((s, d) => s + (d.total || 0), 0);
+  const codexInput = codexDaily.reduce((s, d) => s + (d.input || 0), 0);
+  const codexOutput = codexDaily.reduce((s, d) => s + (d.output || 0), 0);
+  const codexCached = codexDaily.reduce((s, d) => s + (d.cachedInput || 0), 0);
+  const codexReasoning = codexDaily.reduce((s, d) => s + (d.reasoning || 0), 0);
   const codexModels = codexMetrics.models || [];
+  
+  const codexTotalCost = codexModels.reduce((sum, entry) => {
+    const cost = calcModelCost(entry);
+    // Scale cost proportionally to the window
+    const allTotal = codexMetrics.totals?.total || 1;
+    const windowShare = codexTotal / allTotal;
+    return sum + (cost ? cost.totalCost * windowShare : 0);
+  }, 0);
 
   // ── Codex HTML ──
   const codexHtml = (!hasCodexMetrics && isLoading) ? renderDashboardLoadingCard() : `
     <div class="db2-layout">
 
-      <!-- Stat Strip -->
+      <!-- Stat Cards -->
       ${statStrip([
-        { label: '总 Token', value: formatDashboardMetric(codexTotal), sub: codexTotal ? '近30天累计' : '暂无数据', accent: true },
+        { label: '总 Token', value: formatDashboardMetric(codexTotal), sub: codexTotal ? '近' + daysWindow + '天累计' : '暂无数据', accent: true },
         { label: '输入', value: formatDashboardMetric(codexInput), sub: codexTotal ? Math.round(codexInput / codexTotal * 100) + '%' : '–' },
         { label: '输出', value: formatDashboardMetric(codexOutput), sub: codexTotal ? Math.round(codexOutput / codexTotal * 100) + '%' : '–' },
         { label: '缓存命中', value: formatDashboardMetric(codexCached), sub: codexTotal ? Math.round(codexCached / codexTotal * 100) + '%' : '–' },
         { label: '推理', value: formatDashboardMetric(codexReasoning), sub: codexTotal ? Math.round(codexReasoning / codexTotal * 100) + '%' : '–' },
-        { label: 'Provider', value: codex.summary?.providerCount ? String(codex.summary.providerCount) + ' 个' : '–', sub: codex.activeProvider?.name || '未检测' },
-        { label: '认证', value: codex.login?.loggedIn ? '已登录' : codex.activeProvider?.hasApiKey ? 'API Key' : '待配置', sub: codex.summary?.model ? codex.summary.model.slice(0, 18) : '未设置模型' },
+        { label: '估算消耗', value: codexTotalCost ? '$' + codexTotalCost.toFixed(2) : '$0.00', sub: '基于官方预估', isCost: true },
       ])}
 
-      <!-- Two-column editorial layout -->
-      <div class="db2-main-grid">
-
-        <!-- LEFT COLUMN: Charts + Model Cost -->
-        <div class="db2-col">
-          <div class="db2-section">
-            <div class="db2-card-head">
-              <div class="db2-card-title">Token 趋势</div>
-              <div class="db2-card-meta">近 ${escapeHtml(String(codexMetrics.days || 30))} 天每日用量</div>
-            </div>
-            ${renderDashboardLineChart((codexMetrics.daily || []).slice(-30).map((item) => ({ label: item.date.slice(5), value: item.total || 0, input: item.input || 0, output: item.output || 0, cached: item.cachedInput || 0 })), { stroke: '#5b8cff' })}
+      <!-- Full-width Token Trend Chart -->
+      <div class="db2-section db2-section--full">
+        <div class="db2-card-head">
+          <div class="db2-card-title">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12.5l3.5-4 3 2.5 5.5-7"/></svg>
+            Token 用量趋势
           </div>
-
-          <div class="db2-section">
-            <div class="db2-card-head">
-              <div class="db2-card-title">模型消耗</div>
-              <div class="db2-card-meta">按 OpenAI 官方定价估算</div>
-            </div>
-            ${renderModelCostRows(codexModels, codexTotal)}
-          </div>
+          <div class="db2-card-meta">近 ${daysWindow} 天 · 悬停查看详情与费用估算</div>
         </div>
+        ${renderDashboardInteractiveChart(codexDaily.map((item) => ({ label: item.date.slice(5), value: item.total || 0, input: item.input || 0, output: item.output || 0, cached: item.cachedInput || 0 })), { stroke: '#5b8cff', showCost: true, models: codexModels })}
+      </div>
 
-        <!-- RIGHT COLUMN: Distribution + Providers + Sessions -->
+      <!-- Two-column: Cost Trend + Token Distribution -->
+      <div class="db2-main-grid">
         <div class="db2-col">
           <div class="db2-section">
             <div class="db2-card-head">
-              <div class="db2-card-title">Token 分布</div>
+              <div class="db2-card-title">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 1.5v13M11.5 4.5H6.25a2.25 2.25 0 1 0 0 4.5H9.75a2.25 2.25 0 0 1 0 4.5H4"/></svg>
+                费用趋势
+              </div>
+              <div class="db2-card-meta">每日预估消耗</div>
+            </div>
+            ${renderDashboardCostTrendChart(codexDaily, codexModels)}
+          </div>
+
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 1.5v6.5l4.5 2.5"/></svg>
+                Token 分布
+              </div>
               <div class="db2-card-meta">输入 · 输出 · 缓存 · 推理</div>
             </div>
             ${renderDashboardStackChart([
@@ -3419,12 +3449,41 @@ function renderDashboardPage() {
               { label: '输出', value: codexOutput },
               { label: '推理', value: codexReasoning },
             ])}
-            <div class="db2-dist-bars">
+            <div class="db2-dist-cards">
               ${[['输入', codexInput, '#5b8cff'], ['缓存', codexCached, '#7c3aed'], ['输出', codexOutput, '#22c55e'], ['推理', codexReasoning, '#f59e0b']].map(([lbl, val, clr]) => {
                 const pct = codexTotal ? Math.round(val / codexTotal * 100) : 0;
-                return `<div class="db2-dist-bar-row"><span class="db2-dist-dot" style="background:${clr}"></span><span class="db2-dist-label">${escapeHtml(lbl)}</span><div class="db2-dist-track"><div class="db2-dist-fill" style="width:${pct}%;background:${clr}22;border-left:2px solid ${clr}"></div></div><span class="db2-dist-val">${formatDashboardMetric(val)}</span><span class="db2-dist-pct">${pct}%</span></div>`;
+                return `
+                <div class="db2-dist-card">
+                  <div class="db2-dist-card-lbl"><span class="db2-dist-dot" style="background:${clr}"></span>${escapeHtml(lbl)}</div>
+                  <div class="db2-dist-card-val">${formatDashboardMetric(val)}</div>
+                  <div class="db2-dist-card-pct" style="color:${clr}">${pct}% 占比</div>
+                </div>`;
               }).join('')}
             </div>
+          </div>
+        </div>
+
+        <div class="db2-col">
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5l6-3 6 3v6l-6 3-6-3z"/><path d="M2 5l6 3m0 6V8m6-3l-6 3"/></svg>
+                GPT 模型分布
+              </div>
+              <div class="db2-card-meta">${codexModels.length} 个模型</div>
+            </div>
+            ${renderDashboardModelDistChart(codexModels, codexTotal)}
+          </div>
+
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M6 6h4M6 8h4M6 10h2"/></svg>
+                模型消耗明细
+              </div>
+              <div class="db2-card-meta">按 OpenAI 官方定价估算</div>
+            </div>
+            ${renderModelCostRows(codexModels, codexTotal)}
           </div>
 
           <div class="db2-section">
@@ -3432,100 +3491,177 @@ function renderDashboardPage() {
               <div class="db2-card-title">Top Provider</div>
               <div class="db2-card-meta">按 Token 占比排行</div>
             </div>
-            ${miniBars((codexMetrics.providers || []).slice(0, 6).map((item) => ({
-              label: item.provider,
-              value: codexTotal ? (item.totals.total / codexTotal) * 100 : 0,
-              meta: item.totals.total,
-            })))}
+            <div class="db2-leaderboard">
+              ${(codexMetrics.providers || []).slice(0, 10).map((item, i) => {
+                const pct = codexTotal ? (item.totals.total / codexTotal) * 100 : 0;
+                return `
+                <div class="db2-leader-item">
+                  <div class="db2-leader-rank rank-${i+1}">${i+1}</div>
+                  <div class="db2-leader-main">
+                    <div class="db2-leader-name">${escapeHtml(item.provider)}</div>
+                    <div class="db2-leader-track"><div class="db2-leader-fill" style="width:${pct}%"></div></div>
+                  </div>
+                  <div class="db2-leader-val">${formatDashboardMetric(item.totals.total)}</div>
+                </div>`;
+              }).join('')}
+            </div>
           </div>
 
-          <div class="db2-section">
-            <div class="db2-card-head">
-              <div class="db2-card-title">最近活跃会话</div>
-              <div class="db2-card-meta">按 Token 降序</div>
-            </div>
-            ${kvList((codexMetrics.sessions || []).slice(0, 10).map((item) => ({
-              label: item.provider || 'unknown',
-              value: formatDashboardMetric(item.total || 0),
-            })) || [])}
-            ${!(codexMetrics.sessions || []).length ? '<div class="db2-empty">暂无会话统计。</div>' : ''}
-          </div>
         </div>
 
       </div>
     </div>`;
 
   // ── Claude Code HTML ──
-  const claudeTotal = claude.usage?.totals?.total || 0;
-  const claudeInput = claude.usage?.totals?.input || 0;
-  const claudeOutput = claude.usage?.totals?.output || 0;
-  const claudeCacheRead = claude.usage?.totals?.cacheRead || 0;
-  const claudeCacheCreate = claude.usage?.totals?.cacheCreation || 0;
-  const claudeCost = claude.usage?.totals?.cost || 0;
+  const claudeAllTotal = claude.usage?.totals?.total || 0;
+  const claudeAllInput = claude.usage?.totals?.input || 0;
+  const claudeAllOutput = claude.usage?.totals?.output || 0;
+  const claudeAllCacheRead = claude.usage?.totals?.cacheRead || 0;
+  const claudeAllCacheCreate = claude.usage?.totals?.cacheCreation || 0;
+  const claudeAllCost = claude.usage?.totals?.cost || 0;
+  const claudeAllModels = claude.usage?.models || [];
+  const claudeDaily = claude.usage?.daily || [];
+  const claudeDailyModelTokens = claude.usage?.dailyModelTokens || [];
+
+  // Filter by actual calendar date cutoff
+  const claudeCutoff = new Date(Date.now() - daysWindow * 86400000).toISOString().slice(0, 10);
+  const claudeDailySliced = claudeDaily.filter(d => (d.date || '') >= claudeCutoff);
+
+  // Windowed totals from filtered daily data (no fallback — show 0 if no activity in window)
+  const ct = {
+    total: claudeDailySliced.reduce((s, d) => s + (d.total || 0), 0),
+    input: claudeDailySliced.reduce((s, d) => s + (d.input || 0), 0),
+    output: claudeDailySliced.reduce((s, d) => s + (d.output || 0), 0),
+    cacheRead: claudeDailySliced.reduce((s, d) => s + (d.cacheRead || 0), 0),
+    cacheCreate: claudeDailySliced.reduce((s, d) => s + (d.cacheCreation || 0), 0),
+    cost: claudeDailySliced.reduce((s, d) => s + (d.cost || 0), 0),
+  };
+
+  // ── Compute windowed model distribution from dailyModelTokens ──
+  const claudeWindowedDMT = claudeDailyModelTokens.filter(d => (d.date || '') >= claudeCutoff);
+  let claudeModels;
+  if (claudeWindowedDMT.length > 0) {
+    const modelMap = {};
+    claudeWindowedDMT.forEach(entry => {
+      const byModel = entry.tokensByModel || {};
+      for (const [model, tokens] of Object.entries(byModel)) {
+        if (!modelMap[model]) modelMap[model] = 0;
+        modelMap[model] += tokens;
+      }
+    });
+    claudeModels = Object.entries(modelMap)
+      .map(([model, total]) => ({ model, totals: { total, input: Math.round(total * 0.85), output: Math.round(total * 0.15) } }))
+      .sort((a, b) => b.totals.total - a.totals.total);
+  } else {
+    claudeModels = claudeAllModels;
+  }
+  const claudeModelTotal = claudeModels.reduce((s, m) => s + (m.totals?.total || 0), 0);
 
   const claudeHtml = `
     <div class="db2-layout">
+
+      <!-- Stat Cards -->
       ${statStrip([
-        { label: '总 Token', value: formatDashboardMetric(claudeTotal), sub: claudeTotal ? '本地累计' : '暂无数据', accent: true },
-        { label: '输入', value: formatDashboardMetric(claudeInput), sub: claudeTotal ? Math.round(claudeInput / claudeTotal * 100) + '%' : '–' },
-        { label: '输出', value: formatDashboardMetric(claudeOutput), sub: claudeTotal ? Math.round(claudeOutput / claudeTotal * 100) + '%' : '–' },
-        { label: '缓存读', value: formatDashboardMetric(claudeCacheRead), sub: claudeTotal ? Math.round(claudeCacheRead / claudeTotal * 100) + '%' : '–' },
-        { label: '缓存写', value: formatDashboardMetric(claudeCacheCreate), sub: '上下文填充' },
-        { label: '估算费用', value: claudeCost ? '$' + claudeCost.toFixed(4) : '$0.00', sub: '官方定价估算' },
-        { label: '认证状态', value: claude.login?.loggedIn ? '已登录' : claude.maskedApiKey ? 'API Key' : '待配置', sub: claude.model ? claude.model.slice(0, 16) : '未设置' },
+        { label: '总 Token', value: formatDashboardMetric(ct.total), sub: ct.total ? '近' + daysWindow + '天累计' : '该时段无用量', accent: true },
+        { label: '输入', value: formatDashboardMetric(ct.input), sub: ct.total ? Math.round(ct.input / ct.total * 100) + '%' : '–' },
+        { label: '输出', value: formatDashboardMetric(ct.output), sub: ct.total ? Math.round(ct.output / ct.total * 100) + '%' : '–' },
+        { label: '缓存读', value: formatDashboardMetric(ct.cacheRead), sub: ct.total ? Math.round(ct.cacheRead / ct.total * 100) + '%' : '–' },
+        { label: '缓存写', value: formatDashboardMetric(ct.cacheCreate), sub: '上下文填充' },
+        { label: '估算消耗', value: ct.cost ? '$' + ct.cost.toFixed(2) : '$0.00', sub: '基于官方预估', isCost: true },
       ])}
+
+      <!-- Main 2-column layout -->
       <div class="db2-main-grid">
-        <!-- LEFT: Token Distribution -->
+
+        <!-- LEFT column: Token Trend + Token Distribution + Cost Trend -->
         <div class="db2-col">
           <div class="db2-section">
             <div class="db2-card-head">
-              <div class="db2-card-title">Token 分布</div>
+              <div class="db2-card-title">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12.5l3.5-4 3 2.5 5.5-7"/></svg>
+                Token 用量趋势
+              </div>
+              <div class="db2-card-meta">近 ${daysWindow} 天 · 悬停查看详情与费用估算</div>
+            </div>
+            ${(() => {
+              // Fill all calendar dates in window so chart has continuous timeline
+              const dailyMap = {};
+              claudeDailySliced.forEach(d => { if (d.date) dailyMap[d.date] = d; });
+              const filledSeries = [];
+              for (let i = daysWindow - 1; i >= 0; i--) {
+                const dt = new Date(Date.now() - i * 86400000);
+                const key = dt.toISOString().slice(0, 10);
+                const d = dailyMap[key] || {};
+                filledSeries.push({ label: key.slice(5), value: d.total || 0, input: d.input || 0, output: d.output || 0, cached: d.cacheRead || 0 });
+              }
+              return renderDashboardInteractiveChart(filledSeries, { stroke: '#7c3aed', showCost: true, models: claudeModels });
+            })()}
+          </div>
+
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 1.5v6.5l4.5 2.5"/></svg>
+                Token 分布
+              </div>
               <div class="db2-card-meta">输入 · 输出 · 缓存读 · 缓存写</div>
             </div>
             ${renderDashboardStackChart([
-              { label: '输入', value: claudeInput },
-              { label: '缓存读', value: claudeCacheRead },
-              { label: '输出', value: claudeOutput },
-              { label: '缓存写', value: claudeCacheCreate },
+              { label: '输入', value: ct.input },
+              { label: '缓存读', value: ct.cacheRead },
+              { label: '输出', value: ct.output },
+              { label: '缓存写', value: ct.cacheCreate },
             ])}
-            <div class="db2-dist-bars">
-              ${[['输入', claudeInput, '#5b8cff'], ['缓存读', claudeCacheRead, '#7c3aed'], ['输出', claudeOutput, '#22c55e'], ['缓存写', claudeCacheCreate, '#f59e0b']].map(([lbl, val, clr]) => {
-                const pct = claudeTotal ? Math.round(val / claudeTotal * 100) : 0;
-                return `<div class="db2-dist-bar-row"><span class="db2-dist-dot" style="background:${clr}"></span><span class="db2-dist-label">${escapeHtml(lbl)}</span><div class="db2-dist-track"><div class="db2-dist-fill" style="width:${pct}%;background:${clr}22;border-left:2px solid ${clr}"></div></div><span class="db2-dist-val">${formatDashboardMetric(val)}</span><span class="db2-dist-pct">${pct}%</span></div>`;
+            <div class="db2-dist-cards">
+              ${[['输入', ct.input, '#5b8cff'], ['缓存读', ct.cacheRead, '#7c3aed'], ['输出', ct.output, '#22c55e'], ['缓存写', ct.cacheCreate, '#f59e0b']].map(([lbl, val, clr]) => {
+                const pct = ct.total ? Math.round(val / ct.total * 100) : 0;
+                return `
+                <div class="db2-dist-card">
+                  <div class="db2-dist-card-lbl"><span class="db2-dist-dot" style="background:${clr}"></span>${escapeHtml(lbl)}</div>
+                  <div class="db2-dist-card-val">${formatDashboardMetric(val)}</div>
+                  <div class="db2-dist-card-pct" style="color:${clr}">${pct}% 占比</div>
+                </div>`;
               }).join('')}
             </div>
           </div>
 
           <div class="db2-section">
             <div class="db2-card-head">
-              <div class="db2-card-title">用量详情</div>
-              <div class="db2-card-meta">绝对数值</div>
+              <div class="db2-card-title">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 1.5v13M11.5 4.5H6.25a2.25 2.25 0 1 0 0 4.5H9.75a2.25 2.25 0 0 1 0 4.5H4"/></svg>
+                费用趋势
+              </div>
+              <div class="db2-card-meta">每日实际消耗</div>
             </div>
-            ${miniBars([
-              { label: '输入', value: claudeInput ? 100 : 4, meta: claudeInput },
-              { label: '输出', value: claudeOutput ? Math.max(4, Math.round(claudeOutput / Math.max(claudeInput, 1) * 100)) : 4, meta: claudeOutput },
-              { label: '缓存读', value: claudeCacheRead ? Math.max(4, Math.round(claudeCacheRead / Math.max(claudeInput, 1) * 100)) : 4, meta: claudeCacheRead },
-              { label: '缓存写', value: claudeCacheCreate ? Math.max(4, Math.round(claudeCacheCreate / Math.max(claudeInput, 1) * 100)) : 4, meta: claudeCacheCreate },
-            ])}
+            ${renderClaudeCostTrendChart(claudeDailySliced, daysWindow)}
           </div>
         </div>
 
-        <!-- RIGHT: Account status -->
+        <!-- RIGHT column: Model Distribution + Model Cost Table -->
         <div class="db2-col">
           <div class="db2-section">
             <div class="db2-card-head">
-              <div class="db2-card-title">账号状态</div>
+              <div class="db2-card-title">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5l6-3 6 3v6l-6 3-6-3z"/><path d="M2 5l6 3m0 6V8m6-3l-6 3"/></svg>
+                模型分布
+              </div>
+              <div class="db2-card-meta">近 ${daysWindow} 天 · ${claudeModels.length} 个模型</div>
             </div>
-            ${kvList([
-              { label: '登录状态', value: claude.login?.loggedIn ? '已登录 ✓' : '未登录' },
-              { label: '登录方式', value: claude.login?.method || '未检测' },
-              { label: '当前模型', value: claude.model || '未设置' },
-              { label: 'API Key', value: claude.maskedApiKey || '未配置' },
-              { label: 'Base URL', value: claude.envVars?.ANTHROPIC_BASE_URL?.set ? claude.envVars.ANTHROPIC_BASE_URL.value : '官方默认' },
-              { label: '估算成本', value: claudeCost ? '$' + claudeCost.toFixed(6) : '$0.000000', accent: !!claudeCost },
-            ])}
+            ${renderDashboardModelDistChart(claudeModels, claudeModelTotal)}
+          </div>
+
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M6 6h4M6 8h4M6 10h2"/></svg>
+                模型消耗明细
+              </div>
+              <div class="db2-card-meta">按 Anthropic 定价估算</div>
+            </div>
+            ${renderModelCostRows(claudeModels, claudeModelTotal)}
           </div>
         </div>
+
       </div>
     </div>`;
 
@@ -3590,9 +3726,17 @@ function renderDashboardPage() {
     <div class="dashboard-shell ${isLoading ? 'is-loading' : ''}">
       <div class="dashboard-toolbar">
         <div class="dashboard-tabs">
-          ${tabs.map((item) => `<button type="button" class="dashboard-tab ${item.key === dashboardTool ? 'active' : ''}" data-dashboard-tool="${item.key}">${escapeHtml(item.label)}</button>`).join('')}
+          ${tabs.map((item) => `<button type="button" class="dashboard-tab ${item.key === dashboardTool ? 'active' : ''}" data-dashboard-tool="${item.key}">${item.icon}<span>${escapeHtml(item.label)}</span><span class="dashboard-tab-dot" style="background:${item.dot}"></span></button>`).join('')}
+          <span class="db2-period-wrap">
+            <div class="db2-period-dropdown" data-period-dropdown>
+              <button type="button" class="db2-period-trigger" data-period-trigger>${state.dashboardDays} 天 <svg width="8" height="5" viewBox="0 0 8 5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M1 1l3 3 3-3"/></svg></button>
+              <div class="db2-period-menu" data-period-menu>
+                ${[7, 14, 30].map(d => `<div class="db2-period-option ${state.dashboardDays === d ? 'active' : ''}" data-dashboard-days="${d}">${d} 天</div>`).join('')}
+              </div>
+            </div>
+          </span>
         </div>
-        ${showDashboardRefresh ? `<div class="dashboard-toolbar-actions"><div class="dashboard-fetch-state ${isLoading ? 'loading' : ''}">${escapeHtml(dashboardStatusText)}</div><label class="dashboard-refresh-select-wrap"><span>${escapeHtml(autoRefreshLabel)}</span><select class="dashboard-refresh-select" data-dashboard-auto-refresh>${renderDashboardAutoRefreshOptions()}</select></label><button type="button" class="dashboard-refresh-btn ${state.dashboardRefreshing ? 'is-busy' : ''}" data-dashboard-refresh ${state.dashboardRefreshing ? 'disabled' : ''}>${escapeHtml(state.dashboardRefreshing ? '刷新中…' : '手动刷新')}</button></div>` : ''}
+        ${showDashboardRefresh ? `<div class="dashboard-toolbar-actions"><span class="dashboard-fetch-state ${isLoading ? 'loading' : ''}">${escapeHtml(dashboardStatusText)}</span><button type="button" class="dashboard-refresh-btn ${state.dashboardRefreshing ? 'is-busy' : ''}" data-dashboard-refresh ${state.dashboardRefreshing ? 'disabled' : ''}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.3"/></svg>${escapeHtml(state.dashboardRefreshing ? '刷新中' : '刷新')}</button></div>` : ''}
       </div>
       ${content}
     </div>
@@ -3606,57 +3750,351 @@ function renderDashboardStatCard(label, value, sub = '') {
   return `<div class="dashboard-stat-card"><div class="dashboard-stat-label">${escapeHtml(label)}</div><div class="dashboard-stat-value" title="${escapeHtml(fullValue)}">${escapeHtml(compactValue)}</div>${subLabel ? `<div class="dashboard-stat-sub">${escapeHtml(subLabel)}</div>` : ''}</div>`;
 }
 
-function renderDashboardLineChart(series = [], { stroke = '#5b8cff' } = {}) {
+let __dbChartId = 0;
+
+function renderDashboardInteractiveChart(series = [], { stroke = '#5b8cff', showCost = false, models = [] } = {}) {
   if (!series.length) return '<div class="dashboard-empty-note">暂无趋势数据。</div>';
-  const W = 600;
-  const H = 200;
-  const padX = 6;
-  const padY = 16;
-  const values = series.map((item) => Number(item.value || 0));
-  const max = Math.max(...values, 1);
-  const step = series.length > 1 ? (W - padX * 2) / (series.length - 1) : 0;
-  const pts = series.map((item, i) => {
-    const x = padX + step * i;
-    const y = H - padY - ((Number(item.value || 0) / max) * (H - padY * 2));
-    return [x, y];
-  });
-  const polyline = pts.map(([x, y]) => `${x},${y}`).join(' ');
-  // Area polygon: line + bottom right + bottom left
-  const areaPath = pts.length > 1 ? `${pts.map(([x, y]) => `${x},${y}`).join(' ')} ${pts[pts.length - 1][0]},${H - padY} ${pts[0][0]},${H - padY}` : '';
-  // Grid lines Y
-  const gridLines = [0.25, 0.5, 0.75, 1.0].map((frac) => {
-    const y = H - padY - frac * (H - padY * 2);
-    const label = formatDashboardMetric(max * frac);
-    return `<line x1="${padX}" y1="${y}" x2="${W - padX}" y2="${y}" stroke="rgba(255,255,255,0.06)" stroke-width="1"/><text x="${padX + 2}" y="${y - 3}" font-size="9" fill="rgba(255,255,255,0.28)">${label}</text>`;
-  }).join('');
-  // Label every ~5th data point
-  const labelStep = Math.max(1, Math.floor(series.length / 6));
-  const xLabels = pts.map(([x, y], i) => {
-    if (i % labelStep !== 0 && i !== series.length - 1) return '';
-    return `<text x="${x}" y="${H - 1}" font-size="9" text-anchor="middle" fill="rgba(255,255,255,0.30)">${escapeHtml(series[i].label)}</text>`;
-  }).join('');
-  // Tooltip circles
-  const circles = pts.map(([x, y], i) => {
-    const v = formatDashboardMetricFull(series[i].value || 0);
-    return `<circle cx="${x}" cy="${y}" r="3" fill="${stroke}" opacity="0" class="db2-chart-dot"><title>${escapeHtml(series[i].label + ': ' + v)}</title></circle>`;
-  }).join('');
-  const gradId = 'dbLineFill_' + stroke.replace('#', '');
+  const chartId = 'dbCanvas_' + (++__dbChartId);
+  const tooltipId = chartId + '_tip';
+  const dataAttr = `data-db-chart-series="${escapeHtml(JSON.stringify(series))}" data-db-chart-stroke="${escapeHtml(stroke)}" data-db-chart-show-cost="${showCost ? '1' : ''}" data-db-chart-models="${escapeHtml(JSON.stringify(models))}"`;
+
+  // Deferred init via MutationObserver
+  setTimeout(() => { _initDbInteractiveChart(chartId); }, 0);
+
   return `
-    <div class="db2-chart-wrap">
-      <svg class="db2-chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
-        <defs>
-          <linearGradient id="${gradId}" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stop-color="${stroke}" stop-opacity="0.35"/>
-            <stop offset="100%" stop-color="${stroke}" stop-opacity="0.02"/>
-          </linearGradient>
-        </defs>
-        ${gridLines}
-        ${areaPath ? `<polygon fill="url(#${gradId})" points="${areaPath}"/>` : ''}
-        <polyline fill="none" stroke="${stroke}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" points="${polyline}"/>
-        ${circles}
-        ${xLabels}
-      </svg>
+    <div class="db2-ichart-wrap" id="${chartId}_wrap" ${dataAttr}>
+      <canvas id="${chartId}" class="db2-ichart-canvas" height="220"></canvas>
+      <div id="${tooltipId}" class="db2-ichart-tooltip" style="display:none"></div>
     </div>`;
+}
+
+function _initDbInteractiveChart(chartId) {
+  const tryInit = () => {
+    const canvas = document.getElementById(chartId);
+    if (!canvas) return false;
+    const wrap = canvas.closest('.db2-ichart-wrap');
+    if (!wrap) return false;
+    const series = JSON.parse(wrap.getAttribute('data-db-chart-series') || '[]');
+    const stroke = wrap.getAttribute('data-db-chart-stroke') || '#5b8cff';
+    const showCost = wrap.getAttribute('data-db-chart-show-cost') === '1';
+    const models = JSON.parse(wrap.getAttribute('data-db-chart-models') || '[]');
+    if (!series.length) return true;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = wrap.getBoundingClientRect();
+    const W = Math.round(rect.width) || 600;
+    const H = 220;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const padL = 48, padR = 16, padT = 20, padB = 32;
+    const cW = W - padL - padR;
+    const cH = H - padT - padB;
+    const values = series.map(s => Number(s.value || 0));
+    const max = Math.max(...values, 1);
+    const step = series.length > 1 ? cW / (series.length - 1) : 0;
+    const pts = series.map((s, i) => ({
+      x: padL + step * i,
+      y: padT + cH - (values[i] / max) * cH
+    }));
+
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    const gridColor = isLight ? 'rgba(15,23,42,0.06)' : 'rgba(255,255,255,0.06)';
+    const textColor = isLight ? 'rgba(15,23,42,0.35)' : 'rgba(255,255,255,0.3)';
+    const bgGradStart = stroke + '40';
+    const bgGradEnd = stroke + '05';
+
+    // Draw
+    function draw(hoverIdx) {
+      ctx.clearRect(0, 0, W, H);
+
+      // Grid lines + labels
+      ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.textAlign = 'right';
+      for (let frac of [0, 0.25, 0.5, 0.75, 1.0]) {
+        const y = padT + cH - frac * cH;
+        ctx.strokeStyle = gridColor;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(padL, y);
+        ctx.lineTo(W - padR, y);
+        ctx.stroke();
+        ctx.fillStyle = textColor;
+        ctx.fillText(formatDashboardMetric(max * frac), padL - 6, y + 3);
+      }
+
+      // X labels
+      const labelStep = Math.max(1, Math.floor(series.length / 7));
+      ctx.textAlign = 'center';
+      pts.forEach((p, i) => {
+        if (i % labelStep !== 0 && i !== series.length - 1) return;
+        ctx.fillStyle = textColor;
+        ctx.fillText(series[i].label, p.x, H - 6);
+      });
+
+      // Area fill gradient
+      if (pts.length > 1) {
+        const grad = ctx.createLinearGradient(0, padT, 0, padT + cH);
+        grad.addColorStop(0, bgGradStart);
+        grad.addColorStop(1, bgGradEnd);
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) {
+          const cp1x = (pts[i-1].x + pts[i].x) / 2;
+          ctx.bezierCurveTo(cp1x, pts[i-1].y, cp1x, pts[i].y, pts[i].x, pts[i].y);
+        }
+        ctx.lineTo(pts[pts.length-1].x, padT + cH);
+        ctx.lineTo(pts[0].x, padT + cH);
+        ctx.closePath();
+        ctx.fillStyle = grad;
+        ctx.fill();
+      }
+
+      // Line
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) {
+        const cp1x = (pts[i-1].x + pts[i].x) / 2;
+        ctx.bezierCurveTo(cp1x, pts[i-1].y, cp1x, pts[i].y, pts[i].x, pts[i].y);
+      }
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 2.5;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.stroke();
+
+      // Dots
+      pts.forEach((p, i) => {
+        const isHover = i === hoverIdx;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, isHover ? 5 : 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = isHover ? '#fff' : stroke;
+        ctx.fill();
+        if (isHover) {
+          ctx.strokeStyle = stroke;
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+        }
+      });
+
+      // Hover crosshair
+      if (hoverIdx >= 0 && hoverIdx < pts.length) {
+        const p = pts[hoverIdx];
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = isLight ? 'rgba(15,23,42,0.15)' : 'rgba(255,255,255,0.15)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(p.x, padT);
+        ctx.lineTo(p.x, padT + cH);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(padL, p.y);
+        ctx.lineTo(W - padR, p.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    draw(-1);
+
+    // Hover
+    const tooltip = document.getElementById(chartId + '_tip');
+    let lastIdx = -1;
+
+    canvas.addEventListener('mousemove', (e) => {
+      const r = canvas.getBoundingClientRect();
+      const mx = e.clientX - r.left;
+      // Find nearest
+      let nearIdx = 0;
+      let nearDist = Infinity;
+      pts.forEach((p, i) => {
+        const d = Math.abs(p.x - mx);
+        if (d < nearDist) { nearDist = d; nearIdx = i; }
+      });
+      if (nearIdx === lastIdx) return;
+      lastIdx = nearIdx;
+      draw(nearIdx);
+
+      if (tooltip && series[nearIdx]) {
+        const s = series[nearIdx];
+        const inp = formatDashboardMetric(s.input || 0);
+        const out = formatDashboardMetric(s.output || 0);
+        const cached = formatDashboardMetric(s.cached || 0);
+        const total = formatDashboardMetricFull(s.value || 0);
+
+        // Cost estimation
+        let costLine = '';
+        if (showCost && models.length) {
+          const dayTotal = Number(s.value || 0);
+          if (dayTotal > 0) {
+            const totalAllModels = models.reduce((sum, m) => sum + (m.totals?.total || 0), 0) || 1;
+            let dayCost = 0;
+            models.forEach(m => {
+              const pricing = lookupModelPricing(m.model);
+              if (!pricing) return;
+              const share = (m.totals?.total || 0) / totalAllModels;
+              const dayTokens = dayTotal * share;
+              const inpShare = (m.totals?.input || 0) / ((m.totals?.total || 1));
+              const outShare = (m.totals?.output || 0) / ((m.totals?.total || 1));
+              const cachedShare = (m.totals?.cachedInput || 0) / ((m.totals?.total || 1));
+              dayCost += (dayTokens * inpShare / 1e6 * pricing.input) + (dayTokens * outShare / 1e6 * pricing.output) + (dayTokens * cachedShare / 1e6 * pricing.cached);
+            });
+            costLine = `<div class="db2-tip-row db2-tip-cost"><span>💰 估算</span><strong>$${dayCost.toFixed(4)}</strong></div>`;
+          }
+        }
+
+        tooltip.innerHTML = `
+          <div class="db2-tip-date">${escapeHtml(s.label)}</div>
+          <div class="db2-tip-total">${escapeHtml(total)} tokens</div>
+          <div class="db2-tip-row"><span style="color:#5b8cff">● 输入</span><strong>${escapeHtml(inp)}</strong></div>
+          <div class="db2-tip-row"><span style="color:#22c55e">● 输出</span><strong>${escapeHtml(out)}</strong></div>
+          <div class="db2-tip-row"><span style="color:#7c3aed">● 缓存</span><strong>${escapeHtml(cached)}</strong></div>
+          ${costLine}
+        `;
+        tooltip.style.display = '';
+        const tipRect = tooltip.getBoundingClientRect();
+        const wrapRect = wrap.getBoundingClientRect();
+        let tx = pts[nearIdx].x + 14;
+        if (tx + tipRect.width > W - 10) tx = pts[nearIdx].x - tipRect.width - 14;
+        tooltip.style.left = tx + 'px';
+        tooltip.style.top = Math.max(4, pts[nearIdx].y - tipRect.height / 2) + 'px';
+      }
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      lastIdx = -1;
+      draw(-1);
+      if (tooltip) tooltip.style.display = 'none';
+    });
+
+    return true;
+  };
+
+  if (!tryInit()) {
+    // Retry with rAF
+    let tries = 0;
+    const retry = () => {
+      if (tryInit() || tries++ > 20) return;
+      requestAnimationFrame(retry);
+    };
+    requestAnimationFrame(retry);
+  }
+}
+
+// Model distribution donut/bar chart
+function renderDashboardModelDistChart(models = [], totalTokens = 0) {
+  if (!models.length) return '<div class="dashboard-empty-note">暂无模型分布数据。</div>';
+  const chartId = 'dbModelDist_' + (++__dbChartId);
+  const sorted = [...models].sort((a, b) => (b.totals?.total || 0) - (a.totals?.total || 0));
+  const colors = ['#5b8cff', '#7c3aed', '#22c55e', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#8b5cf6', '#14b8a6', '#f97316'];
+
+  const bars = sorted.map((m, i) => {
+    const tokens = m.totals?.total || 0;
+    const pct = totalTokens ? (tokens / totalTokens * 100) : 0;
+    const cost = calcModelCost(m);
+    const costStr = cost ? '$' + cost.totalCost.toFixed(3) : '–';
+    const label = cost?.pricing?.label || m.model;
+    const color = colors[i % colors.length];
+    return `
+      <div class="db2-mdist-item" style="--bar-color:${color}">
+        <div class="db2-mdist-hdr">
+          <span class="db2-mdist-dot" style="background:${color}"></span>
+          <span class="db2-mdist-name" title="${escapeHtml(m.model)}">${escapeHtml(label)}</span>
+          <span class="db2-mdist-tokens">${escapeHtml(formatDashboardMetric(tokens))}</span>
+          <span class="db2-mdist-cost">${escapeHtml(costStr)}</span>
+        </div>
+        <div class="db2-mdist-bar-track">
+          <div class="db2-mdist-bar-fill" style="width:${Math.max(2, pct)}%;background:${color}">
+            <span class="db2-mdist-bar-label">${Math.round(pct)}%</span>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  return `<div class="db2-mdist-chart" id="${chartId}">${bars}</div>`;
+}
+
+// Cost trend mini chart
+// Claude cost trend uses actual cost from telemetry (not estimated)
+function renderClaudeCostTrendChart(dailySlice = [], windowDays = 30) {
+  if (!dailySlice.length) return '<div class="dashboard-empty-note">暂无费用趋势数据。</div>';
+
+  const costSeries = dailySlice.map(item => ({
+    label: (item.date || '').slice(5),
+    value: item.cost || 0,
+  }));
+
+  const maxCost = Math.max(...costSeries.map(s => s.value), 0.001);
+  const totalCost = costSeries.reduce((s, c) => s + c.value, 0);
+
+  const bars = costSeries.map((s) => {
+    const pct = Math.max(2, (s.value / maxCost) * 100);
+    const tip = s.label + '  $' + s.value.toFixed(2);
+    return `<div class="db2-costbar" data-tip="${escapeHtml(tip)}">
+      <div class="db2-costbar-fill" style="height:${pct}%;background:linear-gradient(180deg,#7c3aed,#a78bfa)"></div>
+    </div>`;
+  }).join('');
+
+  return `
+    <div class="db2-cost-trend">
+      <div class="db2-cost-trend-bars">${bars}</div>
+      <div class="db2-cost-trend-summary">
+        <span>近 ${windowDays} 天合计</span>
+        <strong>$${totalCost.toFixed(2)}</strong>
+      </div>
+    </div>`;
+}
+
+function renderDashboardCostTrendChart(daily = [], models = []) {
+  if (!daily.length || !models.length) return '<div class="dashboard-empty-note">暂无费用趋势数据。</div>';
+
+  const totalAllModels = models.reduce((sum, m) => sum + (m.totals?.total || 0), 0) || 1;
+  const costSeries = daily.map(item => {
+    const dayTotal = item.total || 0;
+    let dayCost = 0;
+    if (dayTotal > 0) {
+      models.forEach(m => {
+        const pricing = lookupModelPricing(m.model);
+        if (!pricing) return;
+        const share = (m.totals?.total || 0) / totalAllModels;
+        const dayTokens = dayTotal * share;
+        const inpShare = (m.totals?.input || 0) / ((m.totals?.total || 1));
+        const outShare = (m.totals?.output || 0) / ((m.totals?.total || 1));
+        const cachedShare = (m.totals?.cachedInput || m.totals?.cacheRead || 0) / ((m.totals?.total || 1));
+        dayCost += (dayTokens * inpShare / 1e6 * pricing.input) + (dayTokens * outShare / 1e6 * pricing.output) + (dayTokens * cachedShare / 1e6 * pricing.cached);
+      });
+    }
+    return { label: (item.date || '').slice(5), value: dayCost };
+  });
+
+  const maxCost = Math.max(...costSeries.map(s => s.value), 0.001);
+  const totalCost = costSeries.reduce((s, c) => s + c.value, 0);
+
+  const bars = costSeries.map((s, i) => {
+    const pct = Math.max(2, (s.value / maxCost) * 100);
+    const tip = s.label + '  $' + s.value.toFixed(2);
+    return `<div class="db2-costbar" data-tip="${escapeHtml(tip)}">
+      <div class="db2-costbar-fill" style="height:${pct}%"></div>
+    </div>`;
+  }).join('');
+
+  return `
+    <div class="db2-cost-trend">
+      <div class="db2-cost-trend-bars">${bars}</div>
+      <div class="db2-cost-trend-summary">
+        <span>近 ${costSeries.length} 天合计</span>
+        <strong>$${totalCost.toFixed(2)}</strong>
+      </div>
+    </div>`;
+}
+
+// Keep legacy function as wrapper
+function renderDashboardLineChart(series = [], { stroke = '#5b8cff' } = {}) {
+  return renderDashboardInteractiveChart(series, { stroke });
 }
 
 function renderDashboardStackChart(items = []) {
@@ -3676,8 +4114,6 @@ async function refreshDashboardData({ force = false, silent = false } = {}) {
   if (state.activePage === 'dashboard') renderDashboardPage();
 
   try {
-    void loadDashboardSideStates().catch(() => {});
-
     const params = new URLSearchParams({
       codexHome: getDashboardCodexHome(),
       days: '30',
@@ -11219,6 +11655,23 @@ function bindEvents() {
       }
       return;
     }
+    // Custom period dropdown trigger
+    const periodTrigger = e.target.closest('[data-period-trigger]');
+    if (periodTrigger) {
+      const dropdown = periodTrigger.closest('[data-period-dropdown]');
+      if (dropdown) dropdown.classList.toggle('open');
+      return;
+    }
+    const daysPill = e.target.closest('[data-dashboard-days]');
+    if (daysPill) {
+      state.dashboardDays = Number(daysPill.dataset.dashboardDays) || 30;
+      localStorage.setItem('easyaiconfig_dashboard_days', String(state.dashboardDays));
+      // Close dropdown
+      const dropdown = daysPill.closest('[data-period-dropdown]');
+      if (dropdown) dropdown.classList.remove('open');
+      renderDashboardPage();
+      return;
+    }
     const refreshBtn = e.target.closest('[data-dashboard-refresh]');
     if (refreshBtn) {
       e.preventDefault();
@@ -11237,6 +11690,13 @@ function bindEvents() {
   });
 
   el('dashboardPage')?.addEventListener('change', (e) => {
+    const daysSelect = e.target.closest('[data-dashboard-days-select]');
+    if (daysSelect) {
+      state.dashboardDays = Number(daysSelect.value) || 30;
+      localStorage.setItem('easyaiconfig_dashboard_days', String(state.dashboardDays));
+      renderDashboardPage();
+      return;
+    }
     const select = e.target.closest('[data-dashboard-auto-refresh]');
     if (!select) return;
     state.dashboardAutoRefreshMs = Math.max(0, Number(select.value) || 0);
@@ -11422,6 +11882,11 @@ function bindEvents() {
 }
 
 bindEvents();
+window.addEventListener('click', (e) => {
+  if (!e.target.closest('[data-period-dropdown]')) {
+    document.querySelectorAll('[data-period-dropdown].open').forEach(el => el.classList.remove('open'));
+  }
+});
 window.addEventListener('resize', () => {
   refreshRawCodeEditors();
   renderQuickRailSupportPanel();

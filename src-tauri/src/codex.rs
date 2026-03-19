@@ -1583,10 +1583,19 @@ struct CodexUsageProviderStat {
   events: u64,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexUsageModelStat {
+  model: String,
+  totals: CodexUsageTotals,
+  events: u64,
+}
+
 #[derive(Clone)]
 struct CodexUsageSessionStat {
   session_id: String,
   provider: String,
+  model: String,
   cwd: String,
   totals: CodexUsageTotals,
   updated_at_ms: i64,
@@ -1896,6 +1905,7 @@ pub(crate) fn get_codex_usage_metrics(query: &Value) -> Result<Value, String> {
   let mut totals = CodexUsageTotals::default();
   let mut by_day: BTreeMap<String, CodexUsageTotals> = BTreeMap::new();
   let mut by_provider: BTreeMap<String, CodexUsageProviderStat> = BTreeMap::new();
+  let mut by_model: BTreeMap<String, CodexUsageModelStat> = BTreeMap::new();
   let mut by_session: BTreeMap<String, CodexUsageSessionStat> = BTreeMap::new();
 
   for file_entry in session_files {
@@ -1905,6 +1915,7 @@ pub(crate) fn get_codex_usage_metrics(query: &Value) -> Result<Value, String> {
     let mut session_id = String::new();
     let mut provider = String::new();
     let mut cwd = String::new();
+    let mut current_model = String::new();
 
     for line in reader.lines().map_while(Result::ok) {
       let trimmed = line.trim();
@@ -1923,6 +1934,17 @@ pub(crate) fn get_codex_usage_metrics(query: &Value) -> Result<Value, String> {
           if cwd.is_empty() {
             cwd = payload.get("cwd").and_then(Value::as_str).unwrap_or("").trim().to_string();
           }
+          let session_model = payload.get("model").and_then(Value::as_str).unwrap_or("").trim().to_string();
+          if !session_model.is_empty() { current_model = session_model; }
+        }
+        continue;
+      }
+
+      // Extract model from turn_context (most reliable source)
+      if event.get("type").and_then(Value::as_str) == Some("turn_context") {
+        if let Some(payload) = event.get("payload").and_then(Value::as_object) {
+          let turn_model = payload.get("model").and_then(Value::as_str).unwrap_or("").trim().to_string();
+          if !turn_model.is_empty() { current_model = turn_model; }
         }
         continue;
       }
@@ -1960,6 +1982,15 @@ pub(crate) fn get_codex_usage_metrics(query: &Value) -> Result<Value, String> {
       add_codex_usage_totals(&mut provider_stat.totals, usage);
       provider_stat.events += 1;
 
+      let model_key = if current_model.trim().is_empty() { "unknown".to_string() } else { current_model.clone() };
+      let model_stat = by_model.entry(model_key.clone()).or_insert_with(|| CodexUsageModelStat {
+        model: model_key.clone(),
+        totals: CodexUsageTotals::default(),
+        events: 0,
+      });
+      add_codex_usage_totals(&mut model_stat.totals, usage);
+      model_stat.events += 1;
+
       let session_key = if session_id.trim().is_empty() {
         file_path.file_stem().and_then(|name| name.to_str()).unwrap_or("unknown").to_string()
       } else {
@@ -1969,11 +2000,15 @@ pub(crate) fn get_codex_usage_metrics(query: &Value) -> Result<Value, String> {
       let session_stat = by_session.entry(session_key.clone()).or_insert_with(|| CodexUsageSessionStat {
         session_id: session_key.clone(),
         provider: provider_key.clone(),
+        model: model_key.clone(),
         cwd: cwd.clone(),
         totals: CodexUsageTotals::default(),
         updated_at_ms: ts_utc.timestamp_millis(),
         updated_at: updated_at.clone(),
       });
+      if session_stat.model == "unknown" && !current_model.trim().is_empty() {
+        session_stat.model = current_model.clone();
+      }
       add_codex_usage_totals(&mut session_stat.totals, usage);
       if ts_utc.timestamp_millis() > session_stat.updated_at_ms {
         session_stat.updated_at_ms = ts_utc.timestamp_millis();
@@ -2003,6 +2038,9 @@ pub(crate) fn get_codex_usage_metrics(query: &Value) -> Result<Value, String> {
   let mut providers = by_provider.into_values().collect::<Vec<_>>();
   providers.sort_by(|left, right| right.totals.total.cmp(&left.totals.total));
 
+  let mut models = by_model.into_values().collect::<Vec<_>>();
+  models.sort_by(|left, right| right.totals.total.cmp(&left.totals.total));
+
   let mut sessions = by_session.into_values().collect::<Vec<_>>();
   sessions.sort_by(|left, right| right.updated_at_ms.cmp(&left.updated_at_ms));
   sessions.truncate(12);
@@ -2022,10 +2060,11 @@ pub(crate) fn get_codex_usage_metrics(query: &Value) -> Result<Value, String> {
     },
     "daily": daily,
     "providers": providers,
-    "models": Vec::<Value>::new(),
+    "models": models,
     "sessions": sessions.into_iter().map(|item| json!({
       "sessionId": item.session_id,
       "provider": item.provider,
+      "model": item.model,
       "cwd": item.cwd,
       "updatedAt": item.updated_at,
       "input": item.totals.input,
@@ -2066,15 +2105,29 @@ mod tests {
 
   #[test]
   fn probe_claude_telemetry_usage_runtime() {
-    let usage = read_claude_telemetry_usage(30, false, false);
+    let usage = read_claude_telemetry_usage(30, true, false);
     eprintln!(
-      "probe_claude_telemetry_usage_runtime total={} input={} output={} cacheRead={}",
+      "probe_claude_telemetry_usage_runtime total={} input={} output={} cacheRead={} models={} dailyModelTokens={}",
       usage.get("totals").and_then(|v| v.get("total")).and_then(Value::as_u64).unwrap_or(0),
       usage.get("totals").and_then(|v| v.get("input")).and_then(Value::as_u64).unwrap_or(0),
       usage.get("totals").and_then(|v| v.get("output")).and_then(Value::as_u64).unwrap_or(0),
       usage.get("totals").and_then(|v| v.get("cacheRead")).and_then(Value::as_u64).unwrap_or(0),
+      usage.get("models").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0),
+      usage.get("dailyModelTokens").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0),
     );
+    // Print model details
+    if let Some(models) = usage.get("models").and_then(Value::as_array) {
+      for m in models {
+        let name = m.get("model").and_then(Value::as_str).unwrap_or("?");
+        let total = m.get("totals").and_then(|t| t.get("total")).and_then(Value::as_u64).unwrap_or(0);
+        let input = m.get("totals").and_then(|t| t.get("input")).and_then(Value::as_u64).unwrap_or(0);
+        let output = m.get("totals").and_then(|t| t.get("output")).and_then(Value::as_u64).unwrap_or(0);
+        let source = m.get("source").and_then(Value::as_str).unwrap_or("?");
+        eprintln!("  model={} total={} input={} output={} source={}", name, total, input, output, source);
+      }
+    }
     assert!(usage.get("totals").and_then(|v| v.get("total")).and_then(Value::as_u64).unwrap_or(0) > 0);
+    assert!(usage.get("models").and_then(Value::as_array).map(|a| a.len()).unwrap_or(0) > 0, "models should not be empty");
   }
 }
 
@@ -2351,12 +2404,12 @@ fn write_json_file(path: &Path, data: &Value) -> Result<(), String> {
 fn read_claude_telemetry_usage(days: i64, force_refresh: bool, cache_only: bool) -> Value {
   let home = match claude_code_home() {
     Ok(path) => path,
-    Err(_) => return json!({"days": days, "generatedAt": chrono::Utc::now().to_rfc3339(), "source": "", "totals": {"input":0,"output":0,"cacheCreation":0,"cacheRead":0,"total":0,"cost":0.0}, "daily": [], "sessions": []}),
+    Err(_) => return json!({"days": days, "generatedAt": chrono::Utc::now().to_rfc3339(), "source": "", "totals": {"input":0,"output":0,"cacheCreation":0,"cacheRead":0,"total":0,"cost":0.0}, "daily": [], "sessions": [], "models": [], "dailyModelTokens": []}),
   };
   let telemetry_root = home.join("telemetry");
   let cache_path = match codex_usage_cache_path(&home, days) {
     Ok(path) => path,
-    Err(_) => return json!({"days": days, "generatedAt": chrono::Utc::now().to_rfc3339(), "source": telemetry_root.to_string_lossy().to_string(), "totals": {"input":0,"output":0,"cacheCreation":0,"cacheRead":0,"total":0,"cost":0.0}, "daily": [], "sessions": []}),
+    Err(_) => return json!({"days": days, "generatedAt": chrono::Utc::now().to_rfc3339(), "source": telemetry_root.to_string_lossy().to_string(), "totals": {"input":0,"output":0,"cacheCreation":0,"cacheRead":0,"total":0,"cost":0.0}, "daily": [], "sessions": [], "models": [], "dailyModelTokens": []}),
   };
   let telemetry_files = list_all_files(&telemetry_root).into_iter().filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json")).collect::<Vec<_>>();
   let file_count = telemetry_files.len() as u64;
@@ -2378,6 +2431,17 @@ fn read_claude_telemetry_usage(days: i64, force_refresh: bool, cache_only: bool)
   let mut total_cache_creation: u64 = 0;
   let mut total_cache_read: u64 = 0;
   let mut total_cost: f64 = 0.0;
+
+  // ── Per-model aggregation from telemetry ──
+  struct ModelBucket {
+    input: u64,
+    output: u64,
+    cache_creation: u64,
+    cache_read: u64,
+    cost: f64,
+    session_count: u64,
+  }
+  let mut model_map: BTreeMap<String, ModelBucket> = BTreeMap::new();
 
   for file_path in telemetry_files {
     let Ok(file) = File::open(&file_path) else { continue; };
@@ -2410,11 +2474,25 @@ fn read_claude_telemetry_usage(days: i64, force_refresh: bool, cache_only: bool)
       let cache_creation = meta.get("last_session_total_cache_creation_input_tokens").and_then(Value::as_u64).unwrap_or(0);
       let cache_read = meta.get("last_session_total_cache_read_input_tokens").and_then(Value::as_u64).unwrap_or(0);
       let cost = meta.get("last_session_cost").and_then(Value::as_f64).unwrap_or(0.0);
+      let model_name = data.get("model").and_then(Value::as_str).unwrap_or("unknown").to_string();
+
       total_input += input;
       total_output += output;
       total_cache_creation += cache_creation;
       total_cache_read += cache_read;
       total_cost += cost;
+
+      // ── Aggregate into per-model bucket ──
+      let mbucket = model_map.entry(model_name.clone()).or_insert_with(|| ModelBucket {
+        input: 0, output: 0, cache_creation: 0, cache_read: 0, cost: 0.0, session_count: 0,
+      });
+      mbucket.input += input;
+      mbucket.output += output;
+      mbucket.cache_creation += cache_creation;
+      mbucket.cache_read += cache_read;
+      mbucket.cost += cost;
+      mbucket.session_count += 1;
+
       let date = ts_utc.format("%Y-%m-%d").to_string();
       let bucket = daily.entry(date.clone()).or_insert_with(|| json!({
         "date": date,
@@ -2433,7 +2511,7 @@ fn read_claude_telemetry_usage(days: i64, force_refresh: bool, cache_only: bool)
       bucket["cost"] = json!(bucket.get("cost").and_then(Value::as_f64).unwrap_or(0.0) + cost);
       sessions.push(json!({
         "sessionId": unique_key,
-        "model": data.get("model").and_then(Value::as_str).unwrap_or(""),
+        "model": model_name,
         "updatedAt": ts_utc.to_rfc3339(),
         "input": input,
         "output": output,
@@ -2451,6 +2529,76 @@ fn read_claude_telemetry_usage(days: i64, force_refresh: bool, cache_only: bool)
   });
   sessions.truncate(12);
 
+  // ── Build models array from telemetry ──
+  let mut models_from_telemetry: Vec<Value> = model_map.into_iter().map(|(model, bucket)| {
+    let total = bucket.input + bucket.output;
+    json!({
+      "model": model,
+      "totals": {
+        "input": bucket.input,
+        "output": bucket.output,
+        "cacheCreation": bucket.cache_creation,
+        "cacheRead": bucket.cache_read,
+        "total": total,
+        "cost": bucket.cost,
+      },
+      "sessionCount": bucket.session_count,
+      "source": "telemetry",
+    })
+  }).collect();
+  // Sort by total descending
+  models_from_telemetry.sort_by(|a, b| {
+    let at = a.get("totals").and_then(|t| t.get("total")).and_then(Value::as_u64).unwrap_or(0);
+    let bt = b.get("totals").and_then(|t| t.get("total")).and_then(Value::as_u64).unwrap_or(0);
+    bt.cmp(&at)
+  });
+
+  // ── Read stats-cache.json for richer model-level data ──
+  let stats_cache_path = home.join("stats-cache.json");
+  let mut stats_models: Vec<Value> = Vec::new();
+  let mut daily_model_tokens: Vec<Value> = Vec::new();
+  if let Ok(stats_content) = read_text(&stats_cache_path) {
+    if let Ok(stats) = serde_json::from_str::<Value>(stats_content.trim()) {
+      // modelUsage: { "model-name": { inputTokens, outputTokens, cacheReadInputTokens, cacheCreationInputTokens, costUSD } }
+      if let Some(model_usage) = stats.get("modelUsage").and_then(Value::as_object) {
+        for (model_name, usage) in model_usage {
+          let input = usage.get("inputTokens").and_then(Value::as_u64).unwrap_or(0);
+          let output = usage.get("outputTokens").and_then(Value::as_u64).unwrap_or(0);
+          let cache_read = usage.get("cacheReadInputTokens").and_then(Value::as_u64).unwrap_or(0);
+          let cache_creation = usage.get("cacheCreationInputTokens").and_then(Value::as_u64).unwrap_or(0);
+          let cost_usd = usage.get("costUSD").and_then(Value::as_f64).unwrap_or(0.0);
+          let total = input + output;
+          stats_models.push(json!({
+            "model": model_name,
+            "totals": {
+              "input": input,
+              "output": output,
+              "cacheRead": cache_read,
+              "cacheCreation": cache_creation,
+              "total": total,
+              "cost": cost_usd,
+            },
+            "source": "stats-cache",
+          }));
+        }
+        stats_models.sort_by(|a, b| {
+          let at = a.get("totals").and_then(|t| t.get("total")).and_then(Value::as_u64).unwrap_or(0);
+          let bt = b.get("totals").and_then(|t| t.get("total")).and_then(Value::as_u64).unwrap_or(0);
+          bt.cmp(&at)
+        });
+      }
+      // dailyModelTokens: [ { date, tokensByModel: { "model": tokens } } ]
+      if let Some(dmt) = stats.get("dailyModelTokens").and_then(Value::as_array) {
+        for entry in dmt {
+          daily_model_tokens.push(entry.clone());
+        }
+      }
+    }
+  }
+
+  // Prefer stats-cache models if richer, otherwise use telemetry models
+  let models = if !stats_models.is_empty() { stats_models } else { models_from_telemetry };
+
   let payload = json!({
     "days": days.clamp(1, 90),
     "generatedAt": chrono::Utc::now().to_rfc3339(),
@@ -2465,6 +2613,8 @@ fn read_claude_telemetry_usage(days: i64, force_refresh: bool, cache_only: bool)
     },
     "daily": daily.into_values().collect::<Vec<_>>(),
     "sessions": sessions,
+    "models": models,
+    "dailyModelTokens": daily_model_tokens,
   });
   write_claude_usage_cache(&cache_path, &telemetry_root, days.clamp(1, 90), file_count, latest_mtime_ms, &payload);
   payload

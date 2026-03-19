@@ -416,15 +416,19 @@ async function readCodexUsageFromSqlite(codexHome, dayCount) {
     return null;
   }
 
+  const hasModelColumn = availableColumns.has('model');
+  const hasRolloutPath = availableColumns.has('rollout_path');
+
   const selectExpr = [
     'id',
     'updated_at',
     'created_at',
     availableColumns.has('model_provider') ? 'model_provider' : "'' AS model_provider",
-    availableColumns.has('model') ? 'model' : "'' AS model",
+    hasModelColumn ? 'model' : "'' AS model",
     availableColumns.has('cwd') ? 'cwd' : "'' AS cwd",
     availableColumns.has('title') ? 'title' : "'' AS title",
     'tokens_used',
+    hasRolloutPath ? 'rollout_path' : "'' AS rollout_path",
   ].join(', ');
 
   const result = await runCommand(sqlite3Path, [
@@ -445,6 +449,34 @@ async function readCodexUsageFromSqlite(codexHome, dayCount) {
   }
   if (!Array.isArray(rows)) return null;
 
+  // If threads table has no model column, extract model from JSONL files via rollout_path
+  const modelCache = new Map(); // rollout_path -> model name
+  if (!hasModelColumn && hasRolloutPath) {
+    for (const row of rows) {
+      const rolloutPath = String(row?.rollout_path || '').trim();
+      if (!rolloutPath || modelCache.has(rolloutPath)) continue;
+      modelCache.set(rolloutPath, ''); // placeholder
+      try {
+        // Read only first 16KB - turn_context is near the top of the file
+        const fd = await fs.open(rolloutPath, 'r');
+        const buf = Buffer.alloc(16384);
+        const { bytesRead } = await fd.read(buf, 0, 16384, 0);
+        await fd.close();
+        const chunk = buf.toString('utf8', 0, bytesRead);
+        for (const line of chunk.split(/\r?\n/)) {
+          if (!line.includes('turn_context')) continue;
+          try {
+            const ev = JSON.parse(line);
+            if (ev.type === 'turn_context') {
+              const m = String(ev.payload?.model || '').trim();
+              if (m) { modelCache.set(rolloutPath, m); break; }
+            }
+          } catch { /* skip */ }
+        }
+      } catch { /* file not readable, skip */ }
+    }
+  }
+
   const totals = createCodexUsageTotals();
   const byDay = new Map();
   const byProvider = new Map();
@@ -458,7 +490,10 @@ async function readCodexUsageFromSqlite(codexHome, dayCount) {
 
     totals.total += totalTokens;
     const providerKey = String(row?.model_provider || 'unknown').trim() || 'unknown';
-    const modelKey = String(row?.model || 'unknown').trim() || 'unknown';
+    // Use model from column, or from JSONL extraction, or fallback to 'unknown'
+    const rolloutPath = String(row?.rollout_path || '').trim();
+    const modelKey = String(row?.model || '').trim()
+      || (rolloutPath && modelCache.get(rolloutPath)) || 'unknown';
     const dayKey = new Date(updatedAt).toISOString().slice(0, 10);
 
     if (!byDay.has(dayKey)) byDay.set(dayKey, createCodexUsageTotals());
@@ -524,18 +559,29 @@ export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), day
   const normalizedCodexHome = path.resolve(codexHome);
   const sessionsRoot = path.join(normalizedCodexHome, 'sessions');
   const dayCount = Math.max(1, Math.min(90, Number(days) || 30));
-  const cacheUsage = await readCodexUsageFromDashboardCacheSqlite(normalizedCodexHome, dayCount);
-  if (!force && cacheUsage) {
+
+  // ── Path 1: Read from dashboard cache SQLite ──
+  if (!force) {
+    const cached = await readCodexUsageFromDashboardCacheSqlite(normalizedCodexHome, dayCount);
+    if (cached) {
+      return {
+        ...cached,
+        sourceType: 'dashboard-cache-sqlite',
+        source: cached.source || dashboardCacheDbPath(),
+      };
+    }
+  }
+
+  // cacheOnly but no cache → return empty
+  if (cacheOnly) {
     return {
-      ...cacheUsage,
-      sourceType: cacheUsage.sourceType || 'dashboard-cache-sqlite',
-      source: cacheUsage.source || dashboardCacheDbPath(),
+      ok: true, days: dayCount, source: '', sourceType: 'none',
+      generatedAt: new Date().toISOString(),
+      totals: createCodexUsageTotals(), daily: [], providers: [], models: [], sessions: [],
     };
   }
-  const sqliteUsage = await readCodexUsageFromSqlite(normalizedCodexHome, dayCount);
-  if ((cacheOnly || !force) && sqliteUsage && ((sqliteUsage.sessions && sqliteUsage.sessions.length) || sqliteUsage.totals?.total)) {
-    return sqliteUsage;
-  }
+
+  // ── Path 2: Scan JSONL files → build metrics → save to cache ──
   const now = Date.now();
   const windowStartMs = now - dayCount * 24 * 60 * 60 * 1000;
   const totals = createCodexUsageTotals();
@@ -543,6 +589,8 @@ export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), day
   const byProvider = new Map();
   const byModel = new Map();
   const bySession = new Map();
+
+  // Get session file list from Codex's own SQLite (for speed), fallback to directory walk
   const sessionFiles = await listRecentCodexSessionFilesFromSqlite(normalizedCodexHome, dayCount);
 
   for (const filePath of (sessionFiles.length ? sessionFiles : await listFilesRecursive(sessionsRoot))) {
@@ -561,15 +609,25 @@ export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), day
       if (!line.trim()) continue;
       let event;
       try { event = JSON.parse(line); } catch { continue; }
+
+      // Extract session metadata
       if (event.type === 'session_meta') {
         sessionId = String(event.payload?.id || sessionId || '').trim();
         provider = String(event.payload?.model_provider || provider || '').trim();
         cwd = String(event.payload?.cwd || cwd || '').trim();
-        // Try to extract model name from session_meta
         const sessionModel = String(event.payload?.model || '').trim();
         if (sessionModel) currentModel = sessionModel;
         continue;
       }
+
+      // Extract model from turn_context (most reliable source)
+      if (event.type === 'turn_context') {
+        const turnModel = String(event.payload?.model || '').trim();
+        if (turnModel) currentModel = turnModel;
+        continue;
+      }
+
+      // Process token_count events
       const payload = event.payload || {};
       if (event.type !== 'event_msg' || payload.type !== 'token_count') continue;
       const ts = Date.parse(String(event.timestamp || ''));
@@ -581,6 +639,7 @@ export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), day
         bySession.set(sessionKey, {
           sessionId: sessionKey,
           provider: providerKey,
+          model: currentModel || 'unknown',
           cwd,
           totals: createCodexUsageTotals(),
           updatedAt: ts,
@@ -593,6 +652,7 @@ export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), day
       item.updatedAt = Math.max(item.updatedAt || ts, ts);
       if (!item.cwd && cwd) item.cwd = cwd;
       if (!item.provider && providerKey) item.provider = providerKey;
+      if (currentModel && item.model === 'unknown') item.model = currentModel;
 
       const totalUsage = payload.info?.total_token_usage;
       let usage = null;
@@ -617,7 +677,6 @@ export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), day
       addCodexUsageTotals(byProvider.get(providerKey).totals, usage);
       byProvider.get(providerKey).events += 1;
 
-      // Track per-model usage
       const modelKey = currentModel || payload.info?.model || 'unknown';
       if (!byModel.has(modelKey)) byModel.set(modelKey, { model: modelKey, totals: createCodexUsageTotals(), events: 0 });
       addCodexUsageTotals(byModel.get(modelKey).totals, usage);
@@ -633,14 +692,11 @@ export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), day
   const sessions = [...bySession.values()].filter((item) => item.totals.total > 0).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12).map((item) => ({
     sessionId: item.sessionId,
     provider: item.provider,
+    model: item.model,
     cwd: item.cwd,
     updatedAt: item.updatedAt,
     ...item.totals,
   }));
-
-  if (!sessions.length && sqliteUsage) {
-    return sqliteUsage;
-  }
 
   const metrics = {
     ok: true,
@@ -655,6 +711,7 @@ export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), day
     sessions,
   };
 
+  // Save to cache for future fast loads
   await saveCodexUsageToDashboardCacheSqlite(normalizedCodexHome, dayCount, metrics);
   return metrics;
 }
