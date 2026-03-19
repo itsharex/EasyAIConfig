@@ -213,16 +213,21 @@ export async function startServer() {
 
   app.get('/api/dashboard/codex-usage', async (req, res) => {
     try {
-      ok(res, { data: await getCodexUsageMetrics({ codexHome: req.query.codexHome || undefined, days: req.query.days || undefined }) });
+      ok(res, { data: await getCodexUsageMetrics({
+        codexHome: req.query.codexHome || undefined,
+        days: req.query.days || undefined,
+        force: req.query.force === '1' || req.query.force === 'true',
+        cacheOnly: req.query.cacheOnly === '1' || req.query.cacheOnly === 'true',
+      }) });
     } catch (error) {
       fail(res, error);
     }
   });
 
   // ─── Claude Code endpoints ───
-  app.get('/api/claudecode/state', async (_req, res) => {
+  app.get('/api/claudecode/state', async (req, res) => {
     try {
-      ok(res, { data: await loadClaudeCodeState() });
+      ok(res, { data: await loadClaudeCodeState(req.query || {}) });
     } catch (error) {
       fail(res, error);
     }

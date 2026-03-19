@@ -40,7 +40,7 @@ async fn dispatch(app: tauri::AppHandle, path: &str, method: &str, query: &Value
     ("/api/codex/launch", "POST") => launch_codex(body),
     ("/api/codex/login", "POST") => login_codex(body),
     ("/api/dashboard/codex-usage", "GET") => get_codex_usage_metrics(query),
-    ("/api/claudecode/state", "GET") => load_claudecode_state(),
+    ("/api/claudecode/state", "GET") => load_claudecode_state(query),
     ("/api/claudecode/config-save", "POST") => save_claudecode_config(body),
     ("/api/claudecode/raw-save", "POST") => save_claudecode_raw_config(body),
     ("/api/claudecode/install", "POST") => codex_npm_action(&["install", "-g", CLAUDE_CODE_PACKAGE]),

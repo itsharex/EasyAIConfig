@@ -54,12 +54,13 @@ const state = {
   tools: [],
   toolLastPage: {},
   consoleTool: 'codex',
-  dashboardTool: 'overview',
+  dashboardTool: 'codex',
   dashboardMetrics: { codex: null },
   dashboardLoading: false,
   dashboardRefreshing: false,
   dashboardMetricsFetchedAt: 0,
   dashboardAutoRefreshTimer: null,
+  dashboardAutoRefreshMs: Math.max(0, Number(localStorage.getItem('easyaiconfig_dashboard_auto_refresh_ms') || (30 * 60 * 1000)) || 0),
   consoleRefreshing: false,
   // Wizard
   wizardSelectedTool: 'codex',
@@ -741,18 +742,25 @@ const CLAUDE_MODEL_ALIASES = [
   { value: 'haiku', label: 'Haiku (快速轻量)', group: '别名' },
 ];
 
-async function loadClaudeCodeQuickState() {
+async function loadClaudeCodeQuickState({ force = false, cacheOnly = false } = {}) {
   try {
-    const json = await api('/api/claudecode/state');
-    if (!json.ok || !json.data) return;
+    const params = new URLSearchParams();
+    if (force) params.set('forceUsageRefresh', '1');
+    if (cacheOnly) params.set('cacheOnly', '1');
+    const json = await api(`/api/claudecode/state${params.toString() ? `?${params.toString()}` : ''}`);
+    if (!json.ok || !json.data) return { ok: false, error: json.error || '读取失败' };
     const data = json.data;
+    if (data?.usage?.cacheMiss) return { ok: false, cacheMiss: true };
+    if (!data?.usage || typeof data.usage !== 'object' || !data.usage.totals) {
+      return { ok: false, invalidUsage: true };
+    }
     state.claudeCodeState = data;
 
     // Only update quick-page UI if Claude Code is the active tool
     if (state.activeTool !== 'claudecode') {
       // Still update console and side panel
       renderToolConsole();
-      return;
+      return { ok: true, data };
     }
 
     const modelSelect = el('modelSelect');
@@ -851,7 +859,17 @@ async function loadClaudeCodeQuickState() {
     // Update right-side panel with Claude Code data
     renderCurrentConfig();
     renderToolConsole();
-  } catch { /* silent */ }
+    return { ok: true, data };
+  } catch {
+    return { ok: false, error: '读取失败' };
+  }
+}
+
+async function ensureClaudeDashboardData({ force = false } = {}) {
+  const result = await loadClaudeCodeQuickState({ force, cacheOnly: false });
+  if (result?.ok) return result;
+  if (!force) return loadClaudeCodeQuickState({ force: true, cacheOnly: false });
+  return result;
 }
 
 /* ── OpenClaw Quick State ── */
@@ -3094,7 +3112,13 @@ const OPENCLAW_CHANNEL_LABELS = {
   msteams: 'Teams',
 };
 
-const DASHBOARD_AUTO_REFRESH_MS = 60 * 1000;
+const DASHBOARD_AUTO_REFRESH_STORAGE_KEY = 'easyaiconfig_dashboard_auto_refresh_ms';
+const DASHBOARD_AUTO_REFRESH_OPTIONS = [
+  { value: 0, label: '关闭自动刷新' },
+  { value: 5 * 60 * 1000, label: '5 分钟' },
+  { value: 30 * 60 * 1000, label: '30 分钟' },
+  { value: 60 * 60 * 1000, label: '60 分钟' },
+];
 
 function formatDashboardMetric(value, { compact = true } = {}) {
   const num = Number(value || 0);
@@ -3125,10 +3149,41 @@ function stopDashboardAutoRefresh() {
 
 function startDashboardAutoRefresh() {
   stopDashboardAutoRefresh();
+  if (!(Number(state.dashboardAutoRefreshMs) > 0)) return;
   state.dashboardAutoRefreshTimer = setInterval(() => {
     if (state.activePage !== 'dashboard' || document.hidden) return;
+    if (state.dashboardTool === 'claudecode') {
+      ensureClaudeDashboardData().then(() => renderDashboardPage()).catch(() => {});
+      return;
+    }
     refreshDashboardData({ silent: true }).catch(() => {});
-  }, DASHBOARD_AUTO_REFRESH_MS);
+  }, Number(state.dashboardAutoRefreshMs));
+}
+
+function renderDashboardAutoRefreshOptions() {
+  const current = Number(state.dashboardAutoRefreshMs) || 0;
+  return DASHBOARD_AUTO_REFRESH_OPTIONS
+    .map((item) => `<option value="${item.value}" ${item.value === current ? 'selected' : ''}>${escapeHtml(item.label)}</option>`)
+    .join('');
+}
+
+function getDashboardCodexHome() {
+  return el('codexHomeInput')?.value?.trim() || state.current?.codexHome || '';
+}
+
+async function loadDashboardSideStates() {
+  const tasks = [];
+  if (!state.current) {
+    tasks.push(loadState({ preserveForm: true }));
+  }
+  if (!state.claudeCodeState) {
+    tasks.push(loadClaudeCodeQuickState({ force: false, cacheOnly: false }));
+  }
+  if (!state.openclawState) {
+    tasks.push(loadOpenClawQuickState());
+  }
+  if (!tasks.length) return;
+  await Promise.allSettled(tasks);
 }
 
 function formatDashboardMeta(value) {
@@ -3140,8 +3195,8 @@ function renderDashboardLoadingCard() {
     <div class="dashboard-grid dashboard-grid-single dashboard-grid-loading">
       <section class="dashboard-card dashboard-panel span-12 dashboard-loading-panel">
         <div class="dashboard-loading-copy">
-          <div class="dashboard-loading-badge">首次统计中</div>
-          <div class="dashboard-loading-text">正在扫描本地 Codex sessions 并计算最近 30 天 token 用量，首次会稍慢，后续将直接走客户端缓存。</div>
+          <div class="dashboard-loading-badge">快速统计中</div>
+          <div class="dashboard-loading-text">正在读取本地统计缓存…</div>
         </div>
         <div class="dashboard-loading-title"></div>
         <div class="dashboard-loading-sub"></div>
@@ -3153,6 +3208,98 @@ function renderDashboardLoadingCard() {
     </div>`;
 }
 
+// ── Model Pricing ($ per 1M tokens) ──
+const CODEX_MODEL_PRICING = {
+  'gpt-5.4':           { input: 5.00,  output: 22.50, cached: 0.50,  label: 'GPT-5.4' },
+  'gpt-5.3-codex':     { input: 1.75,  output: 14.00, cached: 0.175, label: 'GPT-5.3 Codex' },
+  'gpt-5.2':           { input: 1.75,  output: 14.00, cached: 0.175, label: 'GPT-5.2' },
+  'gpt-5.2-codex':     { input: 1.75,  output: 14.00, cached: 0.175, label: 'GPT-5.2 Codex' },
+  'gpt-5.1-codex-max': { input: 1.25,  output: 10.00, cached: 0.125, label: 'GPT-5.1 Codex Max' },
+  'gpt-5.1-codex':     { input: 1.25,  output: 10.00, cached: 0.125, label: 'GPT-5.1 Codex' },
+  'gpt-5.1':           { input: 1.25,  output: 10.00, cached: 0.125, label: 'GPT-5.1' },
+  'o3':                { input: 2.00,  output: 8.00,  cached: 0.50,  label: 'o3' },
+  'o3-pro':            { input: 20.00, output: 80.00, cached: 2.50,  label: 'o3-pro' },
+  'o3-mini':           { input: 1.10,  output: 4.40,  cached: 0.275, label: 'o3-mini' },
+  'o4-mini':           { input: 1.10,  output: 4.40,  cached: 0.275, label: 'o4-mini' },
+  'gpt-4.1':           { input: 2.00,  output: 8.00,  cached: 0.50,  label: 'GPT-4.1' },
+  'gpt-4.1-mini':      { input: 0.40,  output: 1.60,  cached: 0.10,  label: 'GPT-4.1 Mini' },
+  'gpt-4.1-nano':      { input: 0.10,  output: 0.40,  cached: 0.025, label: 'GPT-4.1 Nano' },
+  'gpt-4o':            { input: 2.50,  output: 10.00, cached: 1.25,  label: 'GPT-4o' },
+  'gpt-4o-mini':       { input: 0.15,  output: 0.60,  cached: 0.075, label: 'GPT-4o Mini' },
+};
+
+function lookupModelPricing(modelName) {
+  const name = String(modelName || '').trim().toLowerCase();
+  if (!name || name === 'unknown') return null;
+  // Exact match first
+  if (CODEX_MODEL_PRICING[name]) return CODEX_MODEL_PRICING[name];
+  // Prefix match (e.g. 'gpt-5.1-codex-2025-04-14' → 'gpt-5.1-codex')
+  const keys = Object.keys(CODEX_MODEL_PRICING).sort((a, b) => b.length - a.length);
+  for (const key of keys) {
+    if (name.startsWith(key)) return CODEX_MODEL_PRICING[key];
+  }
+  return null;
+}
+
+function calcModelCost(modelEntry) {
+  const pricing = lookupModelPricing(modelEntry.model);
+  if (!pricing) return null;
+  const inp = (modelEntry.totals?.input || 0) / 1e6;
+  const out = (modelEntry.totals?.output || 0) / 1e6;
+  const cached = (modelEntry.totals?.cachedInput || 0) / 1e6;
+  const reasoning = (modelEntry.totals?.reasoning || 0) / 1e6;
+  // Reasoning tokens are charged at output rate
+  const inputCost = inp * pricing.input;
+  const outputCost = (out + reasoning) * pricing.output;
+  const cachedCost = cached * pricing.cached;
+  const totalCost = inputCost + outputCost + cachedCost;
+  return { inputCost, outputCost, cachedCost, totalCost, pricing };
+}
+
+function renderModelCostRows(models = [], totalTokens = 0) {
+  if (!models.length) return '<div class="db2-empty">暂无模型消耗数据。</div>';
+  const rows = models.map((entry) => {
+    const cost = calcModelCost(entry);
+    const tokens = entry.totals?.total || 0;
+    const pct = totalTokens ? Math.round(tokens / totalTokens * 100) : 0;
+    const barWidth = totalTokens ? Math.max(3, Math.round(tokens / totalTokens * 100)) : 3;
+    const modelLabel = cost?.pricing?.label || entry.model;
+    const costStr = cost ? '$' + cost.totalCost.toFixed(4) : '–';
+    const inputCostStr = cost ? '$' + cost.inputCost.toFixed(4) : '–';
+    const outputCostStr = cost ? '$' + cost.outputCost.toFixed(4) : '–';
+    const cachedCostStr = cost ? '$' + cost.cachedCost.toFixed(4) : '–';
+    return `<div class="db2-model-row">
+      <div class="db2-model-name" title="${escapeHtml(entry.model)}">${escapeHtml(modelLabel)}</div>
+      <div class="db2-model-bar-cell"><div class="db2-model-bar" style="width:${barWidth}%"></div></div>
+      <div class="db2-model-tokens">${escapeHtml(formatDashboardMetric(tokens))}</div>
+      <div class="db2-model-pct">${pct}%</div>
+      <div class="db2-model-cost ${cost ? '' : 'db2-model-cost--na'}" title="输入 ${escapeHtml(inputCostStr)} · 输出 ${escapeHtml(outputCostStr)} · 缓存 ${escapeHtml(cachedCostStr)}">${escapeHtml(costStr)}</div>
+    </div>`;
+  });
+  // Total row
+  const totalCost = models.reduce((sum, entry) => {
+    const cost = calcModelCost(entry);
+    return sum + (cost ? cost.totalCost : 0);
+  }, 0);
+  rows.push(`<div class="db2-model-row db2-model-row--total">
+    <div class="db2-model-name">合计</div>
+    <div class="db2-model-bar-cell"></div>
+    <div class="db2-model-tokens">${escapeHtml(formatDashboardMetric(totalTokens))}</div>
+    <div class="db2-model-pct">100%</div>
+    <div class="db2-model-cost">${totalCost ? '$' + totalCost.toFixed(4) : '–'}</div>
+  </div>`);
+  return `<div class="db2-model-table">
+    <div class="db2-model-row db2-model-row--head">
+      <div class="db2-model-name">模型</div>
+      <div class="db2-model-bar-cell">占比</div>
+      <div class="db2-model-tokens">Token</div>
+      <div class="db2-model-pct">%</div>
+      <div class="db2-model-cost">费用估算</div>
+    </div>
+    ${rows.join('')}
+  </div>`;
+}
+
 function renderDashboardPage() {
   const root = el('dashboardPage');
   if (!root) return;
@@ -3160,162 +3307,275 @@ function renderDashboardPage() {
   const codex = state.current || {};
   const claude = state.claudeCodeState || {};
   const openclaw = state.openclawState || {};
-  const codexMetrics = state.dashboardMetrics.codex || { totals: { input: 0, cachedInput: 0, output: 0, reasoning: 0, total: 0 }, daily: [], providers: [], sessions: [] };
+  const codexMetrics = state.dashboardMetrics.codex || { totals: { input: 0, cachedInput: 0, output: 0, reasoning: 0, total: 0 }, daily: [], providers: [], sessions: [], models: [] };
   const openclawChannels = getOpenClawConsoleChannels(openclaw.config || {});
   const openclawProviders = getOpenClawConsoleProviders(openclaw.config || {});
-  const dashboardTool = state.dashboardTool || 'overview';
+  const dashboardTool = state.dashboardTool || 'codex';
   const isLoading = Boolean(state.dashboardLoading);
   const hasCodexMetrics = Boolean(state.dashboardMetrics.codex);
   const lastUpdated = formatDashboardUpdatedAt(codexMetrics.generatedAt);
+  const claudeLastUpdated = formatDashboardUpdatedAt(claude.usage?.generatedAt);
+  const showDashboardRefresh = dashboardTool === 'codex' || dashboardTool === 'claudecode';
+  const autoRefreshLabel = dashboardTool === 'claudecode' ? 'Claude Code 自动刷新' : 'Codex 自动刷新';
+  const dashboardStatusText = dashboardTool === 'claudecode'
+    ? (isLoading ? '正在统计本地 Claude Code token…' : (claudeLastUpdated || '统计已完成'))
+    : (isLoading ? '正在统计本地 Codex token…' : (lastUpdated || '统计已完成'));
 
   const tabs = [
-    { key: 'overview', label: '总览' },
     { key: 'codex', label: 'Codex' },
     { key: 'claudecode', label: 'Claude Code' },
     { key: 'openclaw', label: 'OpenClaw' },
   ];
 
+  // ── Stat strip ──
+  const statStrip = (items = []) => `
+    <div class="db2-stat-strip">
+      ${items.map(({ label, value, sub, accent }) => `
+        <div class="db2-stat-item ${accent ? 'db2-stat-item--accent' : ''}">
+          <div class="db2-stat-label">${escapeHtml(label)}</div>
+          <div class="db2-stat-value">${escapeHtml(String(value))}</div>
+          ${sub ? `<div class="db2-stat-sub">${escapeHtml(String(sub))}</div>` : ''}
+        </div>
+      `).join('')}
+    </div>`;
+
+  // ── Mini bar list ──
   const miniBars = (items = []) => `
     <div class="dashboard-mini-bars">
       ${items.map((item) => {
-        const width = Math.max(10, Math.min(100, Number(item.value || 0)));
+        const width = Math.max(4, Math.min(100, Number(item.value || 0)));
         const meta = formatDashboardMeta(item.meta ?? item.value ?? 0);
         const fullMeta = typeof (item.meta ?? item.value) === 'number' ? formatDashboardMetricFull(item.meta ?? item.value) : meta;
         return `<div class="dashboard-mini-bar"><span>${escapeHtml(item.label)}</span><div class="dashboard-mini-bar-track"><div class="dashboard-mini-bar-fill" style="width:${width}%"></div></div><strong title="${escapeHtml(fullMeta)}">${escapeHtml(meta)}</strong></div>`;
       }).join('')}
-    </div>
-  `;
+    </div>`;
 
-  const overviewHtml = `
-    <div class="dashboard-grid dashboard-grid-top">
-      ${[
-        { title: 'Codex', status: codex.login?.loggedIn ? '官方登录已就绪' : codex.activeProvider?.hasApiKey ? 'API Key 已配置' : '待配置', meta: codex.summary?.model || '未设置默认模型' },
-        { title: 'Claude Code', status: claude.login?.loggedIn ? '已登录' : claude.maskedApiKey ? 'API Key 已配置' : '待配置', meta: claude.model || '未设置默认模型' },
-        { title: 'OpenClaw', status: getOpenClawGatewayStatusLabel(openclaw), meta: openclaw.gatewayUrl || '未检测到 Gateway 地址' },
-      ].map((item, index) => `
-        <section class="dashboard-card dashboard-anim-card" style="--dashboard-delay:${index * 40}ms">
-          <div class="dashboard-card-title">${escapeHtml(item.title)}</div>
-          <div class="dashboard-card-value">${escapeHtml(item.status)}</div>
-          <div class="dashboard-card-sub">${escapeHtml(item.meta)}</div>
-        </section>
+  // ── Key-Value list ──
+  const kvList = (rows = []) => `
+    <div class="db2-kv-list">
+      ${rows.map(({ label, value, accent }) => `
+        <div class="db2-kv-row">
+          <span class="db2-kv-label">${escapeHtml(label)}</span>
+          <span class="db2-kv-value ${accent ? 'db2-kv-value--accent' : ''}">${escapeHtml(String(value))}</span>
+        </div>
       `).join('')}
-    </div>
-    <div class="dashboard-grid dashboard-grid-main">
-      <section class="dashboard-card dashboard-card-wide dashboard-anim-card" style="--dashboard-delay:40ms">
-        <div class="dashboard-card-title">Codex</div>
-        <div class="dashboard-card-sub">先做认证、Provider、模型与本地统计能力总览。</div>
-        ${miniBars([
-          { label: '登录', value: codex.login?.loggedIn ? 100 : 14, meta: codex.login?.loggedIn ? '已识别' : '待配置' },
-          { label: 'Provider', value: Math.min(100, (codex.summary?.providerCount || 0) * 20), meta: codex.summary?.providerCount || 0 },
-          { label: 'Token 统计', value: codexMetrics.totals?.total ? 100 : 24, meta: codexMetrics.totals?.total ? formatDashboardMetric(codexMetrics.totals.total) : '准备中' },
-        ])}
-      </section>
-      <section class="dashboard-card dashboard-card-wide dashboard-anim-card" style="--dashboard-delay:80ms">
-        <div class="dashboard-card-title">OpenClaw</div>
-        <div class="dashboard-card-sub">优先展示 Gateway、Provider、渠道与 usage/cost 接入能力。</div>
-        ${miniBars([
-          { label: 'Gateway', value: openclaw.gatewayReachable ? 100 : openclaw.gatewayPortListening ? 72 : 12, meta: getOpenClawGatewayStatusLabel(openclaw) },
-          { label: '渠道', value: Math.min(100, openclawChannels.length * 18), meta: openclawChannels.length },
-          { label: 'Provider', value: Math.min(100, openclawProviders.length * 18), meta: openclawProviders.length },
-          { label: 'Usage/Cost', value: 94, meta: '能力完整' },
-        ])}
-      </section>
-      <section class="dashboard-card dashboard-card-wide dashboard-anim-card" style="--dashboard-delay:120ms">
-        <div class="dashboard-card-title">Claude Code</div>
-        <div class="dashboard-card-sub">第一版先展示登录、模型与 API Key 状态。</div>
-        ${miniBars([
-          { label: '登录', value: claude.login?.loggedIn ? 100 : 14, meta: claude.login?.loggedIn ? '已登录' : '未登录' },
-          { label: '模型', value: claude.model ? 88 : 16, meta: claude.model || '未设置' },
-          { label: 'Token 统计', value: 24, meta: '建议后续补' },
-        ])}
-      </section>
     </div>`;
 
+  // ── Codex Token percentage bar ──
+  const codexTotal = codexMetrics.totals?.total || 0;
+  const codexInput = codexMetrics.totals?.input || 0;
+  const codexOutput = codexMetrics.totals?.output || 0;
+  const codexCached = codexMetrics.totals?.cachedInput || 0;
+  const codexReasoning = codexMetrics.totals?.reasoning || 0;
+  const codexModels = codexMetrics.models || [];
+
+  // ── Codex HTML ──
   const codexHtml = (!hasCodexMetrics && isLoading) ? renderDashboardLoadingCard() : `
-    <div class="dashboard-grid dashboard-grid-single">
-      <section class="dashboard-card dashboard-panel span-12 dashboard-anim-card" style="--dashboard-delay:20ms">
-        <div class="dashboard-card-headline">
-          <div>
-            <div class="dashboard-card-title">Codex · Token 趋势</div>
-            <div class="dashboard-card-sub">近 ${escapeHtml(String(codexMetrics.days || 30))} 天本地会话 token 统计</div>
+    <div class="db2-layout">
+
+      <!-- Stat Strip -->
+      ${statStrip([
+        { label: '总 Token', value: formatDashboardMetric(codexTotal), sub: codexTotal ? '近30天累计' : '暂无数据', accent: true },
+        { label: '输入', value: formatDashboardMetric(codexInput), sub: codexTotal ? Math.round(codexInput / codexTotal * 100) + '%' : '–' },
+        { label: '输出', value: formatDashboardMetric(codexOutput), sub: codexTotal ? Math.round(codexOutput / codexTotal * 100) + '%' : '–' },
+        { label: '缓存命中', value: formatDashboardMetric(codexCached), sub: codexTotal ? Math.round(codexCached / codexTotal * 100) + '%' : '–' },
+        { label: '推理', value: formatDashboardMetric(codexReasoning), sub: codexTotal ? Math.round(codexReasoning / codexTotal * 100) + '%' : '–' },
+        { label: 'Provider', value: codex.summary?.providerCount ? String(codex.summary.providerCount) + ' 个' : '–', sub: codex.activeProvider?.name || '未检测' },
+        { label: '认证', value: codex.login?.loggedIn ? '已登录' : codex.activeProvider?.hasApiKey ? 'API Key' : '待配置', sub: codex.summary?.model ? codex.summary.model.slice(0, 18) : '未设置模型' },
+      ])}
+
+      <!-- Two-column editorial layout -->
+      <div class="db2-main-grid">
+
+        <!-- LEFT COLUMN: Charts + Model Cost -->
+        <div class="db2-col">
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">Token 趋势</div>
+              <div class="db2-card-meta">近 ${escapeHtml(String(codexMetrics.days || 30))} 天每日用量</div>
+            </div>
+            ${renderDashboardLineChart((codexMetrics.daily || []).slice(-30).map((item) => ({ label: item.date.slice(5), value: item.total || 0, input: item.input || 0, output: item.output || 0, cached: item.cachedInput || 0 })), { stroke: '#5b8cff' })}
           </div>
-          <div class="dashboard-inline-stats">
-            ${renderDashboardStatCard('总', codexMetrics.totals.total || 0, 'tokens')}
-            ${renderDashboardStatCard('输入', codexMetrics.totals.input || 0, 'input')}
-            ${renderDashboardStatCard('输出', codexMetrics.totals.output || 0, 'output')}
-            ${renderDashboardStatCard('缓存', codexMetrics.totals.cachedInput || 0, 'cache')}
-            ${renderDashboardStatCard('推理', codexMetrics.totals.reasoning || 0, 'reasoning')}
+
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">模型消耗</div>
+              <div class="db2-card-meta">按 OpenAI 官方定价估算</div>
+            </div>
+            ${renderModelCostRows(codexModels, codexTotal)}
           </div>
         </div>
-        ${renderDashboardLineChart((codexMetrics.daily || []).slice(-30).map((item) => ({ label: item.date.slice(5), value: item.total || 0 })), { stroke: '#5b8cff' })}
-      </section>
-      <section class="dashboard-card dashboard-panel span-6 dashboard-anim-card" style="--dashboard-delay:80ms">
-        <div class="dashboard-card-title">Codex · Input / Output / Cache / Reasoning</div>
-        ${renderDashboardStackChart([
-          { label: '输入', value: codexMetrics.totals.input || 0 },
-          { label: '缓存', value: codexMetrics.totals.cachedInput || 0 },
-          { label: '输出', value: codexMetrics.totals.output || 0 },
-          { label: '推理', value: codexMetrics.totals.reasoning || 0 },
-        ])}
-      </section>
-      <section class="dashboard-card dashboard-panel span-3 dashboard-anim-card" style="--dashboard-delay:120ms">
-        <div class="dashboard-card-title">Top Provider</div>
-        ${miniBars((codexMetrics.providers || []).slice(0, 5).map((item) => ({
-          label: item.provider,
-          value: codexMetrics.totals.total ? (item.totals.total / codexMetrics.totals.total) * 100 : 0,
-          meta: item.totals.total,
-        })))}
-      </section>
-      <section class="dashboard-card dashboard-panel span-3 dashboard-anim-card" style="--dashboard-delay:160ms">
-        <div class="dashboard-card-title">最近活跃会话</div>
-        <div class="dashboard-list">
-          ${(codexMetrics.sessions || []).slice(0, 8).map((item) => `<div class="dashboard-row"><span>${escapeHtml(item.provider || 'unknown')}</span><strong title="${escapeHtml(formatDashboardMetricFull(item.total || 0))}">${escapeHtml(formatDashboardMetric(item.total || 0))}</strong></div>`).join('') || '<div class="dashboard-empty-note">暂无可用会话统计。</div>'}
+
+        <!-- RIGHT COLUMN: Distribution + Providers + Sessions -->
+        <div class="db2-col">
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">Token 分布</div>
+              <div class="db2-card-meta">输入 · 输出 · 缓存 · 推理</div>
+            </div>
+            ${renderDashboardStackChart([
+              { label: '输入', value: codexInput },
+              { label: '缓存', value: codexCached },
+              { label: '输出', value: codexOutput },
+              { label: '推理', value: codexReasoning },
+            ])}
+            <div class="db2-dist-bars">
+              ${[['输入', codexInput, '#5b8cff'], ['缓存', codexCached, '#7c3aed'], ['输出', codexOutput, '#22c55e'], ['推理', codexReasoning, '#f59e0b']].map(([lbl, val, clr]) => {
+                const pct = codexTotal ? Math.round(val / codexTotal * 100) : 0;
+                return `<div class="db2-dist-bar-row"><span class="db2-dist-dot" style="background:${clr}"></span><span class="db2-dist-label">${escapeHtml(lbl)}</span><div class="db2-dist-track"><div class="db2-dist-fill" style="width:${pct}%;background:${clr}22;border-left:2px solid ${clr}"></div></div><span class="db2-dist-val">${formatDashboardMetric(val)}</span><span class="db2-dist-pct">${pct}%</span></div>`;
+              }).join('')}
+            </div>
+          </div>
+
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">Top Provider</div>
+              <div class="db2-card-meta">按 Token 占比排行</div>
+            </div>
+            ${miniBars((codexMetrics.providers || []).slice(0, 6).map((item) => ({
+              label: item.provider,
+              value: codexTotal ? (item.totals.total / codexTotal) * 100 : 0,
+              meta: item.totals.total,
+            })))}
+          </div>
+
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">最近活跃会话</div>
+              <div class="db2-card-meta">按 Token 降序</div>
+            </div>
+            ${kvList((codexMetrics.sessions || []).slice(0, 10).map((item) => ({
+              label: item.provider || 'unknown',
+              value: formatDashboardMetric(item.total || 0),
+            })) || [])}
+            ${!(codexMetrics.sessions || []).length ? '<div class="db2-empty">暂无会话统计。</div>' : ''}
+          </div>
         </div>
-      </section>
+
+      </div>
     </div>`;
+
+  // ── Claude Code HTML ──
+  const claudeTotal = claude.usage?.totals?.total || 0;
+  const claudeInput = claude.usage?.totals?.input || 0;
+  const claudeOutput = claude.usage?.totals?.output || 0;
+  const claudeCacheRead = claude.usage?.totals?.cacheRead || 0;
+  const claudeCacheCreate = claude.usage?.totals?.cacheCreation || 0;
+  const claudeCost = claude.usage?.totals?.cost || 0;
 
   const claudeHtml = `
-    <div class="dashboard-grid dashboard-grid-single">
-      <section class="dashboard-card dashboard-panel span-6 dashboard-anim-card" style="--dashboard-delay:20ms">
-        <div class="dashboard-card-title">Claude Code · 状态</div>
-        <div class="dashboard-list">
-          <div class="dashboard-row"><span>登录状态</span><strong>${escapeHtml(claude.login?.loggedIn ? '已登录' : '未登录')}</strong></div>
-          <div class="dashboard-row"><span>登录方式</span><strong>${escapeHtml(claude.login?.method || '未检测')}</strong></div>
-          <div class="dashboard-row"><span>当前模型</span><strong>${escapeHtml(claude.model || '未设置')}</strong></div>
-          <div class="dashboard-row"><span>API Key</span><strong>${escapeHtml(claude.maskedApiKey ? '已配置' : '未配置')}</strong></div>
+    <div class="db2-layout">
+      ${statStrip([
+        { label: '总 Token', value: formatDashboardMetric(claudeTotal), sub: claudeTotal ? '本地累计' : '暂无数据', accent: true },
+        { label: '输入', value: formatDashboardMetric(claudeInput), sub: claudeTotal ? Math.round(claudeInput / claudeTotal * 100) + '%' : '–' },
+        { label: '输出', value: formatDashboardMetric(claudeOutput), sub: claudeTotal ? Math.round(claudeOutput / claudeTotal * 100) + '%' : '–' },
+        { label: '缓存读', value: formatDashboardMetric(claudeCacheRead), sub: claudeTotal ? Math.round(claudeCacheRead / claudeTotal * 100) + '%' : '–' },
+        { label: '缓存写', value: formatDashboardMetric(claudeCacheCreate), sub: '上下文填充' },
+        { label: '估算费用', value: claudeCost ? '$' + claudeCost.toFixed(4) : '$0.00', sub: '官方定价估算' },
+        { label: '认证状态', value: claude.login?.loggedIn ? '已登录' : claude.maskedApiKey ? 'API Key' : '待配置', sub: claude.model ? claude.model.slice(0, 16) : '未设置' },
+      ])}
+      <div class="db2-main-grid">
+        <!-- LEFT: Token Distribution -->
+        <div class="db2-col">
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">Token 分布</div>
+              <div class="db2-card-meta">输入 · 输出 · 缓存读 · 缓存写</div>
+            </div>
+            ${renderDashboardStackChart([
+              { label: '输入', value: claudeInput },
+              { label: '缓存读', value: claudeCacheRead },
+              { label: '输出', value: claudeOutput },
+              { label: '缓存写', value: claudeCacheCreate },
+            ])}
+            <div class="db2-dist-bars">
+              ${[['输入', claudeInput, '#5b8cff'], ['缓存读', claudeCacheRead, '#7c3aed'], ['输出', claudeOutput, '#22c55e'], ['缓存写', claudeCacheCreate, '#f59e0b']].map(([lbl, val, clr]) => {
+                const pct = claudeTotal ? Math.round(val / claudeTotal * 100) : 0;
+                return `<div class="db2-dist-bar-row"><span class="db2-dist-dot" style="background:${clr}"></span><span class="db2-dist-label">${escapeHtml(lbl)}</span><div class="db2-dist-track"><div class="db2-dist-fill" style="width:${pct}%;background:${clr}22;border-left:2px solid ${clr}"></div></div><span class="db2-dist-val">${formatDashboardMetric(val)}</span><span class="db2-dist-pct">${pct}%</span></div>`;
+              }).join('')}
+            </div>
+          </div>
+
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">用量详情</div>
+              <div class="db2-card-meta">绝对数值</div>
+            </div>
+            ${miniBars([
+              { label: '输入', value: claudeInput ? 100 : 4, meta: claudeInput },
+              { label: '输出', value: claudeOutput ? Math.max(4, Math.round(claudeOutput / Math.max(claudeInput, 1) * 100)) : 4, meta: claudeOutput },
+              { label: '缓存读', value: claudeCacheRead ? Math.max(4, Math.round(claudeCacheRead / Math.max(claudeInput, 1) * 100)) : 4, meta: claudeCacheRead },
+              { label: '缓存写', value: claudeCacheCreate ? Math.max(4, Math.round(claudeCacheCreate / Math.max(claudeInput, 1) * 100)) : 4, meta: claudeCacheCreate },
+            ])}
+          </div>
         </div>
-      </section>
-      <section class="dashboard-card dashboard-panel span-6 dashboard-anim-card" style="--dashboard-delay:80ms">
-        <div class="dashboard-card-title">Claude Code · 可行性</div>
-        ${miniBars([
-          { label: '登录', value: claude.login?.loggedIn ? 100 : 12, meta: claude.login?.loggedIn ? '已登录' : '未登录' },
-          { label: '模型', value: claude.model ? 88 : 16, meta: claude.model || '未设置' },
-          { label: 'Token', value: 24, meta: '后续补' },
-        ])}
-      </section>
+
+        <!-- RIGHT: Account status -->
+        <div class="db2-col">
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">账号状态</div>
+            </div>
+            ${kvList([
+              { label: '登录状态', value: claude.login?.loggedIn ? '已登录 ✓' : '未登录' },
+              { label: '登录方式', value: claude.login?.method || '未检测' },
+              { label: '当前模型', value: claude.model || '未设置' },
+              { label: 'API Key', value: claude.maskedApiKey || '未配置' },
+              { label: 'Base URL', value: claude.envVars?.ANTHROPIC_BASE_URL?.set ? claude.envVars.ANTHROPIC_BASE_URL.value : '官方默认' },
+              { label: '估算成本', value: claudeCost ? '$' + claudeCost.toFixed(6) : '$0.000000', accent: !!claudeCost },
+            ])}
+          </div>
+        </div>
+      </div>
     </div>`;
 
+  // ── OpenClaw HTML ──
   const openclawHtml = `
-    <div class="dashboard-grid dashboard-grid-single">
-      <section class="dashboard-card dashboard-panel span-6 dashboard-anim-card" style="--dashboard-delay:20ms">
-        <div class="dashboard-card-title">OpenClaw · 运行状态</div>
-        <div class="dashboard-list">
-          <div class="dashboard-row"><span>Gateway 状态</span><strong>${escapeHtml(getOpenClawGatewayStatusLabel(openclaw))}</strong></div>
-          <div class="dashboard-row"><span>Gateway URL</span><strong>${escapeHtml(openclaw.gatewayUrl || '-')}</strong></div>
-          <div class="dashboard-row"><span>渠道数量</span><strong>${escapeHtml(String(openclawChannels.length))}</strong></div>
-          <div class="dashboard-row"><span>Provider 数量</span><strong>${escapeHtml(String(openclawProviders.length))}</strong></div>
-          <div class="dashboard-row"><span>端口冲突</span><strong>${escapeHtml(openclaw.gatewayPortConflict ? '有' : '无')}</strong></div>
+    <div class="db2-layout">
+      ${statStrip([
+        { label: 'Gateway', value: getOpenClawGatewayStatusLabel(openclaw), sub: openclaw.gatewayUrl || '–', accent: openclaw.gatewayReachable },
+        { label: '渠道数', value: String(openclawChannels.length), sub: openclawChannels.slice(0, 3).map(c => c.label).join('、') || '–' },
+        { label: 'Provider', value: String(openclawProviders.length), sub: '已配置接入' },
+        { label: '端口监听', value: openclaw.gatewayPortListening ? '活跃' : '未检测', sub: '本地 Gateway 端口' },
+        { label: '端口冲突', value: openclaw.gatewayPortConflict ? '⚠ 有冲突' : '无', sub: '' },
+      ])}
+      <div class="db2-main-grid">
+        <!-- LEFT: Gateway details -->
+        <div class="db2-col">
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">Gateway 状态详情</div>
+            </div>
+            ${kvList([
+              { label: 'Gateway 状态', value: getOpenClawGatewayStatusLabel(openclaw) },
+              { label: 'Gateway URL', value: openclaw.gatewayUrl || '–' },
+              { label: '端口监听', value: openclaw.gatewayPortListening ? '是' : '否' },
+              { label: '可达性', value: openclaw.gatewayReachable ? '✓ 已连通' : '✗ 不可达' },
+              { label: '端口冲突', value: openclaw.gatewayPortConflict ? '⚠ 存在冲突' : '无' },
+            ])}
+          </div>
         </div>
-      </section>
-      <section class="dashboard-card dashboard-panel span-6 dashboard-anim-card" style="--dashboard-delay:80ms">
-        <div class="dashboard-card-title">OpenClaw · 数据能力</div>
-        ${miniBars([
-          { label: 'Gateway', value: openclaw.gatewayReachable ? 100 : openclaw.gatewayPortListening ? 72 : 12, meta: getOpenClawGatewayStatusLabel(openclaw) },
-          { label: '渠道', value: Math.min(100, openclawChannels.length * 18), meta: openclawChannels.length },
-          { label: 'Provider', value: Math.min(100, openclawProviders.length * 18), meta: openclawProviders.length },
-          { label: 'Usage', value: 94, meta: '可继续接入' },
-        ])}
-      </section>
+
+        <!-- RIGHT: Channels + Providers -->
+        <div class="db2-col">
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">渠道列表</div>
+              <div class="db2-card-meta">${openclawChannels.length} 个</div>
+            </div>
+            ${openclawChannels.length ? kvList(openclawChannels.map(c => ({ label: c.label, value: c.key }))) : '<div class="db2-empty">暂无已配置渠道</div>'}
+          </div>
+
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">Provider 列表</div>
+              <div class="db2-card-meta">${openclawProviders.length} 个</div>
+            </div>
+            ${miniBars(openclawProviders.slice(0, 6).map((p) => ({ label: p.key, value: 88, meta: p.api })))}
+            ${!openclawProviders.length ? '<div class="db2-empty">暂无已配置 Provider</div>' : ''}
+          </div>
+        </div>
+      </div>
     </div>`;
 
   const content = dashboardTool === 'codex'
@@ -3324,7 +3584,7 @@ function renderDashboardPage() {
       ? claudeHtml
       : dashboardTool === 'openclaw'
         ? openclawHtml
-        : overviewHtml;
+        : codexHtml;
 
   root.innerHTML = `
     <div class="dashboard-shell ${isLoading ? 'is-loading' : ''}">
@@ -3332,9 +3592,8 @@ function renderDashboardPage() {
         <div class="dashboard-tabs">
           ${tabs.map((item) => `<button type="button" class="dashboard-tab ${item.key === dashboardTool ? 'active' : ''}" data-dashboard-tool="${item.key}">${escapeHtml(item.label)}</button>`).join('')}
         </div>
-        ${dashboardTool === 'codex' ? `<div class="dashboard-toolbar-actions"><div class="dashboard-fetch-state ${isLoading ? 'loading' : ''}">${escapeHtml(isLoading ? '正在统计本地 Codex token…' : (lastUpdated || '统计已完成'))}</div><button type="button" class="dashboard-refresh-btn ${state.dashboardRefreshing ? 'is-busy' : ''}" data-dashboard-refresh ${state.dashboardRefreshing ? 'disabled' : ''}>${escapeHtml(state.dashboardRefreshing ? '刷新中…' : '手动刷新')}</button></div>` : ''}
+        ${showDashboardRefresh ? `<div class="dashboard-toolbar-actions"><div class="dashboard-fetch-state ${isLoading ? 'loading' : ''}">${escapeHtml(dashboardStatusText)}</div><label class="dashboard-refresh-select-wrap"><span>${escapeHtml(autoRefreshLabel)}</span><select class="dashboard-refresh-select" data-dashboard-auto-refresh>${renderDashboardAutoRefreshOptions()}</select></label><button type="button" class="dashboard-refresh-btn ${state.dashboardRefreshing ? 'is-busy' : ''}" data-dashboard-refresh ${state.dashboardRefreshing ? 'disabled' : ''}>${escapeHtml(state.dashboardRefreshing ? '刷新中…' : '手动刷新')}</button></div>` : ''}
       </div>
-      ${isLoading && !hasCodexMetrics ? '<div class="dashboard-inline-note">首次进入会先扫描本地会话文件，通常只需几秒，完成后会自动缓存。</div>' : ''}
       ${content}
     </div>
   `;
@@ -3349,32 +3608,55 @@ function renderDashboardStatCard(label, value, sub = '') {
 
 function renderDashboardLineChart(series = [], { stroke = '#5b8cff' } = {}) {
   if (!series.length) return '<div class="dashboard-empty-note">暂无趋势数据。</div>';
-  const width = 560;
-  const height = 180;
-  const padX = 10;
-  const padY = 14;
+  const W = 600;
+  const H = 200;
+  const padX = 6;
+  const padY = 16;
   const values = series.map((item) => Number(item.value || 0));
   const max = Math.max(...values, 1);
-  const step = series.length > 1 ? (width - padX * 2) / (series.length - 1) : 0;
-  const points = series.map((item, index) => {
-    const x = padX + step * index;
-    const y = height - padY - ((Number(item.value || 0) / max) * (height - padY * 2));
-    return `${x},${y}`;
-  }).join(' ');
+  const step = series.length > 1 ? (W - padX * 2) / (series.length - 1) : 0;
+  const pts = series.map((item, i) => {
+    const x = padX + step * i;
+    const y = H - padY - ((Number(item.value || 0) / max) * (H - padY * 2));
+    return [x, y];
+  });
+  const polyline = pts.map(([x, y]) => `${x},${y}`).join(' ');
+  // Area polygon: line + bottom right + bottom left
+  const areaPath = pts.length > 1 ? `${pts.map(([x, y]) => `${x},${y}`).join(' ')} ${pts[pts.length - 1][0]},${H - padY} ${pts[0][0]},${H - padY}` : '';
+  // Grid lines Y
+  const gridLines = [0.25, 0.5, 0.75, 1.0].map((frac) => {
+    const y = H - padY - frac * (H - padY * 2);
+    const label = formatDashboardMetric(max * frac);
+    return `<line x1="${padX}" y1="${y}" x2="${W - padX}" y2="${y}" stroke="rgba(255,255,255,0.06)" stroke-width="1"/><text x="${padX + 2}" y="${y - 3}" font-size="9" fill="rgba(255,255,255,0.28)">${label}</text>`;
+  }).join('');
+  // Label every ~5th data point
+  const labelStep = Math.max(1, Math.floor(series.length / 6));
+  const xLabels = pts.map(([x, y], i) => {
+    if (i % labelStep !== 0 && i !== series.length - 1) return '';
+    return `<text x="${x}" y="${H - 1}" font-size="9" text-anchor="middle" fill="rgba(255,255,255,0.30)">${escapeHtml(series[i].label)}</text>`;
+  }).join('');
+  // Tooltip circles
+  const circles = pts.map(([x, y], i) => {
+    const v = formatDashboardMetricFull(series[i].value || 0);
+    return `<circle cx="${x}" cy="${y}" r="3" fill="${stroke}" opacity="0" class="db2-chart-dot"><title>${escapeHtml(series[i].label + ': ' + v)}</title></circle>`;
+  }).join('');
+  const gradId = 'dbLineFill_' + stroke.replace('#', '');
   return `
-    <div class="dashboard-chart">
-      <svg class="dashboard-chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
+    <div class="db2-chart-wrap">
+      <svg class="db2-chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
         <defs>
-          <linearGradient id="dashboardLineFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stop-color="${stroke}" stop-opacity="0.28" />
-            <stop offset="100%" stop-color="${stroke}" stop-opacity="0.02" />
+          <linearGradient id="${gradId}" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stop-color="${stroke}" stop-opacity="0.35"/>
+            <stop offset="100%" stop-color="${stroke}" stop-opacity="0.02"/>
           </linearGradient>
         </defs>
-        <polyline fill="none" stroke="${stroke}" stroke-width="3" points="${points}" />
+        ${gridLines}
+        ${areaPath ? `<polygon fill="url(#${gradId})" points="${areaPath}"/>` : ''}
+        <polyline fill="none" stroke="${stroke}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" points="${polyline}"/>
+        ${circles}
+        ${xLabels}
       </svg>
-      <div class="dashboard-chart-legend">${series.map((item) => `<span title="${escapeHtml(formatDashboardMetricFull(item.value || 0))}"><span class="dashboard-legend-dot" style="background:${stroke}"></span>${escapeHtml(item.label)} · ${escapeHtml(formatDashboardMetric(item.value || 0))}</span>`).join('')}</div>
-    </div>
-  `;
+    </div>`;
 }
 
 function renderDashboardStackChart(items = []) {
@@ -3384,8 +3666,7 @@ function renderDashboardStackChart(items = []) {
     <div class="dashboard-chart">
       <div class="dashboard-stack-track">${items.map((item, index) => `<div class="dashboard-stack-segment" style="width:${(Number(item.value || 0) / total) * 100}%;background:${['#5b8cff','#7c3aed','#22c55e','#f59e0b'][index % 4]}" title="${escapeHtml(formatDashboardMetricFull(item.value || 0))}"></div>`).join('')}</div>
       <div class="dashboard-chart-legend">${items.map((item, index) => `<span title="${escapeHtml(formatDashboardMetricFull(item.value || 0))}"><span class="dashboard-legend-dot" style="background:${['#5b8cff','#7c3aed','#22c55e','#f59e0b'][index % 4]}"></span>${escapeHtml(item.label)} · ${escapeHtml(formatDashboardMetric(item.value || 0))}</span>`).join('')}</div>
-    </div>
-  `;
+    </div>`;
 }
 
 async function refreshDashboardData({ force = false, silent = false } = {}) {
@@ -3395,17 +3676,15 @@ async function refreshDashboardData({ force = false, silent = false } = {}) {
   if (state.activePage === 'dashboard') renderDashboardPage();
 
   try {
-    await loadState({ preserveForm: true });
-    await loadClaudeCodeQuickState();
-    await loadOpenClawQuickState();
+    void loadDashboardSideStates().catch(() => {});
 
     const params = new URLSearchParams({
-      codexHome: el('codexHomeInput')?.value?.trim() || state.current?.codexHome || '',
+      codexHome: getDashboardCodexHome(),
       days: '30',
     });
     if (force) params.set('force', '1');
-    const json = await api(`/api/dashboard/codex-usage?${params.toString()}`, { timeoutMs: 20000 });
-    if (json.ok && json.data) {
+    const json = await api(`/api/dashboard/codex-usage?${params.toString()}`, { timeoutMs: force ? 120000 : 20000 });
+    if (json.ok && json.data && json.data.totals && typeof json.data.totals === 'object') {
       state.dashboardMetrics.codex = json.data;
       state.dashboardMetricsFetchedAt = Date.now();
     }
@@ -5551,10 +5830,19 @@ function setPage(page = 'quick') {
     if (!state.consoleRefreshing) void refreshToolConsoleData();
   }
   if (page === 'dashboard') {
-    if (!state.dashboardMetrics.codex) state.dashboardLoading = true;
+    const hasCachedMetrics = Boolean(state.dashboardMetrics.codex);
+    if (!hasCachedMetrics) state.dashboardLoading = true;
     renderDashboardPage();
     startDashboardAutoRefresh();
-    void refreshDashboardData();
+    void loadDashboardSideStates().then(() => {
+      if (state.activePage === 'dashboard') renderDashboardPage();
+    });
+    if (state.dashboardTool === 'claudecode') {
+      void ensureClaudeDashboardData().then(() => {
+        if (state.activePage === 'dashboard') renderDashboardPage();
+      });
+    }
+    void refreshDashboardData({ silent: hasCachedMetrics });
   }
   if (page === 'configEditor') {
     applyConfigEditorSearch();
@@ -10570,9 +10858,9 @@ function bindEvents() {
       scope: el('scopeSelect').value || 'global',
       projectPath: el('projectPathInput').value.trim(),
       codexHome: el('codexHomeInput').value.trim(),
-      patch,
+      settings: patch,
     };
-    const json = await api('/api/config/patch', {
+    const json = await api('/api/config/settings-save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -10923,15 +11211,38 @@ function bindEvents() {
   el('dashboardPage')?.addEventListener('click', async (e) => {
     const tab = e.target.closest('[data-dashboard-tool]');
     if (tab) {
-      state.dashboardTool = tab.dataset.dashboardTool || 'overview';
+      state.dashboardTool = tab.dataset.dashboardTool || 'codex';
       renderDashboardPage();
+      if (state.dashboardTool === 'claudecode') {
+        await ensureClaudeDashboardData();
+        renderDashboardPage();
+      }
       return;
     }
     const refreshBtn = e.target.closest('[data-dashboard-refresh]');
     if (refreshBtn) {
       e.preventDefault();
+      if (state.dashboardTool === 'claudecode') {
+        state.dashboardRefreshing = true;
+        state.dashboardLoading = true;
+        renderDashboardPage();
+        await ensureClaudeDashboardData({ force: true });
+        state.dashboardRefreshing = false;
+        state.dashboardLoading = false;
+        renderDashboardPage();
+        return;
+      }
       await refreshDashboardData({ force: true });
     }
+  });
+
+  el('dashboardPage')?.addEventListener('change', (e) => {
+    const select = e.target.closest('[data-dashboard-auto-refresh]');
+    if (!select) return;
+    state.dashboardAutoRefreshMs = Math.max(0, Number(select.value) || 0);
+    localStorage.setItem(DASHBOARD_AUTO_REFRESH_STORAGE_KEY, String(state.dashboardAutoRefreshMs));
+    startDashboardAutoRefresh();
+    flash(state.dashboardAutoRefreshMs > 0 ? `仪表板已改为每 ${Math.round(state.dashboardAutoRefreshMs / 60000)} 分钟自动刷新` : '仪表板自动刷新已关闭', 'success');
   });
 
   el('toolConsolePage')?.addEventListener('click', async (e) => {

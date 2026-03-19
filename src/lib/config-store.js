@@ -194,6 +194,313 @@ function addCodexUsageTotals(target, usage = {}) {
   target.total += Number(usage.total_tokens || 0);
 }
 
+function normalizeCodexUsageSnapshot(usage = {}) {
+  return {
+    input_tokens: Math.max(0, Number(usage.input_tokens || 0)),
+    cached_input_tokens: Math.max(0, Number(usage.cached_input_tokens || 0)),
+    output_tokens: Math.max(0, Number(usage.output_tokens || 0)),
+    reasoning_output_tokens: Math.max(0, Number(usage.reasoning_output_tokens || 0)),
+    total_tokens: Math.max(0, Number(usage.total_tokens || 0)),
+  };
+}
+
+function diffCodexUsageSnapshot(current = {}, previous = null) {
+  const currentSnapshot = normalizeCodexUsageSnapshot(current);
+  if (!previous) return currentSnapshot;
+  return {
+    input_tokens: Math.max(0, currentSnapshot.input_tokens - Number(previous.input_tokens || 0)),
+    cached_input_tokens: Math.max(0, currentSnapshot.cached_input_tokens - Number(previous.cached_input_tokens || 0)),
+    output_tokens: Math.max(0, currentSnapshot.output_tokens - Number(previous.output_tokens || 0)),
+    reasoning_output_tokens: Math.max(0, currentSnapshot.reasoning_output_tokens - Number(previous.reasoning_output_tokens || 0)),
+    total_tokens: Math.max(0, currentSnapshot.total_tokens - Number(previous.total_tokens || 0)),
+  };
+}
+
+function normalizeUnixTimestampMs(value) {
+  const raw = Number(value || 0);
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return raw > 1e12 ? raw : raw * 1000;
+}
+
+function resolveMaybeHomePath(input, fallbackDir = os.homedir()) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  const expanded = raw === '~'
+    ? os.homedir()
+    : (raw.startsWith('~/') ? path.join(os.homedir(), raw.slice(2)) : raw);
+  return path.resolve(fallbackDir, expanded);
+}
+
+async function listCodexSqliteCandidates(codexHome) {
+  const normalizedCodexHome = path.resolve(codexHome);
+  const configToml = parseToml(await readText(path.join(normalizedCodexHome, 'config.toml')));
+  const candidateRoots = [
+    resolveMaybeHomePath(configToml.sqlite_home || '', normalizedCodexHome),
+    normalizedCodexHome,
+  ].filter(Boolean);
+  const dbFiles = [];
+
+  for (const rootDir of [...new Set(candidateRoots)]) {
+    let entries = [];
+    try {
+      entries = await fs.readdir(rootDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !/^state.*\.sqlite$/i.test(entry.name)) continue;
+      const filePath = path.join(rootDir, entry.name);
+      try {
+        const stat = await fs.stat(filePath);
+        dbFiles.push({ filePath, mtimeMs: stat.mtimeMs || 0 });
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return dbFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+async function getSqliteTableColumns(sqlite3Path, dbPath, tableName) {
+  const schemaResult = await runCommand(sqlite3Path, [
+    '-json',
+    dbPath,
+    `PRAGMA table_info(${tableName});`,
+  ]);
+  if (!schemaResult.ok) return null;
+
+  try {
+    const rows = JSON.parse(String(schemaResult.stdout || '[]'));
+    return new Set(
+      Array.isArray(rows)
+        ? rows.map((row) => String(row?.name || '').trim()).filter(Boolean)
+        : []
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function listRecentCodexSessionFilesFromSqlite(codexHome, dayCount) {
+  const sqlite3Path = commandExists('sqlite3');
+  if (!sqlite3Path) return [];
+
+  const dbEntry = (await listCodexSqliteCandidates(codexHome))[0];
+  if (!dbEntry?.filePath) return [];
+
+  const availableColumns = await getSqliteTableColumns(sqlite3Path, dbEntry.filePath, 'threads');
+  if (!availableColumns?.has('rollout_path') || !availableColumns.has('updated_at')) return [];
+
+  const result = await runCommand(sqlite3Path, [
+    '-json',
+    dbEntry.filePath,
+    `SELECT rollout_path
+     FROM threads
+     WHERE updated_at >= strftime('%s', 'now', '-${dayCount} days')
+       AND rollout_path != ''
+     ORDER BY updated_at DESC`.replace(/\s+/g, ' ').trim(),
+  ]);
+  if (!result.ok) return [];
+
+  let rows = [];
+  try {
+    rows = JSON.parse(String(result.stdout || '[]'));
+  } catch {
+    return [];
+  }
+
+  const files = [];
+  const seen = new Set();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const filePath = String(row?.rollout_path || '').trim();
+    if (!filePath || seen.has(filePath) || !existsSync(filePath)) continue;
+    seen.add(filePath);
+    files.push(filePath);
+  }
+  return files;
+}
+
+function sqliteLiteral(value) {
+  return `'${String(value ?? '').replace(/'/g, "''")}'`;
+}
+
+function dashboardCacheDbPath() {
+  return path.join(appHome(), 'dashboard-cache.sqlite');
+}
+
+async function ensureDashboardCacheSqlite() {
+  const sqlite3Path = commandExists('sqlite3');
+  if (!sqlite3Path) return null;
+
+  const dbPath = dashboardCacheDbPath();
+  await fs.mkdir(path.dirname(dbPath), { recursive: true });
+
+  const result = await runCommand(sqlite3Path, [
+    dbPath,
+    `CREATE TABLE IF NOT EXISTS codex_usage_cache (
+      codex_home TEXT NOT NULL,
+      days INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      source_type TEXT NOT NULL DEFAULT 'sessions',
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (codex_home, days)
+    );`.replace(/\s+/g, ' ').trim(),
+  ]);
+  if (!result.ok) return null;
+  return { sqlite3Path, dbPath };
+}
+
+async function readCodexUsageFromDashboardCacheSqlite(codexHome, dayCount) {
+  const cache = await ensureDashboardCacheSqlite();
+  if (!cache) return null;
+
+  const result = await runCommand(cache.sqlite3Path, [
+    '-json',
+    cache.dbPath,
+    `SELECT payload, updated_at
+     FROM codex_usage_cache
+     WHERE codex_home = ${sqliteLiteral(path.resolve(codexHome))}
+       AND days = ${Math.max(1, Number(dayCount) || 30)}
+     LIMIT 1`.replace(/\s+/g, ' ').trim(),
+  ]);
+  if (!result.ok) return null;
+
+  let rows = [];
+  try {
+    rows = JSON.parse(String(result.stdout || '[]'));
+  } catch {
+    return null;
+  }
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row?.payload) return null;
+
+  try {
+    const payload = JSON.parse(String(row.payload));
+    if (!payload || typeof payload !== 'object') return null;
+    payload.cacheUpdatedAt = Number(row.updated_at || 0) || Date.now();
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+async function saveCodexUsageToDashboardCacheSqlite(codexHome, dayCount, metrics) {
+  const cache = await ensureDashboardCacheSqlite();
+  if (!cache || !metrics || typeof metrics !== 'object') return false;
+
+  const payload = JSON.stringify(metrics);
+  const updatedAt = Date.now();
+  const sql = `
+    INSERT INTO codex_usage_cache (codex_home, days, payload, source_type, updated_at)
+    VALUES (${sqliteLiteral(path.resolve(codexHome))}, ${Math.max(1, Number(dayCount) || 30)}, ${sqliteLiteral(payload)}, ${sqliteLiteral(String(metrics.sourceType || 'sessions'))}, ${updatedAt})
+    ON CONFLICT(codex_home, days) DO UPDATE SET
+      payload = excluded.payload,
+      source_type = excluded.source_type,
+      updated_at = excluded.updated_at;
+  `.replace(/\s+/g, ' ').trim();
+
+  const result = await runCommand(cache.sqlite3Path, [cache.dbPath, sql]);
+  return Boolean(result.ok);
+}
+
+async function readCodexUsageFromSqlite(codexHome, dayCount) {
+  const sqlite3Path = commandExists('sqlite3');
+  if (!sqlite3Path) return null;
+
+  const dbEntry = (await listCodexSqliteCandidates(codexHome))[0];
+  if (!dbEntry?.filePath) return null;
+
+  const availableColumns = await getSqliteTableColumns(sqlite3Path, dbEntry.filePath, 'threads');
+  if (!availableColumns?.has('id') || !availableColumns.has('updated_at') || !availableColumns.has('created_at') || !availableColumns.has('tokens_used')) {
+    return null;
+  }
+
+  const selectExpr = [
+    'id',
+    'updated_at',
+    'created_at',
+    availableColumns.has('model_provider') ? 'model_provider' : "'' AS model_provider",
+    availableColumns.has('model') ? 'model' : "'' AS model",
+    availableColumns.has('cwd') ? 'cwd' : "'' AS cwd",
+    availableColumns.has('title') ? 'title' : "'' AS title",
+    'tokens_used',
+  ].join(', ');
+
+  const result = await runCommand(sqlite3Path, [
+    '-json',
+    dbEntry.filePath,
+    `SELECT ${selectExpr}
+     FROM threads
+     WHERE updated_at >= strftime('%s', 'now', '-${dayCount} days')
+     ORDER BY updated_at DESC`.replace(/\s+/g, ' ').trim(),
+  ]);
+  if (!result.ok) return null;
+
+  let rows = [];
+  try {
+    rows = JSON.parse(String(result.stdout || '[]'));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(rows)) return null;
+
+  const totals = createCodexUsageTotals();
+  const byDay = new Map();
+  const byProvider = new Map();
+  const byModel = new Map();
+  const sessions = [];
+
+  for (const row of rows) {
+    const totalTokens = Number(row?.tokens_used || 0);
+    const updatedAt = normalizeUnixTimestampMs(row?.updated_at || row?.created_at || 0);
+    if (!updatedAt) continue;
+
+    totals.total += totalTokens;
+    const providerKey = String(row?.model_provider || 'unknown').trim() || 'unknown';
+    const modelKey = String(row?.model || 'unknown').trim() || 'unknown';
+    const dayKey = new Date(updatedAt).toISOString().slice(0, 10);
+
+    if (!byDay.has(dayKey)) byDay.set(dayKey, createCodexUsageTotals());
+    byDay.get(dayKey).total += totalTokens;
+
+    if (!byProvider.has(providerKey)) byProvider.set(providerKey, { provider: providerKey, totals: createCodexUsageTotals(), events: 0 });
+    byProvider.get(providerKey).totals.total += totalTokens;
+    byProvider.get(providerKey).events += 1;
+
+    if (!byModel.has(modelKey)) byModel.set(modelKey, { model: modelKey, totals: createCodexUsageTotals(), events: 0 });
+    byModel.get(modelKey).totals.total += totalTokens;
+    byModel.get(modelKey).events += 1;
+
+    sessions.push({
+      sessionId: String(row?.id || '').trim(),
+      provider: providerKey,
+      model: modelKey,
+      cwd: String(row?.cwd || '').trim(),
+      updatedAt,
+      input: 0,
+      cachedInput: 0,
+      output: 0,
+      reasoning: 0,
+      total: totalTokens,
+      title: String(row?.title || '').trim(),
+    });
+  }
+
+  return {
+    ok: true,
+    days: dayCount,
+    source: dbEntry.filePath,
+    sourceType: 'sqlite',
+    generatedAt: new Date().toISOString(),
+    totals,
+    daily: [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, sum]) => ({ date, ...sum })),
+    providers: [...byProvider.values()].sort((a, b) => b.totals.total - a.totals.total),
+    models: [...byModel.values()].sort((a, b) => b.totals.total - a.totals.total),
+    sessions: sessions.slice(0, 12),
+  };
+}
+
 async function listFilesRecursive(rootDir) {
   const result = [];
   async function walk(currentDir) {
@@ -213,18 +520,32 @@ async function listFilesRecursive(rootDir) {
   return result;
 }
 
-export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), days = 30 } = {}) {
+export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), days = 30, force = false, cacheOnly = false } = {}) {
   const normalizedCodexHome = path.resolve(codexHome);
   const sessionsRoot = path.join(normalizedCodexHome, 'sessions');
   const dayCount = Math.max(1, Math.min(90, Number(days) || 30));
+  const cacheUsage = await readCodexUsageFromDashboardCacheSqlite(normalizedCodexHome, dayCount);
+  if (!force && cacheUsage) {
+    return {
+      ...cacheUsage,
+      sourceType: cacheUsage.sourceType || 'dashboard-cache-sqlite',
+      source: cacheUsage.source || dashboardCacheDbPath(),
+    };
+  }
+  const sqliteUsage = await readCodexUsageFromSqlite(normalizedCodexHome, dayCount);
+  if ((cacheOnly || !force) && sqliteUsage && ((sqliteUsage.sessions && sqliteUsage.sessions.length) || sqliteUsage.totals?.total)) {
+    return sqliteUsage;
+  }
   const now = Date.now();
   const windowStartMs = now - dayCount * 24 * 60 * 60 * 1000;
   const totals = createCodexUsageTotals();
   const byDay = new Map();
   const byProvider = new Map();
+  const byModel = new Map();
   const bySession = new Map();
+  const sessionFiles = await listRecentCodexSessionFilesFromSqlite(normalizedCodexHome, dayCount);
 
-  for (const filePath of await listFilesRecursive(sessionsRoot)) {
+  for (const filePath of (sessionFiles.length ? sessionFiles : await listFilesRecursive(sessionsRoot))) {
     if (!filePath.endsWith('.jsonl')) continue;
     let content = '';
     try {
@@ -235,6 +556,7 @@ export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), day
     let sessionId = '';
     let provider = '';
     let cwd = '';
+    let currentModel = '';
     for (const line of content.split(/\r?\n/)) {
       if (!line.trim()) continue;
       let event;
@@ -243,26 +565,18 @@ export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), day
         sessionId = String(event.payload?.id || sessionId || '').trim();
         provider = String(event.payload?.model_provider || provider || '').trim();
         cwd = String(event.payload?.cwd || cwd || '').trim();
+        // Try to extract model name from session_meta
+        const sessionModel = String(event.payload?.model || '').trim();
+        if (sessionModel) currentModel = sessionModel;
         continue;
       }
       const payload = event.payload || {};
       if (event.type !== 'event_msg' || payload.type !== 'token_count') continue;
       const ts = Date.parse(String(event.timestamp || ''));
       if (!Number.isFinite(ts) || ts < windowStartMs) continue;
-      const usage = payload.info?.last_token_usage || payload.info?.total_token_usage;
-      if (!usage) continue;
-
-      addCodexUsageTotals(totals, usage);
-      const dayKey = new Date(ts).toISOString().slice(0, 10);
-      if (!byDay.has(dayKey)) byDay.set(dayKey, createCodexUsageTotals());
-      addCodexUsageTotals(byDay.get(dayKey), usage);
-
-      const providerKey = provider || 'unknown';
-      if (!byProvider.has(providerKey)) byProvider.set(providerKey, { provider: providerKey, totals: createCodexUsageTotals(), events: 0 });
-      addCodexUsageTotals(byProvider.get(providerKey).totals, usage);
-      byProvider.get(providerKey).events += 1;
-
       const sessionKey = sessionId || path.basename(filePath, '.jsonl');
+      const providerKey = provider || 'unknown';
+
       if (!bySession.has(sessionKey)) {
         bySession.set(sessionKey, {
           sessionId: sessionKey,
@@ -270,19 +584,53 @@ export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), day
           cwd,
           totals: createCodexUsageTotals(),
           updatedAt: ts,
+          lastTotalUsage: null,
+          lastUsageSignature: '',
         });
       }
+
       const item = bySession.get(sessionKey);
-      addCodexUsageTotals(item.totals, usage);
       item.updatedAt = Math.max(item.updatedAt || ts, ts);
       if (!item.cwd && cwd) item.cwd = cwd;
       if (!item.provider && providerKey) item.provider = providerKey;
+
+      const totalUsage = payload.info?.total_token_usage;
+      let usage = null;
+      if (totalUsage) {
+        usage = diffCodexUsageSnapshot(totalUsage, item.lastTotalUsage);
+        item.lastTotalUsage = normalizeCodexUsageSnapshot(totalUsage);
+      } else if (payload.info?.last_token_usage) {
+        const lastUsage = normalizeCodexUsageSnapshot(payload.info.last_token_usage);
+        const signature = JSON.stringify(lastUsage);
+        if (signature === item.lastUsageSignature) continue;
+        item.lastUsageSignature = signature;
+        usage = lastUsage;
+      }
+      if (!usage || !usage.total_tokens) continue;
+
+      addCodexUsageTotals(totals, usage);
+      const dayKey = new Date(ts).toISOString().slice(0, 10);
+      if (!byDay.has(dayKey)) byDay.set(dayKey, createCodexUsageTotals());
+      addCodexUsageTotals(byDay.get(dayKey), usage);
+
+      if (!byProvider.has(providerKey)) byProvider.set(providerKey, { provider: providerKey, totals: createCodexUsageTotals(), events: 0 });
+      addCodexUsageTotals(byProvider.get(providerKey).totals, usage);
+      byProvider.get(providerKey).events += 1;
+
+      // Track per-model usage
+      const modelKey = currentModel || payload.info?.model || 'unknown';
+      if (!byModel.has(modelKey)) byModel.set(modelKey, { model: modelKey, totals: createCodexUsageTotals(), events: 0 });
+      addCodexUsageTotals(byModel.get(modelKey).totals, usage);
+      byModel.get(modelKey).events += 1;
+
+      addCodexUsageTotals(item.totals, usage);
     }
   }
 
   const daily = [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([date, sum]) => ({ date, ...sum }));
   const providers = [...byProvider.values()].sort((a, b) => b.totals.total - a.totals.total);
-  const sessions = [...bySession.values()].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12).map((item) => ({
+  const models = [...byModel.values()].sort((a, b) => b.totals.total - a.totals.total);
+  const sessions = [...bySession.values()].filter((item) => item.totals.total > 0).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 12).map((item) => ({
     sessionId: item.sessionId,
     provider: item.provider,
     cwd: item.cwd,
@@ -290,15 +638,25 @@ export async function getCodexUsageMetrics({ codexHome = defaultCodexHome(), day
     ...item.totals,
   }));
 
-  return {
+  if (!sessions.length && sqliteUsage) {
+    return sqliteUsage;
+  }
+
+  const metrics = {
     ok: true,
     days: dayCount,
-    source: path.join(normalizedCodexHome, 'sessions'),
+    source: dashboardCacheDbPath(),
+    sourceType: 'dashboard-cache-sqlite',
+    generatedAt: new Date().toISOString(),
     totals,
     daily,
     providers,
+    models,
     sessions,
   };
+
+  await saveCodexUsageToDashboardCacheSqlite(normalizedCodexHome, dayCount, metrics);
+  return metrics;
 }
 
 function appHome() {
@@ -2196,7 +2554,76 @@ async function writeJsonFile(filePath, data) {
   await fs.writeFile(filePath, JSON.stringify(data, null, 2) + '\n', 'utf8');
 }
 
-export async function loadClaudeCodeState() {
+
+async function readClaudeTelemetryUsage({ days = 30 } = {}) {
+  const home = claudeCodeHome();
+  const telemetryRoot = path.join(home, 'telemetry');
+  const cutoffMs = Date.now() - Math.max(1, Math.min(90, Number(days) || 30)) * 24 * 60 * 60 * 1000;
+  const sessions = new Map();
+  const daily = new Map();
+  const totals = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0, cost: 0 };
+
+  for (const filePath of await listFilesRecursive(telemetryRoot)) {
+    if (!filePath.endsWith('.json')) continue;
+    let content = '';
+    try {
+      content = await fs.readFile(filePath, 'utf8');
+    } catch {
+      continue;
+    }
+    for (const line of content.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      let event;
+      try { event = JSON.parse(line); } catch { continue; }
+      const data = event?.event_data;
+      if (!data || data.event_name !== 'tengu_exit') continue;
+      const timestamp = Date.parse(String(data.client_timestamp || ''));
+      if (!Number.isFinite(timestamp) || timestamp < cutoffMs) continue;
+      let meta = {};
+      try { meta = JSON.parse(String(data.additional_metadata || '{}')); } catch { meta = {}; }
+      const sessionId = String(meta.last_session_id || data.session_id || '').trim() || `anon:${timestamp}`;
+      if (sessions.has(sessionId)) continue;
+      const item = {
+        sessionId,
+        model: String(data.model || '').trim(),
+        updatedAt: new Date(timestamp).toISOString(),
+        input: Number(meta.last_session_total_input_tokens || 0),
+        output: Number(meta.last_session_total_output_tokens || 0),
+        cacheCreation: Number(meta.last_session_total_cache_creation_input_tokens || 0),
+        cacheRead: Number(meta.last_session_total_cache_read_input_tokens || 0),
+        cost: Number(meta.last_session_cost || 0),
+      };
+      item.total = item.input + item.output;
+      sessions.set(sessionId, item);
+      totals.input += item.input;
+      totals.output += item.output;
+      totals.cacheCreation += item.cacheCreation;
+      totals.cacheRead += item.cacheRead;
+      totals.total += item.total;
+      totals.cost += item.cost;
+      const dayKey = item.updatedAt.slice(0, 10);
+      if (!daily.has(dayKey)) daily.set(dayKey, { date: dayKey, input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0, cost: 0 });
+      const bucket = daily.get(dayKey);
+      bucket.input += item.input;
+      bucket.output += item.output;
+      bucket.cacheCreation += item.cacheCreation;
+      bucket.cacheRead += item.cacheRead;
+      bucket.total += item.total;
+      bucket.cost += item.cost;
+    }
+  }
+
+  return {
+    days: Math.max(1, Math.min(90, Number(days) || 30)),
+    source: telemetryRoot,
+    generatedAt: new Date().toISOString(),
+    totals,
+    daily: [...daily.values()].sort((a, b) => a.date.localeCompare(b.date)),
+    sessions: [...sessions.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 12),
+  };
+}
+
+export async function loadClaudeCodeState(options = {}) {
   const home = claudeCodeHome();
   const settingsPath = path.join(home, 'settings.json');
   const settings = await readJsonFile(settingsPath);
@@ -2227,6 +2654,10 @@ export async function loadClaudeCodeState() {
     }
   }
 
+  const forceUsageRefresh = ['1', 'true', 'yes'].includes(String(options.forceUsageRefresh || '').toLowerCase());
+  const cacheOnly = ['1', 'true', 'yes'].includes(String(options.cacheOnly || '').toLowerCase());
+  const usage = cacheOnly ? await readClaudeTelemetryUsage({ days: 30 }) : await readClaudeTelemetryUsage({ days: 30 });
+
   return {
     toolId: 'claudecode',
     configHome: home,
@@ -2241,6 +2672,7 @@ export async function loadClaudeCodeState() {
     settingsEnv: settings.env || {},
     login,
     usedModels: [...usedModels].sort(),
+    usage,
   };
 }
 

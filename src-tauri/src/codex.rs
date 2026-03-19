@@ -1631,6 +1631,23 @@ fn list_jsonl_files(root: &Path) -> Vec<PathBuf> {
   result
 }
 
+fn list_all_files(root: &Path) -> Vec<PathBuf> {
+  let mut result = Vec::new();
+  let mut stack = vec![root.to_path_buf()];
+  while let Some(dir) = stack.pop() {
+    let Ok(entries) = fs::read_dir(&dir) else { continue; };
+    for entry in entries.flatten() {
+      let path = entry.path();
+      if path.is_dir() {
+        stack.push(path);
+      } else if path.is_file() {
+        result.push(path);
+      }
+    }
+  }
+  result
+}
+
 fn file_modified_ms(path: &Path) -> u64 {
   fs::metadata(path)
     .ok()
@@ -1664,7 +1681,84 @@ fn open_codex_usage_cache_db(db_path: &Path) -> Result<Connection, String> {
     )",
     [],
   ).map_err(|error| error.to_string())?;
+  connection.execute(
+    "CREATE TABLE IF NOT EXISTS claude_usage_cache (
+      cache_key TEXT PRIMARY KEY,
+      telemetry_root TEXT NOT NULL,
+      day_count INTEGER NOT NULL,
+      file_count INTEGER NOT NULL,
+      latest_mtime_ms INTEGER NOT NULL,
+      generated_at TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    )",
+    [],
+  ).map_err(|error| error.to_string())?;
   Ok(connection)
+}
+
+fn claude_usage_cache_key(telemetry_root: &Path, day_count: i64) -> String {
+  format!("{}::{}", telemetry_root.to_string_lossy(), day_count)
+}
+
+fn read_claude_usage_cache(cache_path: &Path, telemetry_root: &Path, day_count: i64, file_count: u64, latest_mtime_ms: u64, cache_only: bool) -> Option<Value> {
+  let connection = open_codex_usage_cache_db(cache_path).ok()?;
+  let cache_key = claude_usage_cache_key(telemetry_root, day_count);
+  let row = connection.query_row(
+    "SELECT telemetry_root, day_count, file_count, latest_mtime_ms, generated_at, payload_json FROM claude_usage_cache WHERE cache_key = ?1",
+    [cache_key],
+    |row| {
+      Ok((
+        row.get::<_, String>(0)?,
+        row.get::<_, i64>(1)?,
+        row.get::<_, u64>(2)?,
+        row.get::<_, u64>(3)?,
+        row.get::<_, String>(4)?,
+        row.get::<_, String>(5)?,
+      ))
+    },
+  ).optional().ok()??;
+  if row.0 != telemetry_root.to_string_lossy() || row.1 != day_count {
+    return None;
+  }
+  if cache_only {
+    return serde_json::from_str::<Value>(&row.5).ok();
+  }
+  if let Ok(generated_at) = chrono::DateTime::parse_from_rfc3339(&row.4) {
+    let age_secs = chrono::Utc::now().signed_duration_since(generated_at.with_timezone(&chrono::Utc)).num_seconds();
+    if age_secs >= 0 && age_secs <= CODEX_USAGE_CACHE_TTL_SECS {
+      return serde_json::from_str::<Value>(&row.5).ok();
+    }
+  }
+  if row.2 != file_count || row.3 != latest_mtime_ms {
+    return None;
+  }
+  serde_json::from_str::<Value>(&row.5).ok()
+}
+
+fn write_claude_usage_cache(cache_path: &Path, telemetry_root: &Path, day_count: i64, file_count: u64, latest_mtime_ms: u64, payload: &Value) {
+  let Ok(connection) = open_codex_usage_cache_db(cache_path) else { return; };
+  let payload_json = serde_json::to_string(payload).unwrap_or_default();
+  let generated_at = payload.get("generatedAt").and_then(Value::as_str).unwrap_or_default();
+  let _ = connection.execute(
+    "INSERT INTO claude_usage_cache (cache_key, telemetry_root, day_count, file_count, latest_mtime_ms, generated_at, payload_json)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT(cache_key) DO UPDATE SET
+       telemetry_root = excluded.telemetry_root,
+       day_count = excluded.day_count,
+       file_count = excluded.file_count,
+       latest_mtime_ms = excluded.latest_mtime_ms,
+       generated_at = excluded.generated_at,
+       payload_json = excluded.payload_json",
+    params![
+      claude_usage_cache_key(telemetry_root, day_count),
+      telemetry_root.to_string_lossy().to_string(),
+      day_count,
+      file_count,
+      latest_mtime_ms,
+      generated_at,
+      payload_json,
+    ],
+  );
 }
 
 fn list_recent_session_files(root: &Path, window_start_day: chrono::NaiveDate) -> Vec<CodexUsageSessionFile> {
@@ -1684,7 +1778,7 @@ fn list_recent_session_files(root: &Path, window_start_day: chrono::NaiveDate) -
     .collect()
 }
 
-fn read_codex_usage_cache(cache_path: &Path, sessions_root: &Path, day_count: i64, file_count: u64, latest_mtime_ms: u64) -> Option<Value> {
+fn read_codex_usage_cache(cache_path: &Path, sessions_root: &Path, day_count: i64, file_count: u64, latest_mtime_ms: u64, cache_only: bool) -> Option<Value> {
   let connection = open_codex_usage_cache_db(cache_path).ok()?;
   let cache_key = codex_usage_cache_key(sessions_root, day_count);
   let row = connection.query_row(
@@ -1706,6 +1800,9 @@ fn read_codex_usage_cache(cache_path: &Path, sessions_root: &Path, day_count: i6
   }
   if row.1 != day_count {
     return None;
+  }
+  if cache_only {
+    return serde_json::from_str::<Value>(&row.5).ok();
   }
   if let Ok(generated_at) = chrono::DateTime::parse_from_rfc3339(&row.4) {
     let age_secs = chrono::Utc::now().signed_duration_since(generated_at.with_timezone(&chrono::Utc)).num_seconds();
@@ -1778,9 +1875,22 @@ pub(crate) fn get_codex_usage_metrics(query: &Value) -> Result<Value, String> {
   let latest_mtime_ms = session_files.iter().map(|item| item.modified_ms).max().unwrap_or(0);
 
   if !force_refresh {
-    if let Some(payload) = read_codex_usage_cache(&cache_path, &sessions_root, day_count, file_count, latest_mtime_ms) {
+    if let Some(payload) = read_codex_usage_cache(&cache_path, &sessions_root, day_count, file_count, latest_mtime_ms, true) {
       return Ok(payload);
     }
+    return Ok(json!({
+      "ok": true,
+      "cacheMiss": true,
+      "days": day_count,
+      "generatedAt": chrono::Utc::now().to_rfc3339(),
+      "source": cache_path.to_string_lossy().to_string(),
+      "sourceType": "dashboard-cache-sqlite",
+      "totals": { "input": 0, "cachedInput": 0, "output": 0, "reasoning": 0, "total": 0 },
+      "daily": Vec::<Value>::new(),
+      "providers": Vec::<Value>::new(),
+      "models": Vec::<Value>::new(),
+      "sessions": Vec::<Value>::new(),
+    }));
   }
 
   let mut totals = CodexUsageTotals::default();
@@ -1902,6 +2012,7 @@ pub(crate) fn get_codex_usage_metrics(query: &Value) -> Result<Value, String> {
     "days": day_count,
     "generatedAt": chrono::Utc::now().to_rfc3339(),
     "source": sessions_root.to_string_lossy().to_string(),
+    "sourceType": "sessions",
     "totals": {
       "input": totals.input,
       "cachedInput": totals.cached_input,
@@ -1911,6 +2022,7 @@ pub(crate) fn get_codex_usage_metrics(query: &Value) -> Result<Value, String> {
     },
     "daily": daily,
     "providers": providers,
+    "models": Vec::<Value>::new(),
     "sessions": sessions.into_iter().map(|item| json!({
       "sessionId": item.session_id,
       "provider": item.provider,
@@ -1950,6 +2062,19 @@ mod tests {
     );
     assert!(cached_result.get("generatedAt").and_then(Value::as_str).is_some());
     assert!(second_elapsed < first_elapsed);
+  }
+
+  #[test]
+  fn probe_claude_telemetry_usage_runtime() {
+    let usage = read_claude_telemetry_usage(30, false, false);
+    eprintln!(
+      "probe_claude_telemetry_usage_runtime total={} input={} output={} cacheRead={}",
+      usage.get("totals").and_then(|v| v.get("total")).and_then(Value::as_u64).unwrap_or(0),
+      usage.get("totals").and_then(|v| v.get("input")).and_then(Value::as_u64).unwrap_or(0),
+      usage.get("totals").and_then(|v| v.get("output")).and_then(Value::as_u64).unwrap_or(0),
+      usage.get("totals").and_then(|v| v.get("cacheRead")).and_then(Value::as_u64).unwrap_or(0),
+    );
+    assert!(usage.get("totals").and_then(|v| v.get("total")).and_then(Value::as_u64).unwrap_or(0) > 0);
   }
 }
 
@@ -2222,7 +2347,133 @@ fn write_json_file(path: &Path, data: &Value) -> Result<(), String> {
   write_text(path, &format!("{}\n", content))
 }
 
-pub(crate) fn load_claudecode_state() -> Result<Value, String> {
+
+fn read_claude_telemetry_usage(days: i64, force_refresh: bool, cache_only: bool) -> Value {
+  let home = match claude_code_home() {
+    Ok(path) => path,
+    Err(_) => return json!({"days": days, "generatedAt": chrono::Utc::now().to_rfc3339(), "source": "", "totals": {"input":0,"output":0,"cacheCreation":0,"cacheRead":0,"total":0,"cost":0.0}, "daily": [], "sessions": []}),
+  };
+  let telemetry_root = home.join("telemetry");
+  let cache_path = match codex_usage_cache_path(&home, days) {
+    Ok(path) => path,
+    Err(_) => return json!({"days": days, "generatedAt": chrono::Utc::now().to_rfc3339(), "source": telemetry_root.to_string_lossy().to_string(), "totals": {"input":0,"output":0,"cacheCreation":0,"cacheRead":0,"total":0,"cost":0.0}, "daily": [], "sessions": []}),
+  };
+  let telemetry_files = list_all_files(&telemetry_root).into_iter().filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json")).collect::<Vec<_>>();
+  let file_count = telemetry_files.len() as u64;
+  let latest_mtime_ms = telemetry_files.iter().map(|path| file_modified_ms(path)).max().unwrap_or(0);
+  if !force_refresh {
+    if let Some(payload) = read_claude_usage_cache(&cache_path, &telemetry_root, days.clamp(1, 90), file_count, latest_mtime_ms, cache_only) {
+      return payload;
+    }
+  }
+  if cache_only {
+    return json!({"cacheMiss": true});
+  }
+  let cutoff = chrono::Utc::now() - chrono::Duration::days(days.clamp(1, 90));
+  let mut seen = HashSet::new();
+  let mut sessions = Vec::new();
+  let mut daily: BTreeMap<String, Value> = BTreeMap::new();
+  let mut total_input: u64 = 0;
+  let mut total_output: u64 = 0;
+  let mut total_cache_creation: u64 = 0;
+  let mut total_cache_read: u64 = 0;
+  let mut total_cost: f64 = 0.0;
+
+  for file_path in telemetry_files {
+    let Ok(file) = File::open(&file_path) else { continue; };
+    let reader = BufReader::new(file);
+    for line in reader.lines().map_while(Result::ok) {
+      let trimmed = line.trim();
+      if trimmed.is_empty() { continue; }
+      let Ok(event) = serde_json::from_str::<Value>(trimmed) else { continue; };
+      let Some(data) = event.get("event_data").and_then(Value::as_object) else { continue; };
+      if data.get("event_name").and_then(Value::as_str) != Some("tengu_exit") {
+        continue;
+      }
+      let ts_raw = data.get("client_timestamp").and_then(Value::as_str).unwrap_or("");
+      let Ok(ts) = chrono::DateTime::parse_from_rfc3339(ts_raw) else { continue; };
+      let ts_utc = ts.with_timezone(&chrono::Utc);
+      if ts_utc < cutoff { continue; }
+      let meta_raw = data.get("additional_metadata").and_then(Value::as_str).unwrap_or("{}");
+      let meta = serde_json::from_str::<Value>(meta_raw).unwrap_or_else(|_| json!({}));
+      let session_id = meta.get("last_session_id").and_then(Value::as_str)
+        .or_else(|| data.get("session_id").and_then(Value::as_str))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+      let unique_key = if session_id.is_empty() { format!("anon:{}", ts_utc.timestamp_millis()) } else { session_id.clone() };
+      if !seen.insert(unique_key.clone()) {
+        continue;
+      }
+      let input = meta.get("last_session_total_input_tokens").and_then(Value::as_u64).unwrap_or(0);
+      let output = meta.get("last_session_total_output_tokens").and_then(Value::as_u64).unwrap_or(0);
+      let cache_creation = meta.get("last_session_total_cache_creation_input_tokens").and_then(Value::as_u64).unwrap_or(0);
+      let cache_read = meta.get("last_session_total_cache_read_input_tokens").and_then(Value::as_u64).unwrap_or(0);
+      let cost = meta.get("last_session_cost").and_then(Value::as_f64).unwrap_or(0.0);
+      total_input += input;
+      total_output += output;
+      total_cache_creation += cache_creation;
+      total_cache_read += cache_read;
+      total_cost += cost;
+      let date = ts_utc.format("%Y-%m-%d").to_string();
+      let bucket = daily.entry(date.clone()).or_insert_with(|| json!({
+        "date": date,
+        "input": 0,
+        "output": 0,
+        "cacheCreation": 0,
+        "cacheRead": 0,
+        "total": 0,
+        "cost": 0.0,
+      }));
+      bucket["input"] = json!(bucket.get("input").and_then(Value::as_u64).unwrap_or(0) + input);
+      bucket["output"] = json!(bucket.get("output").and_then(Value::as_u64).unwrap_or(0) + output);
+      bucket["cacheCreation"] = json!(bucket.get("cacheCreation").and_then(Value::as_u64).unwrap_or(0) + cache_creation);
+      bucket["cacheRead"] = json!(bucket.get("cacheRead").and_then(Value::as_u64).unwrap_or(0) + cache_read);
+      bucket["total"] = json!(bucket.get("total").and_then(Value::as_u64).unwrap_or(0) + input + output);
+      bucket["cost"] = json!(bucket.get("cost").and_then(Value::as_f64).unwrap_or(0.0) + cost);
+      sessions.push(json!({
+        "sessionId": unique_key,
+        "model": data.get("model").and_then(Value::as_str).unwrap_or(""),
+        "updatedAt": ts_utc.to_rfc3339(),
+        "input": input,
+        "output": output,
+        "cacheCreation": cache_creation,
+        "cacheRead": cache_read,
+        "total": input + output,
+        "cost": cost,
+      }));
+    }
+  }
+
+  sessions.sort_by(|left, right| {
+    right.get("updatedAt").and_then(Value::as_str).unwrap_or("")
+      .cmp(left.get("updatedAt").and_then(Value::as_str).unwrap_or(""))
+  });
+  sessions.truncate(12);
+
+  let payload = json!({
+    "days": days.clamp(1, 90),
+    "generatedAt": chrono::Utc::now().to_rfc3339(),
+    "source": telemetry_root.to_string_lossy().to_string(),
+    "totals": {
+      "input": total_input,
+      "output": total_output,
+      "cacheCreation": total_cache_creation,
+      "cacheRead": total_cache_read,
+      "total": total_input + total_output,
+      "cost": total_cost,
+    },
+    "daily": daily.into_values().collect::<Vec<_>>(),
+    "sessions": sessions,
+  });
+  write_claude_usage_cache(&cache_path, &telemetry_root, days.clamp(1, 90), file_count, latest_mtime_ms, &payload);
+  payload
+}
+
+pub(crate) fn load_claudecode_state(query: &Value) -> Result<Value, String> {
+  let query_object = parse_json_object(query);
+  let force_usage_refresh = matches!(get_string(&query_object, "forceUsageRefresh").as_str(), "1" | "true" | "yes");
+  let cache_only = matches!(get_string(&query_object, "cacheOnly").as_str(), "1" | "true" | "yes");
   let home = claude_code_home()?;
   let settings_path = home.join("settings.json");
   let settings = read_json_file(&settings_path)?;
@@ -2374,6 +2625,7 @@ pub(crate) fn load_claudecode_state() -> Result<Value, String> {
     "settingsEnv": settings_env,
     "login": login_info,
     "usedModels": used_models.into_iter().collect::<Vec<_>>(),
+    "usage": read_claude_telemetry_usage(30, force_usage_refresh, cache_only),
   }))
 }
 
