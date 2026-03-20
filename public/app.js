@@ -84,6 +84,8 @@ const state = {
   openClawLastRepair: null,
   openClawConfigView: localStorage.getItem('easyaiconfig_oc_config_view') === 'minimal' ? 'minimal' : 'full',
   codexAuthView: localStorage.getItem('easyaiconfig_codex_auth_view') === 'api_key' ? 'api_key' : 'official',
+  systemStorage: null,
+  systemStorageLoading: false,
   configStoreGuide: { recipeId: '', values: {} },
   configStoreAssistant: { recipeId: '', values: {}, missing: [] },
 };
@@ -345,6 +347,7 @@ function applyTheme(theme) {
   // Update range slider fills for new theme colors
   document.querySelectorAll('.config-range').forEach(updateRangeFill);
   syncRawCodeEditorTheme();
+  syncSystemThemeButtons();
   // Update theme toggle button
   const btn = el('themeToggleBtn');
   if (btn) {
@@ -3291,6 +3294,7 @@ const PAGE_META = {
   tools: { eyebrow: 'Tools', title: '工具安装与管理', subtitle: '安装、更新、重装或卸载 AI 编程工具。' },
   tasks: { eyebrow: 'Tasks', title: '任务管理', subtitle: '查看当前进行中和历史安装任务。' },
   about: { eyebrow: 'About', title: '关于 EasyAIConfig', subtitle: '查看桌面版本、更新源与当前运行信息。' },
+  systemSettings: { eyebrow: 'System', title: '系统设置', subtitle: '管理界面模式、存储占用、缓存清理与卸载操作。' },
   configEditor: { eyebrow: 'Current Config', title: '配置编辑', subtitle: '表单编辑 + 原始配置，选择工具后搜索预设方案快速配置。' },
 };
 
@@ -6491,6 +6495,12 @@ function setPage(page = 'quick') {
   if (page === 'configEditor') {
     applyConfigEditorSearch();
   }
+  if (page === 'systemSettings') {
+    renderSystemSettingsPage();
+    if (!state.systemStorageLoading) {
+      void loadSystemStorageState({ silent: true });
+    }
+  }
 }
 
 function syncAboutUpdateActions() {
@@ -6525,6 +6535,201 @@ function populateAboutPanel() {
   el('aboutRepo').textContent = info.repository || '-';
   el('aboutEndpoint').textContent = info.endpoint || '-';
   el('aboutPubkeyStatus').textContent = info.publicKeyConfigured ? '已配置' : '未配置';
+}
+
+function formatBytes(bytes = 0) {
+  const value = Number(bytes || 0);
+  if (!Number.isFinite(value) || value <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = value;
+  let idx = 0;
+  while (size >= 1024 && idx < units.length - 1) {
+    size /= 1024;
+    idx += 1;
+  }
+  const fixed = size >= 100 || idx === 0 ? 0 : size >= 10 ? 1 : 2;
+  return `${size.toFixed(fixed)} ${units[idx]}`;
+}
+
+function getUiLocalStorageUsageBytes() {
+  try {
+    let total = 0;
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i) || '';
+      const value = localStorage.getItem(key) || '';
+      total += (key.length + value.length) * 2;
+    }
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
+function syncSystemThemeButtons() {
+  const group = el('sysThemeModes');
+  if (!group) return;
+  group.querySelectorAll('[data-sys-theme]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.sysTheme === state.themePreference);
+  });
+}
+
+function renderSystemStorageState() {
+  const localUsage = el('sysLocalStorageUsage');
+  const localUsageBytes = getUiLocalStorageUsageBytes();
+  if (localUsage) {
+    localUsage.textContent = formatBytes(localUsageBytes);
+  }
+
+  const localList = el('sysStorageLocalList');
+  const toolsList = el('sysStorageToolsList');
+  const localTotal = el('sysStorageLocalTotal');
+  const localFiles = el('sysStorageLocalFiles');
+  const toolsTotal = el('sysStorageToolsTotal');
+  const toolsFiles = el('sysStorageToolsFiles');
+  const payload = state.systemStorage || {};
+  const entries = Array.isArray(payload.entries) ? payload.entries : [];
+
+  const isToolEntry = (item = {}) => ['codex_home', 'claude_home', 'openclaw_home'].includes(String(item.key || ''));
+  const localEntries = entries.filter((item) => !isToolEntry(item));
+  const toolEntries = entries.filter((item) => isToolEntry(item));
+  const localBytes = localEntries.reduce((sum, item) => sum + Number(item.bytes || 0), 0) + localUsageBytes;
+  const localFileCount = localEntries.reduce((sum, item) => sum + Number(item.fileCount || 0), 0);
+  const toolBytes = toolEntries.reduce((sum, item) => sum + Number(item.bytes || 0), 0);
+  const toolFileCount = toolEntries.reduce((sum, item) => sum + Number(item.fileCount || 0), 0);
+
+  if (localTotal) localTotal.textContent = formatBytes(localBytes);
+  if (localFiles) localFiles.textContent = Number(localFileCount).toLocaleString('en-US');
+  if (toolsTotal) toolsTotal.textContent = formatBytes(toolBytes);
+  if (toolsFiles) toolsFiles.textContent = Number(toolFileCount).toLocaleString('en-US');
+
+  if (!localList || !toolsList) return;
+  if (!entries.length) {
+    const text = state.systemStorageLoading ? '读取中...' : '暂未读取存储信息';
+    localList.innerHTML = `
+      <div class="sys-storage-row">
+        <span class="sys-storage-main"><span class="sys-storage-name">${text}</span></span>
+        <strong class="sys-storage-size">-</strong>
+      </div>`;
+    toolsList.innerHTML = `
+      <div class="sys-storage-row">
+        <span class="sys-storage-main"><span class="sys-storage-name">${text}</span></span>
+        <strong class="sys-storage-size">-</strong>
+      </div>`;
+    return;
+  }
+
+  const uiRow = {
+    label: '界面缓存 (localStorage)',
+    path: 'browser://localStorage',
+    bytes: localUsageBytes,
+  };
+  const renderStorageRow = (item = {}) => `
+    <div class="sys-storage-row">
+      <span class="sys-storage-main">
+        <span class="sys-storage-name">${escapeHtml(item.label || item.key || '-')}</span>
+        <code class="sys-storage-path">${escapeHtml(item.path || '-')}</code>
+      </span>
+      <strong class="sys-storage-size">${escapeHtml(formatBytes(item.bytes || 0))}</strong>
+    </div>
+  `;
+
+  localList.innerHTML = [uiRow, ...localEntries].map(renderStorageRow).join('');
+  toolsList.innerHTML = toolEntries.map(renderStorageRow).join('') || `
+    <div class="sys-storage-row">
+      <span class="sys-storage-main"><span class="sys-storage-name">暂无第三方工具数据</span></span>
+      <strong class="sys-storage-size">-</strong>
+    </div>`;
+}
+
+function renderSystemSettingsPage() {
+  syncSystemThemeButtons();
+  renderSystemStorageState();
+}
+
+async function openExternalUrl(url) {
+  const target = String(url || '').trim();
+  if (!target) return false;
+  const result = await api('/api/open-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: target }),
+  });
+  if (!result?.ok) {
+    window.open(target, '_blank');
+  }
+  return true;
+}
+
+async function loadSystemStorageState({ silent = false } = {}) {
+  state.systemStorageLoading = true;
+  renderSystemStorageState();
+  const json = await api('/api/system/storage');
+  state.systemStorageLoading = false;
+  if (!json.ok) {
+    if (!silent) flash(json.error || '读取存储占用失败', 'error');
+    renderSystemStorageState();
+    return { ok: false, error: json.error || '读取失败' };
+  }
+  state.systemStorage = json.data || {};
+  renderSystemStorageState();
+  return { ok: true, data: state.systemStorage };
+}
+
+async function cleanupSystemStorage({ clearCache = true, clearBackups = false } = {}) {
+  const json = await api('/api/system/cleanup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clearCache, clearBackups }),
+  });
+  if (!json.ok) return { ok: false, error: json.error || '清理失败' };
+  if (json.data?.state) state.systemStorage = json.data.state;
+  renderSystemStorageState();
+  return { ok: true, data: json.data || {} };
+}
+
+async function uninstallToolForSystemSettings(toolId) {
+  const endpointMap = {
+    codex: '/api/codex/uninstall',
+    claudecode: '/api/claudecode/uninstall',
+    openclaw: '/api/openclaw/uninstall',
+  };
+  const labelMap = {
+    codex: 'Codex',
+    claudecode: 'Claude Code',
+    openclaw: 'OpenClaw',
+  };
+  const endpoint = endpointMap[toolId];
+  if (!endpoint) return { ok: false, error: '未知工具' };
+  const json = await api(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: toolId === 'openclaw' ? JSON.stringify({ purge: false }) : undefined,
+    timeoutMs: 120000,
+  });
+  if (!json.ok || json.data?.ok === false) {
+    return { ok: false, error: json.error || json.data?.stderr || `${labelMap[toolId]} 卸载失败` };
+  }
+  return { ok: true, label: labelMap[toolId] || toolId };
+}
+
+function openSystemUninstallEntry() {
+  const platform = String(navigator.platform || '').toLowerCase();
+  if (platform.includes('mac')) return openExternalUrl('file:///Applications');
+  if (platform.includes('win')) return openExternalUrl('ms-settings:appsfeatures');
+  return openExternalUrl('https://github.com/lmk1010/EasyAIConfig');
+}
+
+function clearUiStorageCache() {
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i += 1) {
+    const key = localStorage.key(i) || '';
+    if (key.startsWith('easyaiconfig_') && key !== 'easyaiconfig_theme') {
+      keys.push(key);
+    }
+  }
+  keys.forEach((key) => localStorage.removeItem(key));
+  renderSystemStorageState();
+  flash(`已清理 ${keys.length} 项界面缓存`, 'success');
 }
 
 function setAboutOpen(open) {
@@ -12973,6 +13178,7 @@ function bindEvents() {
     populateAboutPanel();
     setPage('about');
   });
+  el('openSystemSettingsBtn')?.addEventListener('click', () => setPage('systemSettings'));
   el('themeToggleBtn').addEventListener('click', toggleTheme);
   el('configEditorBtn').addEventListener('click', () => setConfigEditorOpen(true));
   el('closeConfigEditorBtn').addEventListener('click', () => setConfigEditorOpen(false));
@@ -13396,7 +13602,101 @@ function bindEvents() {
     populateAboutPanel();
   });
   el('aboutInstallUpdateBtn')?.addEventListener('click', () => handleAppUpdate('aboutInstallUpdateBtn'));
-  el('aboutOpenAdvancedBtn').addEventListener('click', () => setConfigEditorOpen(true));
+  el('aboutFeedbackBtn')?.addEventListener('click', () => {
+    void openExternalUrl('https://github.com/lmk1010/EasyAIConfig/issues/new/choose');
+  });
+  el('aboutOpenSystemSettingsBtn')?.addEventListener('click', () => setPage('systemSettings'));
+
+  el('sysThemeModes')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-sys-theme]');
+    if (!button) return;
+    const next = String(button.dataset.sysTheme || '');
+    if (!['auto', 'light', 'dark'].includes(next)) return;
+    state.themePreference = next;
+    state.theme = resolveTheme(next);
+    localStorage.setItem('easyaiconfig_theme', next);
+    applyTheme(state.theme);
+    const labels = { auto: '已切换：自动模式', light: '已切换：浅色模式', dark: '已切换：深色模式' };
+    flash(labels[next] || '已更新主题', 'success');
+  });
+
+  el('sysRefreshStorageBtn')?.addEventListener('click', async () => {
+    setBusy('sysRefreshStorageBtn', true, '刷新中...');
+    await loadSystemStorageState();
+    setBusy('sysRefreshStorageBtn', false);
+  });
+  el('sysClearCacheBtn')?.addEventListener('click', async () => {
+    const confirmed = window.confirm('确认清理应用缓存吗？');
+    if (!confirmed) return;
+    setBusy('sysClearCacheBtn', true, '清理中...');
+    const result = await cleanupSystemStorage({ clearCache: true, clearBackups: false });
+    setBusy('sysClearCacheBtn', false);
+    if (!result.ok) return flash(result.error || '清理缓存失败', 'error');
+    flash('缓存已清理', 'success');
+  });
+  el('sysClearBackupsBtn')?.addEventListener('click', async () => {
+    const confirmed = window.confirm('确认清理所有配置备份吗？该操作不可恢复。');
+    if (!confirmed) return;
+    setBusy('sysClearBackupsBtn', true, '清理中...');
+    const result = await cleanupSystemStorage({ clearCache: false, clearBackups: true });
+    setBusy('sysClearBackupsBtn', false);
+    if (!result.ok) return flash(result.error || '清理备份失败', 'error');
+    flash('备份已清理', 'success');
+  });
+  el('sysClearUiCacheBtn')?.addEventListener('click', () => {
+    const confirmed = window.confirm('确认清理界面缓存吗？');
+    if (!confirmed) return;
+    clearUiStorageCache();
+  });
+
+  async function runSystemToolUninstall(buttonId, toolId) {
+    const label = { codex: 'Codex', claudecode: 'Claude Code', openclaw: 'OpenClaw' }[toolId] || toolId;
+    const confirmed = window.confirm(`确认卸载 ${label} 吗？`);
+    if (!confirmed) return false;
+    setBusy(buttonId, true, '卸载中...');
+    const result = await uninstallToolForSystemSettings(toolId);
+    setBusy(buttonId, false);
+    if (!result.ok) {
+      flash(result.error || `${label} 卸载失败`, 'error');
+      return false;
+    }
+    flash(`${label} 已卸载`, 'success');
+    await loadTools();
+    await loadState({ preserveForm: true });
+    await loadSystemStorageState({ silent: true });
+    return true;
+  }
+
+  el('sysUninstallCodexBtn')?.addEventListener('click', () => {
+    void runSystemToolUninstall('sysUninstallCodexBtn', 'codex');
+  });
+  el('sysUninstallClaudeBtn')?.addEventListener('click', () => {
+    void runSystemToolUninstall('sysUninstallClaudeBtn', 'claudecode');
+  });
+  el('sysUninstallOpenClawBtn')?.addEventListener('click', () => {
+    void runSystemToolUninstall('sysUninstallOpenClawBtn', 'openclaw');
+  });
+  el('sysUninstallAllToolsBtn')?.addEventListener('click', async () => {
+    const confirmed = window.confirm('确认卸载全部工具（Codex / Claude Code / OpenClaw）吗？');
+    if (!confirmed) return;
+    setBusy('sysUninstallAllToolsBtn', true, '卸载中...');
+    await uninstallToolForSystemSettings('codex');
+    await uninstallToolForSystemSettings('claudecode');
+    await uninstallToolForSystemSettings('openclaw');
+    setBusy('sysUninstallAllToolsBtn', false);
+    await loadTools();
+    await loadState({ preserveForm: true });
+    await loadSystemStorageState({ silent: true });
+    flash('全部卸载流程已完成，请检查工具状态', 'success');
+  });
+
+  el('sysOpenUninstallEntryBtn')?.addEventListener('click', async () => {
+    await openSystemUninstallEntry();
+    flash('已打开系统卸载入口', 'success');
+  });
+  el('sysOpenIssueBtn')?.addEventListener('click', () => {
+    void openExternalUrl('https://github.com/lmk1010/EasyAIConfig/issues/new/choose');
+  });
   el('closeUpdateDialogBtn').addEventListener('click', () => closeUpdateDialog(false));
   el('updateDialogCancelBtn').addEventListener('click', () => {
     if (typeof state.updateDialogCancelHandler === 'function') {

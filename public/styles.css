@@ -11667,6 +11667,254 @@ button.about-link-card {
   border-bottom-color: rgba(0, 0, 0, 0.06);
 }
 
+/* ═══════════════  System Settings Page  ═══════════════ */
+
+.sys-page {
+  padding: 18px 24px 30px;
+  max-width: 1160px;
+  margin: 0 auto;
+}
+
+.sys-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: 22px 28px;
+  align-items: start;
+}
+
+.sys-column {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sys-section {
+  background: transparent;
+  box-shadow: none;
+  border: none;
+  border-radius: 0;
+  padding: 0 0 14px;
+  border-bottom: 1px solid var(--line-soft, rgba(255, 255, 255, 0.08));
+}
+
+.sys-section-head {
+  margin-bottom: 10px;
+}
+
+.sys-section-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 620;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.sys-section-head p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.sys-storage-section .sys-section-head p strong {
+  color: var(--text);
+  font-weight: 650;
+}
+
+.sys-theme-modes,
+.sys-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sys-actions .danger {
+  color: #f87171;
+}
+
+.sys-theme-btn {
+  min-width: 64px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 560;
+  padding: 0 14px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.sys-theme-btn:hover {
+  border-color: rgba(141, 192, 255, 0.32);
+  background: rgba(141, 192, 255, 0.08);
+}
+
+.sys-theme-btn.active {
+  border-color: rgba(141, 192, 255, 0.5);
+  background: rgba(141, 192, 255, 0.16);
+  color: #b3d5ff;
+}
+
+.sys-storage-summary {
+  margin-bottom: 10px;
+  color: var(--muted);
+  border-top: 1px solid var(--line-soft, rgba(255, 255, 255, 0.08));
+}
+
+.sys-storage-summary-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 34px;
+  font-size: 0.82rem;
+  border-bottom: 1px dashed var(--line-soft, rgba(255, 255, 255, 0.08));
+}
+
+.sys-storage-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-bottom: 12px;
+}
+
+.sys-storage-group {
+  min-width: 0;
+}
+
+.sys-storage-group-title {
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.sys-storage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.sys-storage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.83rem;
+  padding: 10px 0;
+  background: transparent;
+  border-bottom: 1px dashed var(--line-soft);
+}
+
+.sys-storage-main {
+  min-width: 0;
+  line-height: 1.4;
+}
+
+.sys-storage-name {
+  display: block;
+  color: var(--text);
+  font-weight: 540;
+}
+
+.sys-storage-size {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sys-storage-path {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.74rem;
+  opacity: 0.78;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 460px;
+}
+
+.sys-actions .tiny-btn {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 980px) {
+  .sys-page {
+    padding: 14px 14px 24px;
+  }
+
+  .sys-layout {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .sys-storage-split {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+}
+
+[data-theme="light"] .sys-section {
+  background: transparent;
+  box-shadow: none;
+  border-bottom-color: rgba(148, 163, 184, 0.28);
+}
+
+[data-theme="light"] .sys-theme-btn {
+  border-color: rgba(148, 163, 184, 0.3);
+  background: rgba(255, 255, 255, 0.82);
+  color: #1f2937;
+}
+
+[data-theme="light"] .sys-theme-btn:hover {
+  border-color: rgba(59, 130, 246, 0.4);
+  background: rgba(59, 130, 246, 0.08);
+  color: #0f172a;
+}
+
+[data-theme="light"] .sys-theme-btn.active {
+  color: #1d4ed8;
+  border-color: rgba(59, 130, 246, 0.45);
+  background: rgba(59, 130, 246, 0.12);
+}
+
+[data-theme="light"] .sys-section-head p {
+  color: rgba(15, 23, 42, 0.68);
+}
+
+[data-theme="light"] .sys-storage-summary,
+[data-theme="light"] .sys-storage-group-title,
+[data-theme="light"] .sys-storage-path {
+  color: rgba(15, 23, 42, 0.66);
+}
+
+[data-theme="light"] .sys-storage-name,
+[data-theme="light"] .sys-storage-size {
+  color: #0f172a;
+}
+
+[data-theme="light"] .sys-storage-summary {
+  border-top-color: rgba(148, 163, 184, 0.28);
+}
+
+[data-theme="light"] .sys-storage-summary-row {
+  border-bottom-color: rgba(148, 163, 184, 0.24);
+}
+
+[data-theme="light"] .sys-storage-row {
+  background: transparent;
+  border-bottom-color: rgba(148, 163, 184, 0.28);
+}
+
 /* ═══════════════  OpenClaw Install Methods  ═══════════════ */
 
 .openclaw-install-methods {
@@ -12782,6 +13030,11 @@ button.about-link-card {
   transition: all 0.18s ease;
   padding: 0;
   flex-shrink: 0;
+}
+
+.topbar-icon-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 .topbar-icon-btn:hover {

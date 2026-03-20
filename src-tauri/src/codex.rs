@@ -1761,6 +1761,103 @@ fn list_all_files(root: &Path) -> Vec<PathBuf> {
   result
 }
 
+fn collect_storage_usage(path: &Path) -> (bool, bool, u64, u64) {
+  if !path.exists() {
+    return (false, false, 0, 0);
+  }
+  if path.is_file() {
+    let bytes = fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+    return (true, true, bytes, 1);
+  }
+  let files = list_all_files(path);
+  let bytes = files
+    .iter()
+    .fold(0u64, |sum, file| sum.saturating_add(fs::metadata(file).map(|meta| meta.len()).unwrap_or(0)));
+  (true, false, bytes, files.len() as u64)
+}
+
+fn system_storage_entry(key: &str, label: &str, path: &Path) -> Value {
+  let (exists, is_file, bytes, file_count) = collect_storage_usage(path);
+  json!({
+    "key": key,
+    "label": label,
+    "path": path.to_string_lossy().to_string(),
+    "exists": exists,
+    "isFile": is_file,
+    "bytes": bytes,
+    "fileCount": file_count,
+  })
+}
+
+pub(crate) fn get_system_storage_state() -> Result<Value, String> {
+  let app = app_home()?;
+  let cache_dir = app.join("cache");
+  let backups_dir = backups_root()?;
+  let codex_home = default_codex_home()?;
+  let claude_home = claude_code_home()?;
+  let openclaw_home = openclaw_home()?;
+
+  let entries = vec![
+    system_storage_entry("app_cache", "应用缓存", &cache_dir),
+    system_storage_entry("backups", "配置备份", &backups_dir),
+    system_storage_entry("codex_home", "Codex 数据", &codex_home),
+    system_storage_entry("claude_home", "Claude Code 数据", &claude_home),
+    system_storage_entry("openclaw_home", "OpenClaw 数据", &openclaw_home),
+  ];
+
+  let total_bytes = entries
+    .iter()
+    .fold(0u64, |sum, item| sum.saturating_add(item.get("bytes").and_then(Value::as_u64).unwrap_or(0)));
+  let total_files = entries
+    .iter()
+    .fold(0u64, |sum, item| sum.saturating_add(item.get("fileCount").and_then(Value::as_u64).unwrap_or(0)));
+
+  Ok(json!({
+    "generatedAt": chrono::Utc::now().to_rfc3339(),
+    "appHome": app.to_string_lossy().to_string(),
+    "entries": entries,
+    "totalBytes": total_bytes,
+    "totalFiles": total_files,
+  }))
+}
+
+pub(crate) fn cleanup_system_storage(body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let clear_cache = object.get("clearCache").and_then(Value::as_bool).unwrap_or(true);
+  let clear_backups = object.get("clearBackups").and_then(Value::as_bool).unwrap_or(false);
+
+  let mut removed_paths: Vec<String> = Vec::new();
+  let mut failed_paths: Vec<String> = Vec::new();
+
+  if clear_cache {
+    let cache_dir = app_home()?.join("cache");
+    if cache_dir.exists() {
+      match fs::remove_dir_all(&cache_dir) {
+        Ok(_) => removed_paths.push(cache_dir.to_string_lossy().to_string()),
+        Err(error) => failed_paths.push(format!("{}: {}", cache_dir.to_string_lossy(), error)),
+      }
+    }
+  }
+
+  if clear_backups {
+    let backups_dir = backups_root()?;
+    if backups_dir.exists() {
+      match fs::remove_dir_all(&backups_dir) {
+        Ok(_) => removed_paths.push(backups_dir.to_string_lossy().to_string()),
+        Err(error) => failed_paths.push(format!("{}: {}", backups_dir.to_string_lossy(), error)),
+      }
+    }
+  }
+
+  let state = get_system_storage_state()?;
+  Ok(json!({
+    "ok": failed_paths.is_empty(),
+    "removedPaths": removed_paths,
+    "failedPaths": failed_paths,
+    "state": state,
+  }))
+}
+
 fn file_modified_ms(path: &Path) -> u64 {
   fs::metadata(path)
     .ok()
@@ -2353,7 +2450,7 @@ pub(crate) fn check_setup_environment(query: &Value) -> Result<Value, String> {
 use crate::{
   app_home, compare_versions, default_codex_home, extract_version, home_dir, npm_command,
   parse_json_object, parse_toml_config, read_text, OPENAI_CODEX_PACKAGE,
-  claude_code_home, openclaw_home, write_text, ensure_dir, CLAUDE_CODE_PACKAGE,
+  claude_code_home, openclaw_home, write_text, ensure_dir, backups_root, CLAUDE_CODE_PACKAGE,
   OPENCLAW_PACKAGE,
 };
 use crate::provider::get_string;

@@ -69,6 +69,13 @@
                 <line x1="6.5" y1="6.5" x2="6.5" y2="9" />
               </svg></span><span>关于与更新</span>
           </button>
+          <button class="nav-item" data-page-target="systemSettings">
+            <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
+                stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="6.5" cy="6.5" r="1.5" />
+                <path d="M6.5 1.8v1.1M6.5 10.1v1.1M2 6.5h1.1M9.9 6.5H11M3.3 3.3l.8.8M8.9 8.9l.8.8M3.3 9.7l.8-.8M8.9 4.1l.8-.8"/>
+              </svg></span><span>系统设置</span>
+          </button>
           <button class="nav-item" id="setupWizardNavBtn" data-page-target="__wizard__">
             <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
                 stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
@@ -126,6 +133,7 @@
                 <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" opacity="0.4" stroke="none"/>
               </svg>
             </button>
+            <button id="openSystemSettingsBtn" class="secondary subtle-btn">系统设置</button>
             <button id="openAdvancedBtn" class="secondary subtle-btn">配置编辑</button>
             <button id="openAboutBtn" class="secondary subtle-btn">关于</button>
           </div>
@@ -477,7 +485,7 @@
                 </svg>
                 <span>GitHub</span>
               </a>
-              <a class="about-link-card" href="https://github.com/lmk1010/EasyAIConfig/issues" target="_blank">
+              <button class="about-link-card" id="aboutFeedbackBtn" type="button">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
                   stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="12" cy="12" r="10" />
@@ -485,8 +493,8 @@
                   <circle cx="12" cy="17" r=".5" fill="currentColor" />
                 </svg>
                 <span>反馈</span>
-              </a>
-              <button class="about-link-card" id="aboutOpenAdvancedBtn" type="button">
+              </button>
+              <button class="about-link-card" id="aboutOpenSystemSettingsBtn" type="button">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
                   stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="12" cy="12" r="3" />
@@ -510,6 +518,87 @@
             <span id="aboutEndpoint" hidden></span>
             <span id="aboutPubkeyStatus" hidden></span>
             <span id="closeAboutBtn" hidden></span>
+          </section>
+
+          <section class="page-view" data-page="systemSettings">
+            <div class="sys-page">
+              <div class="sys-layout">
+                <div class="sys-column">
+                  <section class="sys-section">
+                    <div class="sys-section-head">
+                      <h3>外观模式</h3>
+                      <p>切换浅色 / 深色 / 自动模式（自动模式按时间切换）。</p>
+                    </div>
+                    <div class="sys-theme-modes" id="sysThemeModes">
+                      <button class="sys-theme-btn" data-sys-theme="auto" type="button">自动</button>
+                      <button class="sys-theme-btn" data-sys-theme="light" type="button">浅色</button>
+                      <button class="sys-theme-btn" data-sys-theme="dark" type="button">深色</button>
+                    </div>
+                  </section>
+
+                  <section class="sys-section sys-storage-section">
+                    <div class="sys-section-head">
+                      <h3>存储占用</h3>
+                      <p>本地缓存（仅界面）：<strong id="sysLocalStorageUsage">-</strong></p>
+                    </div>
+                    <div class="sys-storage-summary">
+                      <div class="sys-storage-summary-row">
+                        <span>本地占用</span>
+                        <strong id="sysStorageLocalTotal">-</strong>
+                        <span>文件 <strong id="sysStorageLocalFiles">-</strong></span>
+                      </div>
+                      <div class="sys-storage-summary-row">
+                        <span>第三方编程工具占用</span>
+                        <strong id="sysStorageToolsTotal">-</strong>
+                        <span>文件 <strong id="sysStorageToolsFiles">-</strong></span>
+                      </div>
+                    </div>
+                    <div class="sys-storage-split">
+                      <section class="sys-storage-group">
+                        <div class="sys-storage-group-title">本地占用</div>
+                        <div id="sysStorageLocalList" class="sys-storage-list"></div>
+                      </section>
+                      <section class="sys-storage-group">
+                        <div class="sys-storage-group-title">第三方编程工具占用</div>
+                        <div id="sysStorageToolsList" class="sys-storage-list"></div>
+                      </section>
+                    </div>
+                    <div class="sys-actions">
+                      <button id="sysRefreshStorageBtn" class="secondary tiny-btn" type="button">刷新占用</button>
+                      <button id="sysClearCacheBtn" class="secondary tiny-btn" type="button">清理缓存</button>
+                      <button id="sysClearBackupsBtn" class="secondary tiny-btn" type="button">清理备份</button>
+                      <button id="sysClearUiCacheBtn" class="secondary tiny-btn" type="button">清理界面缓存</button>
+                    </div>
+                  </section>
+                </div>
+
+                <div class="sys-column">
+                  <section class="sys-section">
+                    <div class="sys-section-head">
+                      <h3>工具卸载</h3>
+                      <p>卸载当前通过本应用安装的 CLI 工具（Codex / Claude Code / OpenClaw）。</p>
+                    </div>
+                    <div class="sys-actions">
+                      <button id="sysUninstallCodexBtn" class="secondary tiny-btn" type="button">卸载 Codex</button>
+                      <button id="sysUninstallClaudeBtn" class="secondary tiny-btn" type="button">卸载 Claude Code</button>
+                      <button id="sysUninstallOpenClawBtn" class="secondary tiny-btn" type="button">卸载 OpenClaw</button>
+                      <button id="sysUninstallAllToolsBtn" class="secondary tiny-btn danger" type="button">全部卸载</button>
+                    </div>
+                  </section>
+
+                  <section class="sys-section">
+                    <div class="sys-section-head">
+                      <h3>应用管理</h3>
+                      <p>EasyAIConfig 需要在系统应用管理里卸载；问题反馈直接跳转 Issue 页面。</p>
+                    </div>
+                    <div class="sys-actions">
+                      <button id="sysOpenUninstallEntryBtn" class="secondary tiny-btn" type="button">打开系统卸载入口</button>
+                      <button id="sysOpenIssueBtn" class="secondary tiny-btn" type="button">问题反馈（Issue）</button>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </div>
           </section>
 
           <section id="configEditorView" class="page-view" data-page="configEditor">

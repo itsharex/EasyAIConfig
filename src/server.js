@@ -10,6 +10,7 @@ import {
   getProviderSecret,
   getCodexReleaseInfo,
   getCodexUsageMetrics,
+  getSystemStorageState,
   installClaudeCode,
   installCodex,
   installOpenClaw,
@@ -40,6 +41,7 @@ import {
   saveOpenClawConfig,
   saveRawConfig,
   saveSettings,
+  cleanupSystemStorage,
   startOpenClawInstallTask,
   stopOpenClaw,
   testSavedProvider,
@@ -422,6 +424,33 @@ export async function startServer() {
   app.post('/api/openclaw/port-kill', async (req, res) => {
     try {
       ok(res, { data: await killOpenClawPortOccupants(req.body || {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.get('/api/system/storage', async (_req, res) => {
+    try {
+      ok(res, { data: await getSystemStorageState() });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/system/cleanup', async (req, res) => {
+    try {
+      ok(res, { data: await cleanupSystemStorage(req.body || {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/open-url', async (req, res) => {
+    try {
+      const url = String(req.body?.url || '').trim();
+      if (!url) throw new Error('url is required');
+      await open(url);
+      ok(res, { data: { opened: true, url } });
     } catch (error) {
       fail(res, error);
     }

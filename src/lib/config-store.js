@@ -822,6 +822,91 @@ function backupsRoot() {
   return path.join(appHome(), BACKUPS_DIRNAME);
 }
 
+async function readPathStorageUsage(targetPath) {
+  const resolved = path.resolve(targetPath);
+  let stat;
+  try {
+    stat = await fs.stat(resolved);
+  } catch {
+    return { path: resolved, exists: false, isFile: false, bytes: 0, fileCount: 0 };
+  }
+
+  if (stat.isFile()) {
+    return { path: resolved, exists: true, isFile: true, bytes: Number(stat.size || 0), fileCount: 1 };
+  }
+
+  const files = await listFilesRecursive(resolved);
+  let bytes = 0;
+  for (const filePath of files) {
+    try {
+      const fileStat = await fs.stat(filePath);
+      bytes += Number(fileStat.size || 0);
+    } catch { /* ignore per-file failures */ }
+  }
+  return { path: resolved, exists: true, isFile: false, bytes, fileCount: files.length };
+}
+
+function mapStorageEntry(key, label, usage) {
+  return {
+    key,
+    label,
+    path: usage.path,
+    exists: Boolean(usage.exists),
+    isFile: Boolean(usage.isFile),
+    bytes: Number(usage.bytes || 0),
+    fileCount: Number(usage.fileCount || 0),
+  };
+}
+
+export async function getSystemStorageState() {
+  const targets = [
+    ['app_cache', '应用缓存', path.join(appHome(), 'cache')],
+    ['backups', '配置备份', backupsRoot()],
+    ['codex_home', 'Codex 数据', defaultCodexHome()],
+    ['claude_home', 'Claude Code 数据', claudeCodeHome()],
+    ['openclaw_home', 'OpenClaw 数据', openclawHome()],
+  ];
+
+  const entries = [];
+  for (const [key, label, targetPath] of targets) {
+    const usage = await readPathStorageUsage(targetPath);
+    entries.push(mapStorageEntry(key, label, usage));
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    appHome: appHome(),
+    entries,
+    totalBytes: entries.reduce((sum, item) => sum + Number(item.bytes || 0), 0),
+    totalFiles: entries.reduce((sum, item) => sum + Number(item.fileCount || 0), 0),
+  };
+}
+
+export async function cleanupSystemStorage({ clearCache = true, clearBackups = false } = {}) {
+  const removedPaths = [];
+  const failedPaths = [];
+  const candidates = [
+    clearCache ? path.join(appHome(), 'cache') : '',
+    clearBackups ? backupsRoot() : '',
+  ].filter(Boolean);
+
+  for (const target of candidates) {
+    try {
+      await fs.rm(target, { recursive: true, force: true });
+      removedPaths.push(target);
+    } catch (error) {
+      failedPaths.push(`${target}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  return {
+    ok: failedPaths.length === 0,
+    removedPaths,
+    failedPaths,
+    state: await getSystemStorageState(),
+  };
+}
+
 function timestamp() {
   return new Date().toISOString().replace(/[:.]/g, '-');
 }
