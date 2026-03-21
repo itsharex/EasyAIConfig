@@ -1557,6 +1557,8 @@ fn launch_codex_terminal_command(cwd: &Path) -> Result<String, String> {
   }
 
   if cfg!(target_os = "windows") {
+    let cwd_for_cmd = quote_windows_cmd_arg(&normalize_windows_cmd_path(&cwd_text));
+    let codex_for_cmd = quote_windows_cmd_arg(&normalize_windows_cmd_path(codex_path));
     Command::new("cmd.exe")
       .args([
         "/c",
@@ -1564,7 +1566,7 @@ fn launch_codex_terminal_command(cwd: &Path) -> Result<String, String> {
         "",
         "cmd",
         "/k",
-        &format!("cd /d \"{}\" && \"{}\"", cwd_text, codex_path),
+        &format!("cd /d {} && {}", cwd_for_cmd, codex_for_cmd),
       ])
       .spawn()
       .map_err(|error| error.to_string())?;
@@ -1664,7 +1666,11 @@ pub(crate) fn login_codex(body: &Value) -> Result<Value, String> {
     .and_then(Value::as_str)
     .filter(|text| !text.trim().is_empty())
     .unwrap_or("codex");
-  let command = format!("\"{}\" login", binary_path.replace('"', "\\\""));
+  let command = if cfg!(target_os = "windows") {
+    format!("{} login", quote_windows_cmd_arg(&normalize_windows_cmd_path(binary_path)))
+  } else {
+    format!("\"{}\" login", binary_path.replace('"', "\\\""))
+  };
   let message = launch_terminal_command(&cwd, &command, "Codex 登录")?;
   Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
 }
@@ -3057,10 +3063,11 @@ fn launch_terminal_command(cwd: &Path, command_text: &str, tool_label: &str) -> 
   }
 
   if cfg!(target_os = "windows") {
+    let cwd_for_cmd = quote_windows_cmd_arg(&normalize_windows_cmd_path(&cwd_text));
     Command::new("cmd.exe")
       .args([
         "/c", "start", "", "cmd", "/k",
-        &format!("cd /d \"{}\" && {}", cwd_text, command_text),
+        &format!("cd /d {} && {}", cwd_for_cmd, command_text),
       ])
       .spawn()
       .map_err(|error| error.to_string())?;
@@ -3086,9 +3093,25 @@ fn quote_windows_cmd_arg(value: &str) -> String {
   format!("\"{}\"", value.replace('"', "\"\""))
 }
 
+fn normalize_windows_cmd_path(raw: &str) -> String {
+  let trimmed = raw.trim();
+  let unwrapped = if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+    &trimmed[1..trimmed.len() - 1]
+  } else {
+    trimmed
+  };
+  if let Some(stripped) = unwrapped.strip_prefix("\\\\?\\UNC\\") {
+    return format!("\\\\{}", stripped);
+  }
+  if let Some(stripped) = unwrapped.strip_prefix("\\\\?\\") {
+    return stripped.to_string();
+  }
+  unwrapped.to_string()
+}
+
 fn launch_terminal_for_tool(cwd: &Path, binary_path: &str, tool_label: &str) -> Result<String, String> {
   if cfg!(target_os = "windows") {
-    let command_text = quote_windows_cmd_arg(binary_path);
+    let command_text = quote_windows_cmd_arg(&normalize_windows_cmd_path(binary_path));
     return launch_terminal_command(cwd, &command_text, tool_label);
   }
   launch_terminal_command(cwd, binary_path, tool_label)
@@ -3282,7 +3305,11 @@ pub(crate) fn login_claudecode(body: &Value) -> Result<Value, String> {
     .and_then(Value::as_str)
     .filter(|text| !text.trim().is_empty())
     .unwrap_or("claude");
-  let command = format!("\"{}\" auth login", binary_path.replace('"', "\\\""));
+  let command = if cfg!(target_os = "windows") {
+    format!("{} auth login", quote_windows_cmd_arg(&normalize_windows_cmd_path(binary_path)))
+  } else {
+    format!("\"{}\" auth login", binary_path.replace('"', "\\\""))
+  };
   let message = launch_terminal_command(&cwd, &command, "Claude Code OAuth 登录")?;
   Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
 }
@@ -3551,7 +3578,7 @@ pub(crate) fn launch_openclaw(body: &Value) -> Result<Value, String> {
 
   let bin_path = binary.get("path").and_then(Value::as_str).unwrap_or("openclaw");
   let command = if cfg!(target_os = "windows") {
-    format!("{} gateway --force", quote_windows_cmd_arg(bin_path))
+    format!("{} gateway --force", quote_windows_cmd_arg(&normalize_windows_cmd_path(bin_path)))
   } else {
     format!("{} gateway --force", bin_path)
   };
