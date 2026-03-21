@@ -3916,8 +3916,12 @@ function renderDashboardPage() {
               <div class="db2-card-title">Provider 列表</div>
               <div class="db2-card-meta">${openclawProviders.length} 个</div>
             </div>
-            ${miniBars(openclawProviders.slice(0, 6).map((p) => ({ label: p.key, value: 88, meta: p.api })))}
-            ${!openclawProviders.length ? '<div class="db2-empty">暂无已配置 Provider</div>' : ''}
+            ${openclawProviders.length
+    ? kvList(openclawProviders.slice(0, 12).map((provider) => ({
+      label: provider.key,
+      value: provider.api || '未知协议',
+    })))
+    : '<div class="db2-empty">暂无已配置 Provider</div>'}
           </div>
         </div>
       </div>

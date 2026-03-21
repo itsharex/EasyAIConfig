@@ -2100,11 +2100,25 @@ async function createBackup({ configPath, envPath, scope }) {
   return targetDir;
 }
 
+function quoteWindowsCmdArg(value = '') {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+function normalizeWindowsCmdPath(raw = '') {
+  const trimmed = String(raw || '').trim();
+  const unwrapped = trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')
+    ? trimmed.slice(1, -1)
+    : trimmed;
+  if (unwrapped.startsWith('\\\\?\\UNC\\')) return `\\\\${unwrapped.slice('\\\\?\\UNC\\'.length)}`;
+  if (unwrapped.startsWith('\\\\?\\')) return unwrapped.slice('\\\\?\\'.length);
+  return unwrapped;
+}
+
 function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabel = 'Codex', commandText = '' } = {}) {
   const bin = commandText || binaryPath || binaryName;
   const escapedCwd = String(cwd).replace(/([\\"$])/g, '\\$1');
   const escapedBin = String(bin).replace(/([\\"$])/g, '\\$1');
-  const windowsBin = commandText || (binaryPath ? `"${String(binaryPath).replace(/"/g, '""')}"` : bin);
+  const windowsBin = commandText || (binaryPath ? quoteWindowsCmdArg(normalizeWindowsCmdPath(binaryPath)) : bin);
 
   if (process.platform === 'darwin') {
     const appleScript = [
@@ -2121,7 +2135,8 @@ function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabe
   }
 
   if (process.platform === 'win32') {
-    const child = spawn('cmd.exe', ['/c', 'start', '', 'cmd', '/k', `cd /d "${cwd}" && ${windowsBin}`], {
+    const windowsCwd = quoteWindowsCmdArg(normalizeWindowsCmdPath(cwd));
+    const child = spawn('cmd.exe', ['/c', 'start', '', 'cmd', '/k', `cd /d ${windowsCwd} && ${windowsBin}`], {
       detached: true,
       stdio: 'ignore',
     });
@@ -2130,9 +2145,9 @@ function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabe
   }
 
   const terminals = [
-    ['x-terminal-emulator', ['-e', `bash -lc "cd ${cwd} && ${bin}"`]],
-    ['gnome-terminal', ['--', 'bash', '-lc', `cd ${cwd} && ${bin}`]],
-    ['konsole', ['-e', 'bash', '-lc', `cd ${cwd} && ${bin}`]],
+    ['x-terminal-emulator', ['-e', `bash -lc "cd \\"${escapedCwd}\\" && ${bin}"`]],
+    ['gnome-terminal', ['--', 'bash', '-lc', `cd "${escapedCwd}" && ${bin}`]],
+    ['konsole', ['-e', 'bash', '-lc', `cd "${escapedCwd}" && ${bin}`]],
   ];
 
   for (const [command, args] of terminals) {
@@ -2159,7 +2174,7 @@ function launchWindowsBackgroundCommand(cwd, commandText, { toolLabel = 'OpenCla
 }
 
 function buildWindowsCommand(binaryPath, args = []) {
-  const program = `"${String(binaryPath || '').replace(/"/g, '""')}"`;
+  const program = quoteWindowsCmdArg(normalizeWindowsCmdPath(binaryPath || ''));
   return [program, ...args].filter(Boolean).join(' ');
 }
 
@@ -2764,7 +2779,9 @@ export async function loginCodex({ cwd } = {}) {
     throw new Error('Codex 尚未安装，请先点击安装');
   }
 
-  const binaryText = codexBinary.path ? `"${codexBinary.path}"` : 'codex';
+  const binaryText = process.platform === 'win32'
+    ? (codexBinary.path ? quoteWindowsCmdArg(normalizeWindowsCmdPath(codexBinary.path)) : 'codex')
+    : (codexBinary.path ? `"${String(codexBinary.path).replace(/"/g, '\\"')}"` : 'codex');
   const message = launchTerminalCommand(targetCwd, {
     binaryPath: codexBinary.path,
     binaryName: 'codex',
@@ -2992,8 +3009,11 @@ export async function loginClaudeCode({ cwd } = {}) {
   if (!binary.installed) {
     throw new Error('Claude Code 尚未安装，请先点击安装');
   }
+  const binaryPath = String(binary.path || 'claude');
   const message = launchTerminalCommand(targetCwd, {
-    commandText: `"${String(binary.path || 'claude').replace(/"/g, '\\"')}" auth login`,
+    commandText: process.platform === 'win32'
+      ? `${quoteWindowsCmdArg(normalizeWindowsCmdPath(binaryPath))} auth login`
+      : `"${binaryPath.replace(/"/g, '\\"')}" auth login`,
     toolLabel: 'Claude Code OAuth 登录',
   });
   return { ok: true, cwd: targetCwd, message };

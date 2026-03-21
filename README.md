@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" width="96" height="96" alt="EasyAIConfig" />
+  <img src="assets/logo-minimal.svg" width="84" height="84" alt="EasyAIConfig" />
 </p>
 
 <h1 align="center">EasyAIConfig</h1>
@@ -16,21 +16,43 @@
 
 ---
 
-## ✨ 功能特性
+## 已支持功能（当前版本）
 
-| 功能 | 说明 |
-|------|------|
-| 🔌 **Provider 管理** | 一键配置 Base URL + API Key，自动写入 `config.toml` 和 `.env` |
-| 🤖 **模型检测** | 自动发现可用模型并推荐最新版本 |
-| 🔄 **多 Provider 切换** | 保存多个 Provider 配置，随时切换 |
-| 📝 **配置编辑器** | 可视化表单编辑 `config.toml`，支持原始 TOML 编辑 |
-| 💾 **备份与恢复** | 每次保存前自动备份，支持一键回滚 |
-| 🖥️ **桌面客户端** | 基于 Tauri 的原生桌面应用（macOS / Windows / Linux） |
-| 🔄 **自动更新** | 支持 GitHub Releases 自动检查与安装更新 |
-| 🌗 **主题切换** | 深色 / 浅色主题自由切换 |
-| 📊 **数据看板** | Token 用量趋势、费用估算、模型分布、多工具统一监控 |
+### 核心能力
 
-## 📸 截图预览
+| 状态 | 功能 | 说明 |
+|------|------|------|
+| 已支持 | **Provider 管理** | 一键配置 Base URL + API Key，自动写入配置文件 |
+| 已支持 | **模型检测** | 自动发现可用模型并推荐可用版本 |
+| 已支持 | **多 Provider 切换** | 支持保存多套 Provider 并快速切换 |
+| 已支持 | **配置编辑器** | 可视化编辑 + 原始配置编辑（TOML / JSON） |
+| 已支持 | **备份与恢复** | 保存前自动备份，支持一键回滚 |
+| 已支持 | **数据看板** | Codex / Claude 用量与费用估算，OpenClaw 运行状态监控 |
+| 已支持 | **跨平台客户端** | Web + Tauri 桌面端（macOS / Windows / Linux） |
+| 已支持 | **自动更新（桌面版）** | Tauri 桌面端支持 GitHub Releases 自动检查与安装更新 |
+
+### 工具支持矩阵
+
+| 工具 | 安装/更新/卸载 | 启动 | 登录/初始化 | 配置管理 | 运行状态 |
+|------|----------------|------|-------------|----------|----------|
+| **Codex CLI** | 已支持 | 已支持 | 已支持 (`codex login`) | 已支持 (`~/.codex/config.toml` + `.env`) | 已支持 |
+| **Claude Code** | 已支持 | 已支持 | 已支持 (OAuth 登录) | 已支持 (`~/.claude/settings.json`) | 已支持 |
+| **OpenClaw** | 已支持（一键 / WSL / 脚本） | 已支持（Gateway 启动） | 已支持 (`onboard`) | 已支持 (`~/.openclaw/openclaw.json`) | 已支持 |
+
+## 未来功能待办（Roadmap）
+
+> 以下为计划项，按优先级逐步推进。
+
+| 优先级 | 待办项 | 状态 |
+|--------|--------|------|
+| P1 | 启动失败一键诊断（自动收集环境与命令日志） | 规划中 |
+| P1 | 配置导入/导出（跨机器迁移） | 规划中 |
+| P1 | Provider 可用性定时巡检与告警提示 | 规划中 |
+| P2 | Dashboard 自定义统计维度与时间范围 | 规划中 |
+| P2 | 多语言界面（中文 / English） | 规划中 |
+| P3 | 配方（Recipes）模板扩展与社区分享 | 规划中 |
+
+## 截图预览
 
 <p align="center">
   <img src="assets/dashboard-codex.png" width="100%" alt="Codex Dashboard — Token 用量趋势、费用估算、模型分布" />
@@ -42,15 +64,23 @@
 </p>
 <p align="center"><em>Claude Code 数据看板 — 多模型统计、Token 分布与消耗分析</em></p>
 
-## 📦 安装
+## 安装
 
 ### 桌面版（推荐）
 
-前往 [Releases](https://github.com/lmk1010/EasyAIConfig/releases/latest) 下载对应平台的安装包：
+最新版本下载统一在 Releases：
+[https://github.com/lmk1010/EasyAIConfig/releases/latest](https://github.com/lmk1010/EasyAIConfig/releases/latest)
 
-- **macOS**: `.dmg`
-- **Windows**: `.msi` / `.exe`
-- **Linux**: `.AppImage` / `.deb`
+| 平台 | 推荐安装包 | 下载链接 |
+|------|------------|----------|
+| Windows | `.msi`（推荐） / `.exe` | [下载 Windows 版本](https://github.com/lmk1010/EasyAIConfig/releases/latest) |
+| macOS (Apple Silicon) | `.dmg`（`aarch64`） | [下载 macOS 版本](https://github.com/lmk1010/EasyAIConfig/releases/latest) |
+| macOS (Intel) | `.dmg`（`x64`） | [下载 macOS 版本](https://github.com/lmk1010/EasyAIConfig/releases/latest) |
+| Linux | `.AppImage` / `.deb` | [下载 Linux 版本](https://github.com/lmk1010/EasyAIConfig/releases/latest) |
+
+下载后请按文件名中的架构选择：
+- `aarch64` / `arm64`：Apple Silicon
+- `x64` / `x86_64`：Intel / AMD 64 位
 
 ### Web 模式
 
@@ -61,7 +91,7 @@ easyaiconfig
 
 启动本地服务后自动打开浏览器。
 
-## 🚀 快速开始
+## 快速开始
 
 1. **输入 Base URL** — 支持 OpenAI / 第三方 OpenAI 兼容 API
 2. **填写 API Key** — 自动识别 Provider 并生成环境变量名
@@ -69,7 +99,7 @@ easyaiconfig
 4. **保存配置** — 写入 `~/.codex/config.toml` + `.env`
 5. **启动 Codex** — 在终端中运行配置好的 Codex
 
-## 🛠️ 开发
+## 开发
 
 ### 前置要求
 
@@ -97,7 +127,7 @@ npm run desktop:dev
 npm run desktop:build
 ```
 
-## 📁 项目结构
+## 项目结构
 
 ```
 ├── public/            # 前端静态文件（HTML / CSS / JS）
@@ -119,7 +149,7 @@ npm run desktop:build
 └── .github/workflows/ # CI/CD
 ```
 
-## 🔐 发布配置
+## 发布配置
 
 ### 生成签名密钥
 
@@ -151,6 +181,6 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-## 📄 License
+## License
 
 [MIT](LICENSE)
