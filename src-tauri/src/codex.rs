@@ -18,13 +18,67 @@ use std::thread;
 use std::time::Duration;
 use uuid::Uuid;
 
+const OPENCODE_INSTALL_TASK_KEEP: usize = 12;
 const OPENCLAW_INSTALL_TASK_KEEP: usize = 12;
+const OPENCODE_INSTALL_SCRIPT_UNIX: &str = "curl -fsSL https://opencode.ai/install | bash";
+const OPENCODE_NPM_REGISTRY_CN: &str = "https://registry.npmmirror.com";
 const OPENCLAW_INSTALL_SCRIPT_UNIX: &str = "curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm";
 const OPENCLAW_INSTALL_SCRIPT_WIN: &str = "$env:OPENCLAW_NO_ONBOARD='1'; iwr -useb https://openclaw.ai/install.ps1 | iex";
 const OPENCLAW_NPM_REGISTRY_CN: &str = "https://registry.npmmirror.com";
 
+static OPENCODE_INSTALL_TASK_SEQ: AtomicU64 = AtomicU64::new(1);
+static OPENCODE_INSTALL_TASKS: OnceLock<Mutex<BTreeMap<String, OpenCodeInstallTask>>> = OnceLock::new();
 static OPENCLAW_INSTALL_TASK_SEQ: AtomicU64 = AtomicU64::new(1);
 static OPENCLAW_INSTALL_TASKS: OnceLock<Mutex<BTreeMap<String, OpenClawInstallTask>>> = OnceLock::new();
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenCodeInstallLog {
+  source: String,
+  text: String,
+  at: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenCodeInstallStep {
+  key: String,
+  title: String,
+  description: String,
+  hint: String,
+  progress: u64,
+  status: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenCodeInstallTask {
+  task_id: String,
+  tool_id: String,
+  action: String,
+  requested_method: String,
+  method: String,
+  command: String,
+  google_reachable: Option<bool>,
+  used_domestic_mirror: Option<bool>,
+  status: String,
+  progress: u64,
+  step_index: usize,
+  summary: String,
+  hint: String,
+  detail: String,
+  steps: Vec<OpenCodeInstallStep>,
+  logs: Vec<OpenCodeInstallLog>,
+  started_at: String,
+  updated_at: String,
+  completed_at: Option<String>,
+  version: Option<String>,
+  error: Option<String>,
+  #[serde(skip_serializing)]
+  cancel_requested: bool,
+  #[serde(skip_serializing)]
+  child_pid: Option<u32>,
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -164,6 +218,151 @@ fn windows_portable_node_dirs() -> Vec<String> {
     }
   }
   dirs
+}
+
+fn windows_binary_candidates_from_dir(dir: &Path, binary_name: &str) -> Vec<PathBuf> {
+  if dir.as_os_str().is_empty() {
+    return Vec::new();
+  }
+  [
+    dir.join(format!("{}.cmd", binary_name)),
+    dir.join(format!("{}.exe", binary_name)),
+    dir.join(format!("{}.bat", binary_name)),
+    dir.join(format!("{}.ps1", binary_name)),
+    dir.join(binary_name),
+  ]
+  .into_iter()
+  .collect()
+}
+
+fn windows_common_tool_candidate_paths(binary_name: &str) -> Vec<PathBuf> {
+  if !cfg!(target_os = "windows") {
+    return Vec::new();
+  }
+
+  let mut dirs: Vec<PathBuf> = Vec::new();
+  if let Some(prefix) = windows_user_npm_prefix() {
+    dirs.push(prefix);
+  }
+  dirs.extend(windows_user_extra_bin_dirs().into_iter().map(PathBuf::from));
+  dirs.extend(windows_portable_node_dirs().into_iter().map(PathBuf::from));
+
+  if let Ok(user_profile) = std::env::var("USERPROFILE") {
+    dirs.push(PathBuf::from(&user_profile).join("scoop").join("shims"));
+  }
+  if let Ok(program_data) = std::env::var("ProgramData") {
+    dirs.push(PathBuf::from(&program_data).join("chocolatey").join("bin"));
+  }
+
+  let mut seen = HashSet::new();
+  let mut candidates = Vec::new();
+  for dir in dirs {
+    let dir_key = dir.to_string_lossy().to_ascii_lowercase();
+    if !seen.insert(dir_key) || !dir.is_dir() {
+      continue;
+    }
+    candidates.extend(windows_binary_candidates_from_dir(&dir, binary_name));
+  }
+  candidates
+}
+
+fn windows_binary_candidate_rank(path: &str) -> u8 {
+  let lower = path.to_ascii_lowercase();
+  if lower.ends_with(".cmd") {
+    return 0;
+  }
+  if lower.ends_with(".exe") {
+    return 1;
+  }
+  if lower.ends_with(".bat") {
+    return 2;
+  }
+  if lower.ends_with(".ps1") {
+    return 4;
+  }
+  3
+}
+
+fn read_binary_version_output(candidate_path: &Path) -> Option<String> {
+  if !candidate_path.exists() {
+    return None;
+  }
+
+  let path_text = candidate_path.to_string_lossy().to_string();
+  let lower = path_text.to_ascii_lowercase();
+  let output = if cfg!(target_os = "windows") && lower.ends_with(".ps1") {
+    create_command("powershell.exe")
+      .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"])
+      .arg(&path_text)
+      .arg("--version")
+      .output()
+      .ok()?
+  } else {
+    create_command(&path_text).arg("--version").output().ok()?
+  };
+
+  if !output.status.success() {
+    return None;
+  }
+
+  Some(
+    format!(
+      "{}{}",
+      String::from_utf8_lossy(&output.stdout),
+      String::from_utf8_lossy(&output.stderr)
+    )
+    .trim()
+    .to_string(),
+  )
+}
+
+fn collect_detected_binary_candidates(candidate_paths: Vec<PathBuf>, fallback_command: &str) -> Value {
+  let mut seen = HashSet::new();
+  let mut candidates = candidate_paths
+    .into_iter()
+    .filter(|path| seen.insert(path.to_string_lossy().to_ascii_lowercase()))
+    .filter_map(|candidate_path| {
+      let version = read_binary_version_output(&candidate_path)?;
+      let path_text = candidate_path.to_string_lossy().to_string();
+      Some(json!({
+        "installed": true,
+        "version": version,
+        "path": path_text,
+      }))
+    })
+    .collect::<Vec<_>>();
+
+  candidates.sort_by(|left, right| {
+    let left_version = left.get("version").and_then(Value::as_str).unwrap_or_default();
+    let right_version = right.get("version").and_then(Value::as_str).unwrap_or_default();
+    let version_order = compare_versions(right_version, left_version);
+    if version_order != Ordering::Equal {
+      return version_order;
+    }
+    let left_rank = left
+      .get("path")
+      .and_then(Value::as_str)
+      .map(windows_binary_candidate_rank)
+      .unwrap_or(u8::MAX);
+    let right_rank = right
+      .get("path")
+      .and_then(Value::as_str)
+      .map(windows_binary_candidate_rank)
+      .unwrap_or(u8::MAX);
+    left_rank.cmp(&right_rank)
+  });
+
+  let selected = candidates.first().cloned();
+  json!({
+    "installed": selected.is_some(),
+    "version": selected.as_ref().and_then(|item| item.get("version")).cloned().unwrap_or(Value::Null),
+    "path": selected
+      .as_ref()
+      .and_then(|item| item.get("path").and_then(Value::as_str).map(|text| text.to_string()))
+      .or_else(|| command_exists(fallback_command))
+      .unwrap_or_default(),
+    "candidates": candidates,
+  })
 }
 
 fn build_windows_full_path_env() -> String {
@@ -346,6 +545,510 @@ fn run_command_dynamic(
     "stdout": stdout,
     "stderr": stderr,
   }))
+}
+
+
+fn opencode_install_tasks() -> &'static Mutex<BTreeMap<String, OpenCodeInstallTask>> {
+  OPENCODE_INSTALL_TASKS.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+fn opencode_install_steps(action: &str) -> Vec<OpenCodeInstallStep> {
+  let specs = if action == "uninstall" {
+    vec![
+      ("inspect", "检查当前安装", "确认当前 OpenCode 安装状态与路径", "先确认当前命令在哪里。", 10_u64),
+      ("remove", "执行卸载命令", "按最终方式移除 OpenCode", "正在移除全局命令和安装内容。", 58_u64),
+      ("verify", "验证卸载结果", "确认 `opencode` 命令已经不可用", "马上结束，正在做最后确认。", 92_u64),
+    ]
+  } else {
+    vec![
+      ("network", "检测网络环境", "检测 Google 可达性并判断是否走国内优化", "这一步是真实网络探测，请稍等。", 8_u64),
+      ("method", "确定安装方式", "根据你的选择和网络结果确定最终安装方案", "正在确认最终执行方式和命令。", 28_u64),
+      ("execute", "执行安装命令", "真正开始安装 OpenCode 与依赖", "这里耗时最长，日志会持续更新。", 62_u64),
+      ("verify", "验证安装结果", "确认 `opencode` 命令已经可用", "快完成了，正在验证版本和命令。", 92_u64),
+    ]
+  };
+
+  specs.into_iter().enumerate().map(|(index, (key, title, description, hint, progress))| OpenCodeInstallStep {
+    key: key.to_string(),
+    title: title.to_string(),
+    description: description.to_string(),
+    hint: hint.to_string(),
+    progress,
+    status: if index == 0 { "running".to_string() } else { "pending".to_string() },
+  }).collect()
+}
+
+fn create_opencode_install_task(action: &str, requested_method: &str) -> OpenCodeInstallTask {
+  let id = format!(
+    "opencode-install-{}-{}",
+    chrono::Utc::now().timestamp_millis(),
+    OPENCODE_INSTALL_TASK_SEQ.fetch_add(1, AtomicOrdering::Relaxed)
+  );
+  let started_at = now_rfc3339();
+  let steps = opencode_install_steps(action);
+  OpenCodeInstallTask {
+    task_id: id,
+    tool_id: "opencode".to_string(),
+    action: action.to_string(),
+    requested_method: requested_method.to_string(),
+    method: String::new(),
+    command: String::new(),
+    google_reachable: None,
+    used_domestic_mirror: None,
+    status: "running".to_string(),
+    progress: steps.first().map(|step| step.progress).unwrap_or(4),
+    step_index: 0,
+    summary: steps.first().map(|step| step.description.clone()).unwrap_or_else(|| "正在准备任务…".to_string()),
+    hint: steps.first().map(|step| step.hint.clone()).unwrap_or_else(|| "请稍候。".to_string()),
+    detail: if action == "uninstall" { "正在读取当前安装状态…".to_string() } else { "正在初始化安装任务…".to_string() },
+    steps,
+    logs: Vec::new(),
+    started_at: started_at.clone(),
+    updated_at: started_at,
+    completed_at: None,
+    version: None,
+    error: None,
+    cancel_requested: false,
+    child_pid: None,
+  }
+}
+
+fn trim_opencode_install_tasks(tasks: &mut BTreeMap<String, OpenCodeInstallTask>) {
+  while tasks.len() > OPENCODE_INSTALL_TASK_KEEP {
+    let removable = tasks.iter().find(|(_, task)| task.status != "running" && task.status != "cancelling").map(|(task_id, _)| task_id.clone());
+    if let Some(task_id) = removable {
+      tasks.remove(&task_id);
+    } else {
+      break;
+    }
+  }
+}
+
+fn insert_opencode_install_task(task: OpenCodeInstallTask) {
+  let mut tasks = opencode_install_tasks().lock().expect("opencode tasks lock poisoned");
+  tasks.insert(task.task_id.clone(), task);
+  trim_opencode_install_tasks(&mut tasks);
+}
+
+fn with_opencode_install_task<R>(task_id: &str, mut update: impl FnMut(&mut OpenCodeInstallTask) -> R) -> Option<R> {
+  let mut tasks = opencode_install_tasks().lock().expect("opencode tasks lock poisoned");
+  let task = tasks.get_mut(task_id)?;
+  Some(update(task))
+}
+
+fn get_opencode_install_task_snapshot(task_id: &str) -> Option<OpenCodeInstallTask> {
+  let tasks = opencode_install_tasks().lock().expect("opencode tasks lock poisoned");
+  tasks.get(task_id).cloned()
+}
+
+fn touch_opencode_install_task(task: &mut OpenCodeInstallTask) {
+  task.updated_at = now_rfc3339();
+}
+
+fn set_opencode_install_step(task: &mut OpenCodeInstallTask, step_index: usize, detail: Option<String>) {
+  if task.steps.is_empty() {
+    return;
+  }
+  let safe_index = step_index.min(task.steps.len().saturating_sub(1));
+  if safe_index < task.step_index {
+    return;
+  }
+  task.step_index = safe_index;
+  task.progress = task.progress.max(task.steps[safe_index].progress);
+  task.summary = task.steps[safe_index].description.clone();
+  task.hint = task.steps[safe_index].hint.clone();
+  if let Some(text) = detail {
+    task.detail = text;
+  }
+  for (index, step) in task.steps.iter_mut().enumerate() {
+    step.status = if index < safe_index {
+      "done".to_string()
+    } else if index == safe_index {
+      if task.status == "error" { "error".to_string() } else { "running".to_string() }
+    } else {
+      "pending".to_string()
+    };
+  }
+  touch_opencode_install_task(task);
+}
+
+fn push_opencode_install_log(task_id: &str, source: &str, line: &str) {
+  let cleaned = line.trim().to_string();
+  if cleaned.is_empty() {
+    return;
+  }
+  let _ = with_opencode_install_task(task_id, |task| {
+    task.logs.push(OpenCodeInstallLog {
+      source: source.to_string(),
+      text: cleaned.clone(),
+      at: now_rfc3339(),
+    });
+    if task.logs.len() > 160 {
+      let drain_len = task.logs.len() - 160;
+      task.logs.drain(0..drain_len);
+    }
+    task.detail = cleaned.clone();
+    if task.status == "running" && task.step_index == 2 && task.action != "uninstall" {
+      task.progress = task.progress.max(62).min(88);
+    }
+    touch_opencode_install_task(task);
+  });
+}
+
+fn infer_opencode_uninstall_method() -> String {
+  let binary = find_tool_binary("opencode");
+  let path = binary.get("path").and_then(Value::as_str).unwrap_or("").to_lowercase();
+  if path.contains("homebrew") || path.contains("/cellar/") {
+    return "brew".to_string();
+  }
+  "npm".to_string()
+}
+
+fn resolve_opencode_effective_method_for_task(method: &str) -> (String, Option<bool>) {
+  let normalized = resolve_opencode_install_method(method);
+  if normalized != "auto" {
+    return (normalized, None);
+  }
+  let google_ok = can_access_google();
+  if google_ok {
+    if cfg!(target_os = "windows") {
+      ("npm".to_string(), Some(true))
+    } else {
+      ("script".to_string(), Some(true))
+    }
+  } else {
+    ("domestic".to_string(), Some(false))
+  }
+}
+
+fn build_opencode_task_command(action: &str, method: &str) -> (String, Vec<String>, String) {
+  let latest_package = format!("{}@latest", OPENCODE_PACKAGE);
+  match method {
+    "domestic" => {
+      let mut args = if action == "uninstall" {
+        vec!["uninstall".to_string(), "-g".to_string(), OPENCODE_PACKAGE.to_string()]
+      } else {
+        let mut args = vec!["install".to_string(), "-g".to_string(), latest_package.clone()];
+        if action == "reinstall" { args.push("--force".to_string()); }
+        args
+      };
+      if action != "uninstall" {
+        args.push("--registry".to_string());
+        args.push(OPENCODE_NPM_REGISTRY_CN.to_string());
+      }
+      (npm_command().to_string(), args.clone(), format!("{} {}", npm_command(), args.join(" ")))
+    }
+    "npm" => {
+      let args = if action == "uninstall" {
+        vec!["uninstall".to_string(), "-g".to_string(), OPENCODE_PACKAGE.to_string()]
+      } else {
+        let mut args = vec!["install".to_string(), "-g".to_string(), latest_package.clone()];
+        if action == "reinstall" { args.push("--force".to_string()); }
+        args
+      };
+      (npm_command().to_string(), args.clone(), format!("{} {}", npm_command(), args.join(" ")))
+    }
+    "brew" => {
+      let script = if action == "install" {
+        "brew install anomalyco/tap/opencode".to_string()
+      } else if action == "reinstall" {
+        "brew reinstall anomalyco/tap/opencode".to_string()
+      } else if action == "update" {
+        "brew upgrade anomalyco/tap/opencode || brew install anomalyco/tap/opencode".to_string()
+      } else {
+        "brew uninstall anomalyco/tap/opencode || brew uninstall opencode".to_string()
+      };
+      ("sh".to_string(), vec!["-lc".to_string(), script.clone()], script)
+    }
+    "scoop" => {
+      let script = if action == "install" {
+        "scoop install opencode".to_string()
+      } else if action == "reinstall" {
+        "scoop uninstall opencode; scoop install opencode".to_string()
+      } else if action == "update" {
+        "scoop update opencode".to_string()
+      } else {
+        "scoop uninstall opencode".to_string()
+      };
+      ("powershell.exe".to_string(), vec!["-NoProfile".to_string(), "-NonInteractive".to_string(), "-ExecutionPolicy".to_string(), "Bypass".to_string(), "-Command".to_string(), script.clone()], script)
+    }
+    "choco" => {
+      let script = if action == "install" {
+        "choco install opencode -y".to_string()
+      } else if action == "reinstall" {
+        "choco uninstall opencode -y; choco install opencode -y".to_string()
+      } else if action == "update" {
+        "choco upgrade opencode -y".to_string()
+      } else {
+        "choco uninstall opencode -y".to_string()
+      };
+      ("powershell.exe".to_string(), vec!["-NoProfile".to_string(), "-NonInteractive".to_string(), "-ExecutionPolicy".to_string(), "Bypass".to_string(), "-Command".to_string(), script.clone()], script)
+    }
+    "script" => {
+      if cfg!(target_os = "windows") {
+        ("powershell.exe".to_string(), vec!["-NoProfile".to_string(), "-NonInteractive".to_string(), "-ExecutionPolicy".to_string(), "Bypass".to_string(), "-Command".to_string(), OPENCODE_INSTALL_SCRIPT_UNIX.to_string()], OPENCODE_INSTALL_SCRIPT_UNIX.to_string())
+      } else {
+        ("sh".to_string(), vec!["-lc".to_string(), OPENCODE_INSTALL_SCRIPT_UNIX.to_string()], OPENCODE_INSTALL_SCRIPT_UNIX.to_string())
+      }
+    }
+    _ => {
+      let binary = find_tool_binary("opencode");
+      let path = binary.get("path").and_then(Value::as_str).unwrap_or("").trim().to_string();
+      let script = if path.is_empty() {
+        "rm -f <opencode-binary>".to_string()
+      } else if cfg!(target_os = "windows") {
+        format!("Remove-Item -Force '{}'", path.replace('\'', "''"))
+      } else {
+        format!("rm -f {}", quote_posix_shell_arg(&path))
+      };
+      if cfg!(target_os = "windows") {
+        ("powershell.exe".to_string(), vec!["-NoProfile".to_string(), "-NonInteractive".to_string(), "-ExecutionPolicy".to_string(), "Bypass".to_string(), "-Command".to_string(), script.clone()], script)
+      } else {
+        ("sh".to_string(), vec!["-lc".to_string(), script.clone()], script)
+      }
+    }
+  }
+}
+
+fn cancel_opencode_install_task_inner(task_id: &str) -> Result<(), String> {
+  let mut pid_to_kill = None;
+  let exists = with_opencode_install_task(task_id, |task| {
+    if task.status != "running" && task.status != "cancelling" {
+      return;
+    }
+    task.cancel_requested = true;
+    task.status = "cancelling".to_string();
+    task.summary = "正在中断 OpenCode 安装…".to_string();
+    task.hint = "先别关闭窗口，正在停止安装进程。".to_string();
+    task.detail = "正在终止安装命令…".to_string();
+    pid_to_kill = task.child_pid;
+    touch_opencode_install_task(task);
+  });
+  if exists.is_none() {
+    return Err("OpenCode 任务不存在，可能已经过期，请重新开始".to_string());
+  }
+
+  if let Some(pid) = pid_to_kill {
+    terminate_openclaw_install_process(pid);
+  }
+
+  let _ = with_opencode_install_task(task_id, |task| {
+    for (index, step) in task.steps.iter_mut().enumerate() {
+      step.status = if index < task.step_index {
+        "done".to_string()
+      } else if index == task.step_index {
+        "error".to_string()
+      } else {
+        "pending".to_string()
+      };
+    }
+    task.status = "cancelled".to_string();
+    task.progress = 100;
+    task.child_pid = None;
+    task.error = None;
+    task.summary = "OpenCode 安装已中断".to_string();
+    task.hint = "你可以随时重新开始安装。".to_string();
+    task.detail = "安装进程已停止。".to_string();
+    task.completed_at = Some(now_rfc3339());
+    touch_opencode_install_task(task);
+  });
+  Ok(())
+}
+
+fn fail_opencode_install_task(task_id: &str, message: String) {
+  let _ = with_opencode_install_task(task_id, |task| {
+    if task.cancel_requested || task.status == "cancelled" {
+      return;
+    }
+    for (index, step) in task.steps.iter_mut().enumerate() {
+      step.status = if index < task.step_index {
+        "done".to_string()
+      } else if index == task.step_index {
+        "error".to_string()
+      } else {
+        "pending".to_string()
+      };
+    }
+    task.status = "error".to_string();
+    task.summary = if task.action == "uninstall" { "OpenCode 卸载失败".to_string() } else { "OpenCode 安装失败".to_string() };
+    task.hint = "先看最后日志，通常能直接看到是网络、权限还是依赖问题。".to_string();
+    task.detail = message.clone();
+    task.child_pid = None;
+    task.error = Some(message.clone());
+    task.completed_at = Some(now_rfc3339());
+    touch_opencode_install_task(task);
+  });
+}
+
+fn complete_opencode_install_task(task_id: &str, version: Option<String>) {
+  let _ = with_opencode_install_task(task_id, |task| {
+    for step in task.steps.iter_mut() {
+      step.status = "done".to_string();
+    }
+    task.status = "success".to_string();
+    task.progress = 100;
+    task.summary = if task.action == "update" { "OpenCode 已更新完成".to_string() } else if task.action == "reinstall" { "OpenCode 已重装完成".to_string() } else if task.action == "uninstall" { "OpenCode 已卸载完成".to_string() } else { "OpenCode 已安装完成".to_string() };
+    task.hint = if task.action == "uninstall" { "如需恢复，重新点击安装即可。".to_string() } else { "下一步可以直接启动 OpenCode，或先去配置 Provider / 模型。".to_string() };
+    task.detail = if task.action == "uninstall" { "已确认 opencode 命令不可用。".to_string() } else { version.clone().map(|v| format!("已检测到版本：{v}")).unwrap_or_else(|| "已检测到 opencode 命令。".to_string()) };
+    task.child_pid = None;
+    task.version = version.clone();
+    task.completed_at = Some(now_rfc3339());
+    touch_opencode_install_task(task);
+  });
+}
+
+fn spawn_opencode_install_task_runner(task_id: String) {
+  thread::spawn(move || {
+    let task = match get_opencode_install_task_snapshot(&task_id) {
+      Some(task) => task,
+      None => return,
+    };
+
+    let action = task.action.clone();
+    let requested_method = task.requested_method.clone();
+    let (effective_method, google_reachable) = if action == "uninstall" {
+      let normalized = resolve_opencode_install_method(&requested_method);
+      if normalized == "auto" {
+        (infer_opencode_uninstall_method(), None)
+      } else {
+        (normalized, None)
+      }
+    } else {
+      resolve_opencode_effective_method_for_task(&requested_method)
+    };
+    let (program, args, display_command) = build_opencode_task_command(&action, &effective_method);
+
+    let _ = with_opencode_install_task(&task_id, |task| {
+      task.method = effective_method.clone();
+      task.google_reachable = google_reachable;
+      task.used_domestic_mirror = Some(effective_method == "domestic");
+      task.command = display_command.clone();
+      if action == "uninstall" {
+        set_opencode_install_step(task, 1, Some(format!("即将执行：{}", task.command)));
+      } else {
+        set_opencode_install_step(task, 1, Some(format!("已确认最终方式：{}", task.method)));
+      }
+    });
+
+    if action != "uninstall" {
+      if let Some(reachable) = google_reachable {
+        push_opencode_install_log(&task_id, "stdout", &format!("Google 可达性检测结果：{}", if reachable { "可访问" } else { "不可访问" }));
+      } else {
+        push_opencode_install_log(&task_id, "stdout", "本次按你的指定方式执行，未触发 Google 连通性检测。");
+      }
+      push_opencode_install_log(&task_id, "stdout", &format!("最终安装方式：{}", effective_method));
+    } else {
+      push_opencode_install_log(&task_id, "stdout", &format!("最终卸载方式：{}", effective_method));
+    }
+    push_opencode_install_log(&task_id, "stdout", &format!("执行命令：{}", display_command));
+
+    if (effective_method == "npm" || effective_method == "domestic") && action != "uninstall" {
+      let node_output = create_command("node").arg("--version").output();
+      let npm_output = create_command(npm_command()).arg("--version").output();
+      match (node_output, npm_output) {
+        (Ok(node), Ok(npm)) if node.status.success() && npm.status.success() => {
+          let node_version = String::from_utf8_lossy(&node.stdout).trim().to_string();
+          let npm_version = String::from_utf8_lossy(&npm.stdout).trim().to_string();
+          push_opencode_install_log(&task_id, "stdout", &format!("Node.js {node_version} / npm {npm_version}"));
+        }
+        _ => {
+          fail_opencode_install_task(&task_id, "未检测到 Node.js 或 npm，请先安装 Node.js 18+。".to_string());
+          return;
+        }
+      }
+    }
+
+    if effective_method == "script" && !cfg!(target_os = "windows") && command_exists("curl").is_none() {
+      fail_opencode_install_task(&task_id, "未检测到 `curl`，无法执行官方脚本安装。请先安装 curl，或改用 npm 安装。".to_string());
+      return;
+    }
+
+    let _ = with_opencode_install_task(&task_id, |task| {
+      if action != "uninstall" {
+        set_opencode_install_step(task, 2, Some(format!("正在执行：{}", task.command)));
+      }
+    });
+
+    let mut command = create_command(&program);
+    command.args(&args);
+    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = match command.spawn() {
+      Ok(child) => child,
+      Err(error) => {
+        fail_opencode_install_task(&task_id, error.to_string());
+        return;
+      }
+    };
+
+    let _ = with_opencode_install_task(&task_id, |task| {
+      task.child_pid = Some(child.id());
+      touch_opencode_install_task(task);
+    });
+
+    let stdout_handle = child.stdout.take().map(|stdout| {
+      let task_id = task_id.clone();
+      thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+          push_opencode_install_log(&task_id, "stdout", &line);
+        }
+      })
+    });
+
+    let stderr_handle = child.stderr.take().map(|stderr| {
+      let task_id = task_id.clone();
+      thread::spawn(move || {
+        let reader = BufReader::new(stderr);
+        for line in reader.lines().map_while(Result::ok) {
+          push_opencode_install_log(&task_id, "stderr", &line);
+        }
+      })
+    });
+
+    let status = match child.wait() {
+      Ok(status) => status,
+      Err(error) => {
+        fail_opencode_install_task(&task_id, error.to_string());
+        return;
+      }
+    };
+
+    if let Some(handle) = stdout_handle { let _ = handle.join(); }
+    if let Some(handle) = stderr_handle { let _ = handle.join(); }
+
+    if get_opencode_install_task_snapshot(&task_id).map(|task| task.cancel_requested || task.status == "cancelled").unwrap_or(false) {
+      return;
+    }
+
+    if !status.success() {
+      let message = get_opencode_install_task_snapshot(&task_id)
+        .and_then(|task| task.logs.last().map(|item| item.text.clone()))
+        .unwrap_or_else(|| format!("安装命令退出码：{}", status.code().map(|c| c.to_string()).unwrap_or_else(|| "unknown".to_string())));
+      fail_opencode_install_task(&task_id, message);
+      return;
+    }
+
+    let binary = find_tool_binary("opencode");
+    if action == "uninstall" {
+      if binary.get("installed").and_then(Value::as_bool).unwrap_or(false) {
+        fail_opencode_install_task(&task_id, "卸载命令已执行完成，但系统里仍检测到 `opencode` 命令。".to_string());
+        return;
+      }
+      complete_opencode_install_task(&task_id, None);
+      return;
+    }
+
+    let _ = with_opencode_install_task(&task_id, |task| {
+      set_opencode_install_step(task, 3, Some("安装命令执行完成，正在验证 opencode 命令…".to_string()));
+    });
+
+    if !binary.get("installed").and_then(Value::as_bool).unwrap_or(false) {
+      fail_opencode_install_task(&task_id, "安装命令已执行完成，但系统里仍未找到 `opencode` 命令。".to_string());
+      return;
+    }
+
+    complete_opencode_install_task(&task_id, binary.get("version").and_then(Value::as_str).map(|s| s.to_string()));
+  });
 }
 
 fn openclaw_install_tasks() -> &'static Mutex<BTreeMap<String, OpenClawInstallTask>> {
@@ -1399,50 +2102,17 @@ fn try_auto_install_git(task_id: &str) -> bool {
   false
 }
 
-fn codex_candidates() -> Vec<String> {
+fn codex_candidates() -> Vec<PathBuf> {
   std::env::set_var("PATH", full_path_env());
   let mut paths = which::which_all("codex")
-    .map(|items| items.map(|item| item.to_string_lossy().to_string()).collect::<Vec<_>>())
+    .map(|items| items.collect::<Vec<_>>())
     .unwrap_or_default();
 
   if let Ok(home) = home_dir() {
     if cfg!(target_os = "windows") {
-      if let Ok(app_data) = std::env::var("APPDATA") {
-        let npm_dir = PathBuf::from(app_data).join("npm");
-        for candidate in [
-          npm_dir.join("codex.cmd"),
-          npm_dir.join("codex.ps1"),
-          npm_dir.join("codex.exe"),
-          npm_dir.join("codex"),
-        ] {
-          paths.push(candidate.to_string_lossy().to_string());
-        }
-      }
-      if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let local = PathBuf::from(local_app_data);
-        for dir in [local.join("pnpm"), local.join("Volta").join("bin")] {
-          for candidate in [
-            dir.join("codex.cmd"),
-            dir.join("codex.ps1"),
-            dir.join("codex.exe"),
-            dir.join("codex"),
-          ] {
-            paths.push(candidate.to_string_lossy().to_string());
-          }
-        }
-      }
-      for dir in [home.join(".bun").join("bin"), home.join(".volta").join("bin")] {
-        for candidate in [
-          dir.join("codex.cmd"),
-          dir.join("codex.ps1"),
-          dir.join("codex.exe"),
-          dir.join("codex"),
-        ] {
-          paths.push(candidate.to_string_lossy().to_string());
-        }
-      }
+      paths.extend(windows_common_tool_candidate_paths("codex"));
     } else {
-      for candidate in [
+      paths.extend([
         home.join(".npm-global").join("bin").join("codex"),
         home.join(".bun").join("bin").join("codex"),
         home.join("Library").join("pnpm").join("codex"),
@@ -1451,61 +2121,25 @@ fn codex_candidates() -> Vec<String> {
         home.join(".yarn").join("bin").join("codex"),
         home.join(".volta").join("bin").join("codex"),
         home.join(".asdf").join("shims").join("codex"),
-      ] {
-        paths.push(candidate.to_string_lossy().to_string());
-      }
-      paths.push("/usr/local/bin/codex".to_string());
-      paths.push("/opt/homebrew/bin/codex".to_string());
+        PathBuf::from("/usr/local/bin/codex"),
+        PathBuf::from("/opt/homebrew/bin/codex"),
+      ]);
     }
   }
 
-  paths.sort();
-  paths.dedup();
   paths
 }
 
 pub(crate) fn find_codex_binary() -> Value {
   std::env::set_var("PATH", full_path_env());
-  let mut candidates = codex_candidates()
-    .into_iter()
-    .filter_map(|candidate_path| {
-      let output = create_command(&candidate_path).arg("--version").output().ok()?;
-      if !output.status.success() {
-        return None;
-      }
-      let version_output = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-      )
-      .trim()
-      .to_string();
-      Some(json!({
-        "path": candidate_path,
-        "installed": true,
-        "version": version_output,
-      }))
-    })
-    .collect::<Vec<_>>();
-
-  candidates.sort_by(|left, right| {
-    let left_version = left.get("version").and_then(Value::as_str).unwrap_or_default();
-    let right_version = right.get("version").and_then(Value::as_str).unwrap_or_default();
-    compare_versions(right_version, left_version)
-  });
-
-  let selected = candidates.first().cloned();
-  json!({
-    "installed": selected.is_some(),
-    "version": selected.as_ref().and_then(|item| item.get("version")).cloned().unwrap_or(Value::Null),
-    "path": selected
-      .as_ref()
-      .and_then(|item| item.get("path").and_then(Value::as_str).map(|text| text.to_string()))
-      .or_else(|| command_exists("codex"))
-      .unwrap_or_default(),
-    "candidates": candidates,
-    "installCommand": format!("{} install -g {}", npm_command(), OPENAI_CODEX_PACKAGE),
-  })
+  let mut detected = collect_detected_binary_candidates(codex_candidates(), "codex");
+  if let Some(object) = detected.as_object_mut() {
+    object.insert(
+      "installCommand".to_string(),
+      Value::String(format!("{} install -g {}", npm_command(), OPENAI_CODEX_PACKAGE)),
+    );
+  }
+  detected
 }
 
 pub(crate) fn codex_npm_action(args: &[&str]) -> Result<Value, String> {
@@ -1557,20 +2191,9 @@ fn launch_codex_terminal_command(cwd: &Path) -> Result<String, String> {
   }
 
   if cfg!(target_os = "windows") {
-    let cwd_for_cmd = quote_windows_cmd_arg(&normalize_windows_cmd_path(&cwd_text));
-    let codex_for_cmd = quote_windows_cmd_arg(&normalize_windows_cmd_path(codex_path));
-    Command::new("cmd.exe")
-      .args([
-        "/c",
-        "start",
-        "",
-        "cmd",
-        "/k",
-        &format!("cd /d {} && {}", cwd_for_cmd, codex_for_cmd),
-      ])
-      .spawn()
-      .map_err(|error| error.to_string())?;
-    return Ok("Codex 已在新命令窗口中启动".to_string());
+    let empty_args: Vec<String> = Vec::new();
+    let command_text = build_windows_binary_command(codex_path, &empty_args, "codex");
+    return launch_terminal_command(cwd, &command_text, "Codex");
   }
 
   let terminals = vec![
@@ -2456,48 +3079,61 @@ pub(crate) fn check_setup_environment(query: &Value) -> Result<Value, String> {
 use crate::{
   app_home, compare_versions, default_codex_home, extract_version, home_dir, npm_command,
   parse_json_object, parse_toml_config, read_text, OPENAI_CODEX_PACKAGE,
-  claude_code_home, openclaw_home, write_text, ensure_dir, backups_root, CLAUDE_CODE_PACKAGE,
-  OPENCLAW_PACKAGE,
+  claude_code_home, openclaw_home, opencode_config_home, opencode_data_home, write_text, ensure_dir, backups_root, CLAUDE_CODE_PACKAGE,
+  OPENCODE_PACKAGE, OPENCLAW_PACKAGE,
 };
 use crate::provider::get_string;
 
 /* ═══════════════  Multi-tool support  ═══════════════ */
 
 fn find_tool_binary(binary_name: &str) -> Value {
-  // Set PATH before using which
   std::env::set_var("PATH", full_path_env());
-  let bin_path = which::which(binary_name)
-    .ok()
-    .map(|p| p.to_string_lossy().to_string());
 
-  if let Some(ref path) = bin_path {
-    let output = create_command(path).arg("--version").output();
-    if let Ok(out) = output {
-      if out.status.success() {
-        let version = format!(
-          "{}{}",
-          String::from_utf8_lossy(&out.stdout),
-          String::from_utf8_lossy(&out.stderr)
-        ).trim().to_string();
-        return json!({
-          "installed": true,
-          "version": version,
-          "path": path,
-        });
+  let mut candidate_paths: Vec<PathBuf> = which::which_all(binary_name)
+    .map(|items| items.collect::<Vec<_>>())
+    .unwrap_or_default();
+
+  if cfg!(target_os = "windows") {
+    candidate_paths.extend(windows_common_tool_candidate_paths(binary_name));
+  }
+
+  if binary_name.eq_ignore_ascii_case("opencode") {
+    if let Ok(home) = home_dir() {
+      let unix_candidates = [
+        std::env::var("OPENCODE_INSTALL_DIR").ok().filter(|value| !value.trim().is_empty()).map(|value| PathBuf::from(value).join("opencode")),
+        std::env::var("XDG_BIN_DIR").ok().filter(|value| !value.trim().is_empty()).map(|value| PathBuf::from(value).join("opencode")),
+        Some(home.join(".opencode").join("bin").join("opencode")),
+        Some(home.join("bin").join("opencode")),
+        Some(PathBuf::from("/opt/homebrew/bin/opencode")),
+        Some(PathBuf::from("/usr/local/bin/opencode")),
+        Some(PathBuf::from("/usr/bin/opencode")),
+      ];
+      candidate_paths.extend(unix_candidates.into_iter().flatten().filter(|candidate| candidate.exists()));
+
+      if cfg!(target_os = "windows") {
+        if let Ok(user_profile) = std::env::var("USERPROFILE") {
+          candidate_paths.extend(windows_binary_candidates_from_dir(
+            &PathBuf::from(&user_profile).join("scoop").join("shims"),
+            "opencode",
+          ));
+        }
+        if let Ok(program_data) = std::env::var("ProgramData") {
+          candidate_paths.extend(windows_binary_candidates_from_dir(
+            &PathBuf::from(&program_data).join("chocolatey").join("bin"),
+            "opencode",
+          ));
+        }
       }
     }
   }
 
-  json!({
-    "installed": false,
-    "version": Value::Null,
-    "path": Value::Null,
-  })
+  collect_detected_binary_candidates(candidate_paths, binary_name)
 }
 
 pub(crate) fn list_tools() -> Result<Value, String> {
   let codex_binary = find_codex_binary();
   let claude_binary = find_tool_binary("claude");
+  let opencode_binary = find_tool_binary("opencode");
   let openclaw_binary = find_tool_binary("openclaw");
 
   Ok(json!([
@@ -2520,6 +3156,21 @@ pub(crate) fn list_tools() -> Result<Value, String> {
       "installMethod": "npm",
       "npmPackage": CLAUDE_CODE_PACKAGE,
       "binary": claude_binary,
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "description": "开放式 AI 编程助手 CLI",
+      "supported": true,
+      "configFormat": "json",
+      "installMethod": "auto",
+      "npmPackage": OPENCODE_PACKAGE,
+      "installMethods": if cfg!(target_os = "windows") {
+        json!(["auto", "domestic", "npm", "scoop", "choco"])
+      } else {
+        json!(["auto", "domestic", "script", "brew", "npm"])
+      },
+      "binary": opencode_binary,
     },
     {
       "id": "openclaw",
@@ -3109,9 +3760,37 @@ fn normalize_windows_cmd_path(raw: &str) -> String {
   unwrapped.to_string()
 }
 
-fn launch_terminal_for_tool(cwd: &Path, binary_path: &str, tool_label: &str) -> Result<String, String> {
+fn build_windows_binary_command(binary_path: &str, args: &[String], fallback_binary: &str) -> String {
+  let normalized = normalize_windows_cmd_path(binary_path);
+  if normalized.trim().is_empty() {
+    let mut parts = vec![fallback_binary.to_string()];
+    parts.extend(args.iter().map(|arg| quote_windows_cmd_arg(arg)));
+    return parts.join(" ");
+  }
+
+  if normalized.to_ascii_lowercase().ends_with(".ps1") {
+    let mut parts = vec![
+      "powershell.exe".to_string(),
+      "-NoProfile".to_string(),
+      "-NonInteractive".to_string(),
+      "-ExecutionPolicy".to_string(),
+      "Bypass".to_string(),
+      "-File".to_string(),
+      quote_windows_cmd_arg(&normalized),
+    ];
+    parts.extend(args.iter().map(|arg| quote_windows_cmd_arg(arg)));
+    return parts.join(" ");
+  }
+
+  let mut parts = vec![quote_windows_cmd_arg(&normalized)];
+  parts.extend(args.iter().map(|arg| quote_windows_cmd_arg(arg)));
+  parts.join(" ")
+}
+
+fn launch_terminal_for_tool(cwd: &Path, binary_path: &str, tool_label: &str, fallback_binary: &str) -> Result<String, String> {
   if cfg!(target_os = "windows") {
-    let command_text = quote_windows_cmd_arg(&normalize_windows_cmd_path(binary_path));
+    let empty_args: Vec<String> = Vec::new();
+    let command_text = build_windows_binary_command(binary_path, &empty_args, fallback_binary);
     return launch_terminal_command(cwd, &command_text, tool_label);
   }
   launch_terminal_command(cwd, binary_path, tool_label)
@@ -3286,7 +3965,7 @@ pub(crate) fn launch_claudecode(body: &Value) -> Result<Value, String> {
     return Err("Claude Code 尚未安装，请先点击安装".to_string());
   }
   let bin_path = binary.get("path").and_then(Value::as_str).unwrap_or("claude");
-  let message = launch_terminal_for_tool(&cwd, bin_path, "Claude Code")?;
+  let message = launch_terminal_for_tool(&cwd, bin_path, "Claude Code", "claude")?;
   Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
 }
 
@@ -3312,6 +3991,671 @@ pub(crate) fn login_claudecode(body: &Value) -> Result<Value, String> {
   };
   let message = launch_terminal_command(&cwd, &command, "Claude Code OAuth 登录")?;
   Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
+}
+
+fn strip_json_comments(content: &str) -> String {
+  let chars: Vec<char> = content.chars().collect();
+  let mut out = String::new();
+  let mut in_string = false;
+  let mut escaped = false;
+  let mut index = 0usize;
+  while index < chars.len() {
+    let ch = chars[index];
+    let next = chars.get(index + 1).copied().unwrap_or('/');
+    if in_string {
+      out.push(ch);
+      if escaped {
+        escaped = false;
+      } else if ch == '\\' {
+        escaped = true;
+      } else if ch == '"' {
+        in_string = false;
+      }
+      index += 1;
+      continue;
+    }
+    if ch == '"' {
+      in_string = true;
+      out.push(ch);
+      index += 1;
+      continue;
+    }
+    if ch == '/' && next == '/' {
+      index += 2;
+      while index < chars.len() && chars[index] != '\n' {
+        index += 1;
+      }
+      if index < chars.len() {
+        out.push('\n');
+        index += 1;
+      }
+      continue;
+    }
+    if ch == '/' && next == '*' {
+      index += 2;
+      while index + 1 < chars.len() && !(chars[index] == '*' && chars[index + 1] == '/') {
+        if chars[index] == '\n' {
+          out.push('\n');
+        }
+        index += 1;
+      }
+      index = (index + 2).min(chars.len());
+      continue;
+    }
+    out.push(ch);
+    index += 1;
+  }
+  out
+}
+
+fn strip_json_trailing_commas(content: &str) -> String {
+  let chars: Vec<char> = content.chars().collect();
+  let mut out = String::new();
+  let mut in_string = false;
+  let mut escaped = false;
+  let mut index = 0usize;
+  while index < chars.len() {
+    let ch = chars[index];
+    if in_string {
+      out.push(ch);
+      if escaped {
+        escaped = false;
+      } else if ch == '\\' {
+        escaped = true;
+      } else if ch == '"' {
+        in_string = false;
+      }
+      index += 1;
+      continue;
+    }
+    if ch == '"' {
+      in_string = true;
+      out.push(ch);
+      index += 1;
+      continue;
+    }
+    if ch == ',' {
+      let mut cursor = index + 1;
+      while cursor < chars.len() && chars[cursor].is_whitespace() {
+        cursor += 1;
+      }
+      if cursor < chars.len() && (chars[cursor] == '}' || chars[cursor] == ']') {
+        index += 1;
+        continue;
+      }
+    }
+    out.push(ch);
+    index += 1;
+  }
+  out
+}
+
+fn parse_jsonc_content(content: &str) -> Result<Value, String> {
+  let trimmed = content.trim();
+  if trimmed.is_empty() {
+    return Ok(json!({}));
+  }
+  serde_json::from_str(&strip_json_trailing_commas(&strip_json_comments(trimmed)))
+    .map_err(|error| format!("OpenCode 配置解析失败：{}", error))
+}
+
+fn mask_secret(value: &str) -> String {
+  let text = value.trim();
+  if text.is_empty() {
+    return String::new();
+  }
+  let chars: Vec<char> = text.chars().collect();
+  if chars.len() <= 8 {
+    let prefix: String = chars.iter().take(2).collect();
+    let suffix = chars.last().copied().unwrap_or('*');
+    return format!("{}***{}", prefix, suffix);
+  }
+  let prefix: String = chars.iter().take(4).collect();
+  let suffix: String = chars[chars.len().saturating_sub(4)..].iter().collect();
+  format!("{}***{}", prefix, suffix)
+}
+
+#[derive(Clone)]
+struct OpenCodePaths {
+  scope: String,
+  root_path: PathBuf,
+  config_path: PathBuf,
+  auth_path: PathBuf,
+}
+
+fn first_existing_path(paths: &[PathBuf], fallback: PathBuf) -> PathBuf {
+  for candidate in paths {
+    if candidate.exists() {
+      return candidate.clone();
+    }
+  }
+  fallback
+}
+
+fn resolve_opencode_paths(source: &Value) -> Result<OpenCodePaths, String> {
+  let object = parse_json_object(source);
+  let scope = match get_string(&object, "scope").trim().to_lowercase().as_str() {
+    "project" => "project".to_string(),
+    _ => "global".to_string(),
+  };
+  let auth_path = opencode_data_home()?.join("auth.json");
+  if scope == "project" {
+    let project_path = get_string(&object, "projectPath");
+    if project_path.trim().is_empty() {
+      return Err("Project path is required for project scope".to_string());
+    }
+    let root_path = PathBuf::from(project_path.trim());
+    return Ok(OpenCodePaths {
+      scope,
+      root_path: root_path.clone(),
+      config_path: first_existing_path(
+        &[
+          root_path.join(".opencode").join("opencode.jsonc"),
+          root_path.join(".opencode").join("opencode.json"),
+          root_path.join("opencode.jsonc"),
+          root_path.join("opencode.json"),
+        ],
+        root_path.join("opencode.json"),
+      ),
+      auth_path,
+    });
+  }
+  let root_path = opencode_config_home()?;
+  Ok(OpenCodePaths {
+    scope,
+    root_path: root_path.clone(),
+    config_path: first_existing_path(
+      &[
+        root_path.join("opencode.jsonc"),
+        root_path.join("opencode.json"),
+        root_path.join("config.json"),
+      ],
+      root_path.join("opencode.json"),
+    ),
+    auth_path,
+  })
+}
+
+fn normalize_opencode_auth_entry_key(value: &str) -> String {
+  value.trim().trim_end_matches('/').to_string()
+}
+
+fn normalize_opencode_expiry(value: &Value) -> String {
+  let seconds = value.as_f64()
+    .or_else(|| value.as_i64().map(|number| number as f64))
+    .or_else(|| value.as_u64().map(|number| number as f64));
+  let Some(raw_number) = seconds else { return String::new(); };
+  if !raw_number.is_finite() || raw_number <= 0.0 {
+    return String::new();
+  }
+  let millis = if raw_number > 1_000_000_000_000.0 {
+    raw_number as i64
+  } else {
+    (raw_number * 1000.0) as i64
+  };
+  chrono::DateTime::<chrono::Utc>::from_timestamp_millis(millis)
+    .map(|time| time.to_rfc3339())
+    .unwrap_or_default()
+}
+
+fn parse_opencode_auth_json(content: &str) -> Result<Value, String> {
+  let trimmed = content.trim();
+  if trimmed.is_empty() {
+    return Ok(json!({}));
+  }
+  let parsed = serde_json::from_str::<Value>(trimmed)
+    .map_err(|error| format!("OpenCode 鉴权文件解析失败：{}", error))?;
+  Ok(if parsed.is_object() { parsed } else { json!({}) })
+}
+
+fn summarize_opencode_auth_entries(auth_json: &Value) -> Vec<Value> {
+  let mut entries = auth_json
+    .as_object()
+    .map(|object| {
+      object.iter().map(|(key, value)| {
+        let entry_type = value.get("type").and_then(Value::as_str).unwrap_or("unknown").trim().to_lowercase();
+        let secret = if entry_type == "oauth" {
+          value.get("access").and_then(Value::as_str)
+            .or_else(|| value.get("refresh").and_then(Value::as_str))
+            .unwrap_or("")
+            .trim()
+            .to_string()
+        } else if entry_type == "wellknown" {
+          value.get("token").and_then(Value::as_str).unwrap_or("").trim().to_string()
+        } else {
+          value.get("key").and_then(Value::as_str).unwrap_or("").trim().to_string()
+        };
+        json!({
+          "key": normalize_opencode_auth_entry_key(key),
+          "type": if entry_type.is_empty() { "unknown" } else { &entry_type },
+          "maskedSecret": mask_secret(&secret),
+          "expiresAt": if entry_type == "oauth" { normalize_opencode_expiry(&value["expires"]) } else { String::new() },
+          "hasCredential": !secret.is_empty(),
+        })
+      }).collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
+  entries.sort_by(|left, right| {
+    left.get("key").and_then(Value::as_str).unwrap_or("")
+      .cmp(right.get("key").and_then(Value::as_str).unwrap_or(""))
+  });
+  entries
+}
+
+fn find_opencode_auth_entry(auth_entries: &[Value], provider_key: &str, base_url: &str) -> Option<Value> {
+  let normalized_provider_key = normalize_opencode_auth_entry_key(provider_key);
+  let normalized_base_url = normalize_opencode_auth_entry_key(base_url);
+  auth_entries.iter().find(|entry| {
+    let auth_key = normalize_opencode_auth_entry_key(entry.get("key").and_then(Value::as_str).unwrap_or(""));
+    (!normalized_provider_key.is_empty() && auth_key == normalized_provider_key)
+      || (!normalized_base_url.is_empty() && auth_key == normalized_base_url)
+  }).cloned()
+}
+
+fn open_code_provider_from_model(model: &str) -> String {
+  model.split_once('/').map(|(provider, _)| provider.to_string()).unwrap_or_default()
+}
+
+fn quote_posix_shell_arg(value: &str) -> String {
+  format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn can_access_google() -> bool {
+  let client = match reqwest::blocking::Client::builder()
+    .connect_timeout(std::time::Duration::from_millis(1500))
+    .timeout(std::time::Duration::from_millis(2800))
+    .redirect(reqwest::redirect::Policy::limited(2))
+    .build() {
+      Ok(client) => client,
+      Err(_) => return false,
+    };
+  ["https://www.google.com/generate_204", "https://www.gstatic.com/generate_204"]
+    .iter()
+    .any(|url| {
+      client.get(*url)
+        .header(reqwest::header::USER_AGENT, "easy-ai-config/1.0")
+        .send()
+        .map(|response| response.status().is_success() || response.status().is_redirection())
+        .unwrap_or(false)
+    })
+}
+
+fn resolve_opencode_install_method(method: &str) -> String {
+  let normalized = method.trim().to_lowercase();
+  if cfg!(target_os = "windows") {
+    match normalized.as_str() {
+      "auto" | "domestic" | "npm" | "scoop" | "choco" => normalized,
+      _ => "auto".to_string(),
+    }
+  } else {
+    match normalized.as_str() {
+      "auto" | "domestic" | "script" | "brew" | "npm" => normalized,
+      _ => "auto".to_string(),
+    }
+  }
+}
+
+fn resolve_opencode_effective_method(method: &str) -> (String, bool) {
+  let normalized = resolve_opencode_install_method(method);
+  if normalized != "auto" {
+    return (normalized, false);
+  }
+  let google_ok = can_access_google();
+  if google_ok {
+    if cfg!(target_os = "windows") {
+      ("npm".to_string(), true)
+    } else {
+      ("script".to_string(), true)
+    }
+  } else {
+    ("domestic".to_string(), false)
+  }
+}
+
+fn open_code_shell_action(command_text: &str) -> Result<Value, String> {
+  if cfg!(target_os = "windows") {
+    let args = vec![
+      "-NoProfile".to_string(),
+      "-NonInteractive".to_string(),
+      "-ExecutionPolicy".to_string(),
+      "Bypass".to_string(),
+      "-Command".to_string(),
+      command_text.to_string(),
+    ];
+    let result = run_command_dynamic("powershell.exe", &args, None, None)?;
+    return Ok(json!({
+      "ok": result.get("ok").and_then(Value::as_bool).unwrap_or(false),
+      "code": result.get("code").cloned().unwrap_or(Value::Null),
+      "stdout": result.get("stdout").cloned().unwrap_or(Value::String(String::new())),
+      "stderr": result.get("stderr").cloned().unwrap_or(Value::String(String::new())),
+      "command": format!("powershell -Command {}", command_text),
+    }));
+  }
+  let args = vec!["-lc".to_string(), command_text.to_string()];
+  let result = run_command_dynamic("sh", &args, None, None)?;
+  Ok(json!({
+    "ok": result.get("ok").and_then(Value::as_bool).unwrap_or(false),
+    "code": result.get("code").cloned().unwrap_or(Value::Null),
+    "stdout": result.get("stdout").cloned().unwrap_or(Value::String(String::new())),
+    "stderr": result.get("stderr").cloned().unwrap_or(Value::String(String::new())),
+    "command": command_text,
+  }))
+}
+
+fn open_code_npm_action(mut args: Vec<String>, use_cn_registry: bool) -> Result<Value, String> {
+  if use_cn_registry {
+    args.push("--registry".to_string());
+    args.push(OPENCODE_NPM_REGISTRY_CN.to_string());
+  }
+  let result = run_command_dynamic(npm_command(), &args, None, None)?;
+  Ok(json!({
+    "ok": result.get("ok").and_then(Value::as_bool).unwrap_or(false),
+    "code": result.get("code").cloned().unwrap_or(Value::Null),
+    "stdout": result.get("stdout").cloned().unwrap_or(Value::String(String::new())),
+    "stderr": result.get("stderr").cloned().unwrap_or(Value::String(String::new())),
+    "command": format!("{} {}", npm_command(), args.join(" ")),
+  }))
+}
+
+fn open_code_remove_binary_action() -> Result<Value, String> {
+  let binary = find_tool_binary("opencode");
+  let path = binary.get("path").and_then(Value::as_str).unwrap_or("").trim().to_string();
+  if path.is_empty() {
+    return Ok(json!({
+      "ok": true,
+      "code": 0,
+      "stdout": "",
+      "stderr": "",
+      "command": "rm -f <opencode-binary>",
+    }));
+  }
+  if cfg!(target_os = "windows") {
+    return open_code_shell_action(&format!("Remove-Item -Force '{}'", path.replace('\'', "''")));
+  }
+  open_code_shell_action(&format!("rm -f {}", quote_posix_shell_arg(&path)))
+}
+
+fn run_opencode_action(kind: &str, body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let requested_method = resolve_opencode_install_method(&get_string(&object, "method"));
+  let (effective_method, google_ok) = resolve_opencode_effective_method(&requested_method);
+  let use_cn_registry = effective_method == "domestic";
+  let latest_package = format!("{}@latest", OPENCODE_PACKAGE);
+  let mut result = match kind {
+    "install" => match effective_method.as_str() {
+      "domestic" => open_code_npm_action(vec!["install".to_string(), "-g".to_string(), latest_package.clone()], true)?,
+      "npm" => open_code_npm_action(vec!["install".to_string(), "-g".to_string(), latest_package.clone()], false)?,
+      "brew" => open_code_shell_action("brew install anomalyco/tap/opencode")?,
+      "scoop" => open_code_shell_action("scoop install opencode")?,
+      "choco" => open_code_shell_action("choco install opencode -y")?,
+      _ => open_code_shell_action(OPENCODE_INSTALL_SCRIPT_UNIX)?,
+    },
+    "reinstall" => match effective_method.as_str() {
+      "domestic" => open_code_npm_action(vec!["install".to_string(), "-g".to_string(), latest_package.clone(), "--force".to_string()], true)?,
+      "npm" => open_code_npm_action(vec!["install".to_string(), "-g".to_string(), latest_package.clone(), "--force".to_string()], false)?,
+      "brew" => open_code_shell_action("brew reinstall anomalyco/tap/opencode")?,
+      "scoop" => open_code_shell_action("scoop uninstall opencode; scoop install opencode")?,
+      "choco" => open_code_shell_action("choco uninstall opencode -y; choco install opencode -y")?,
+      _ => open_code_shell_action(OPENCODE_INSTALL_SCRIPT_UNIX)?,
+    },
+    "update" => match effective_method.as_str() {
+      "domestic" => open_code_npm_action(vec!["install".to_string(), "-g".to_string(), latest_package.clone()], true)?,
+      "npm" => open_code_npm_action(vec!["install".to_string(), "-g".to_string(), latest_package.clone()], false)?,
+      "brew" => open_code_shell_action("brew upgrade anomalyco/tap/opencode || brew install anomalyco/tap/opencode")?,
+      "scoop" => open_code_shell_action("scoop update opencode")?,
+      "choco" => open_code_shell_action("choco upgrade opencode -y")?,
+      _ => open_code_shell_action(OPENCODE_INSTALL_SCRIPT_UNIX)?,
+    },
+    "uninstall" => match effective_method.as_str() {
+      "domestic" | "npm" => open_code_npm_action(vec!["uninstall".to_string(), "-g".to_string(), OPENCODE_PACKAGE.to_string()], false)?,
+      "brew" => open_code_shell_action("brew uninstall anomalyco/tap/opencode || brew uninstall opencode")?,
+      "scoop" => open_code_shell_action("scoop uninstall opencode")?,
+      "choco" => open_code_shell_action("choco uninstall opencode -y")?,
+      _ => open_code_remove_binary_action()?,
+    },
+    _ => return Err("不支持的 OpenCode 操作".to_string()),
+  };
+
+  if let Some(result_object) = result.as_object_mut() {
+    result_object.insert("requestedMethod".to_string(), json!(requested_method));
+    result_object.insert("method".to_string(), json!(effective_method));
+    result_object.insert("official".to_string(), json!(effective_method != "domestic"));
+    result_object.insert("usedDomesticMirror".to_string(), json!(use_cn_registry));
+    result_object.insert("googleReachable".to_string(), json!(google_ok));
+  }
+  Ok(result)
+}
+
+pub(crate) fn load_opencode_state(query: &Value) -> Result<Value, String> {
+  let paths = resolve_opencode_paths(query)?;
+  let raw_config = read_text(&paths.config_path)?;
+  let raw_auth = read_text(&paths.auth_path)?;
+  let config = parse_jsonc_content(&raw_config)?;
+  let auth_json = parse_opencode_auth_json(&raw_auth)?;
+  let auth_entries = summarize_opencode_auth_entries(&auth_json);
+  let binary = find_tool_binary("opencode");
+
+  let mut providers = config.get("provider")
+    .and_then(Value::as_object)
+    .map(|provider_map| {
+      provider_map.iter().map(|(key, value)| {
+        let base_url = value.get("options").and_then(|item| item.get("baseURL")).and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let api_key = value.get("options").and_then(|item| item.get("apiKey")).and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let matched_auth = find_opencode_auth_entry(&auth_entries, key, &base_url);
+        let model_ids = value.get("models")
+          .and_then(Value::as_object)
+          .map(|models| models.keys().cloned().collect::<Vec<_>>())
+          .unwrap_or_default();
+        json!({
+          "key": key,
+          "name": value.get("name").and_then(Value::as_str).unwrap_or(key),
+          "npm": value.get("npm").and_then(Value::as_str).unwrap_or(""),
+          "baseUrl": base_url,
+          "hasApiKey": !api_key.is_empty(),
+          "hasAuth": matched_auth.is_some(),
+          "hasCredential": !api_key.is_empty() || matched_auth.is_some(),
+          "authType": matched_auth.as_ref().and_then(|entry| entry.get("type")).and_then(Value::as_str).unwrap_or(""),
+          "maskedApiKey": mask_secret(&api_key),
+          "modelIds": model_ids,
+        })
+      }).collect::<Vec<_>>()
+    })
+    .unwrap_or_default();
+  providers.sort_by(|left, right| {
+    left.get("key").and_then(Value::as_str).unwrap_or("")
+      .cmp(right.get("key").and_then(Value::as_str).unwrap_or(""))
+  });
+
+  let model = config.get("model").and_then(Value::as_str).unwrap_or("").trim().to_string();
+  let small_model = config.get("small_model").and_then(Value::as_str).unwrap_or("").trim().to_string();
+  let active_provider_key = open_code_provider_from_model(&model);
+  let selected_provider_key = if !active_provider_key.is_empty() {
+    active_provider_key.clone()
+  } else {
+    providers.first().and_then(|item| item.get("key")).and_then(Value::as_str).unwrap_or("").to_string()
+  };
+  let active_provider = providers.iter().find(|item| item.get("key").and_then(Value::as_str) == Some(selected_provider_key.as_str())).cloned();
+  let active_auth = find_opencode_auth_entry(
+    &auth_entries,
+    &selected_provider_key,
+    active_provider.as_ref().and_then(|item| item.get("baseUrl")).and_then(Value::as_str).unwrap_or(""),
+  );
+
+  Ok(json!({
+    "toolId": "opencode",
+    "scope": paths.scope,
+    "rootPath": paths.root_path.to_string_lossy().to_string(),
+    "configPath": paths.config_path.to_string_lossy().to_string(),
+    "authPath": paths.auth_path.to_string_lossy().to_string(),
+    "binary": binary,
+    "configExists": !raw_config.trim().is_empty(),
+    "authExists": !raw_auth.trim().is_empty(),
+    "config": config,
+    "configJson": if raw_config.trim().is_empty() { serde_json::to_string_pretty(&json!({})).unwrap_or_else(|_| "{}".to_string()) } else { raw_config },
+    "model": model,
+    "smallModel": small_model,
+    "activeProviderKey": selected_provider_key,
+    "activeProvider": active_provider,
+    "activeAuth": active_auth,
+    "authEntries": auth_entries,
+    "providers": providers,
+  }))
+}
+
+pub(crate) fn save_opencode_config(body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let raw = get_string(&object, "configJson");
+  if raw.trim().is_empty() {
+    return Err("OpenCode 配置内容不能为空".to_string());
+  }
+  let _ = parse_jsonc_content(&raw)?;
+  let paths = resolve_opencode_paths(body)?;
+  write_text(&paths.config_path, &format!("{}\n", raw.trim_end()))?;
+  Ok(json!({
+    "saved": true,
+    "scope": paths.scope,
+    "configPath": paths.config_path.to_string_lossy().to_string(),
+  }))
+}
+
+pub(crate) fn save_opencode_raw_config(body: &Value) -> Result<Value, String> {
+  save_opencode_config(body)
+}
+
+pub(crate) fn start_opencode_install_task(body: &Value) -> Result<Value, String> {
+  let obj = parse_json_object(body);
+  let action = get_string(&obj, "action");
+  let normalized_action = match action.trim() {
+    "update" => "update",
+    "reinstall" => "reinstall",
+    "uninstall" => "uninstall",
+    _ => "install",
+  };
+  let method = resolve_opencode_install_method(&get_string(&obj, "method"));
+  let task = create_opencode_install_task(normalized_action, &method);
+  let response = serde_json::to_value(&task).map_err(|error| error.to_string())?;
+  insert_opencode_install_task(task.clone());
+  spawn_opencode_install_task_runner(task.task_id.clone());
+  Ok(response)
+}
+
+pub(crate) fn get_opencode_install_task(query: &Value) -> Result<Value, String> {
+  let obj = parse_json_object(query);
+  let task_id = obj.get("taskId").and_then(Value::as_str).unwrap_or("").trim();
+  if task_id.is_empty() {
+    return Err("OpenCode 任务不存在，可能已经过期，请重新开始".to_string());
+  }
+  let task = get_opencode_install_task_snapshot(task_id)
+    .ok_or_else(|| "OpenCode 任务不存在，可能已经过期，请重新开始".to_string())?;
+  serde_json::to_value(task).map_err(|error| error.to_string())
+}
+
+pub(crate) fn cancel_opencode_install_task(body: &Value) -> Result<Value, String> {
+  let obj = parse_json_object(body);
+  let task_id = obj.get("taskId").and_then(Value::as_str).unwrap_or("").trim();
+  if task_id.is_empty() {
+    return Err("OpenCode 任务不存在，可能已经过期，请重新开始".to_string());
+  }
+  cancel_opencode_install_task_inner(task_id)?;
+  let task = get_opencode_install_task_snapshot(task_id)
+    .ok_or_else(|| "OpenCode 任务不存在，可能已经过期，请重新开始".to_string())?;
+  serde_json::to_value(task).map_err(|error| error.to_string())
+}
+
+pub(crate) fn install_opencode(body: &Value) -> Result<Value, String> {
+  run_opencode_action("install", body)
+}
+
+pub(crate) fn reinstall_opencode(body: &Value) -> Result<Value, String> {
+  run_opencode_action("reinstall", body)
+}
+
+pub(crate) fn update_opencode(body: &Value) -> Result<Value, String> {
+  run_opencode_action("update", body)
+}
+
+pub(crate) fn uninstall_opencode(body: &Value) -> Result<Value, String> {
+  run_opencode_action("uninstall", body)
+}
+
+pub(crate) fn launch_opencode(body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let cwd = {
+    let input = get_string(&object, "cwd");
+    if input.is_empty() { home_dir()? } else { PathBuf::from(input) }
+  };
+  let binary = find_tool_binary("opencode");
+  if !binary.get("installed").and_then(Value::as_bool).unwrap_or(false) {
+    return Err("OpenCode 尚未安装，请先点击安装".to_string());
+  }
+  let bin_path = binary.get("path").and_then(Value::as_str).unwrap_or("opencode");
+  let message = launch_terminal_for_tool(&cwd, bin_path, "OpenCode", "opencode")?;
+  Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
+}
+
+pub(crate) fn login_opencode(body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let cwd = {
+    let input = get_string(&object, "cwd");
+    if input.is_empty() { home_dir()? } else { PathBuf::from(input) }
+  };
+  let binary = find_tool_binary("opencode");
+  if !binary.get("installed").and_then(Value::as_bool).unwrap_or(false) {
+    return Err("OpenCode 尚未安装，请先点击安装".to_string());
+  }
+  let binary_path = binary
+    .get("path")
+    .and_then(Value::as_str)
+    .filter(|text| !text.trim().is_empty())
+    .unwrap_or("opencode");
+  let provider = get_string(&object, "provider");
+  let method = get_string(&object, "method");
+  let mut args = vec!["auth".to_string(), "login".to_string()];
+  if !provider.trim().is_empty() {
+    args.push("--provider".to_string());
+    args.push(provider.trim().to_string());
+  }
+  if !method.trim().is_empty() {
+    args.push("--method".to_string());
+    args.push(method.trim().to_string());
+  }
+  let command = if cfg!(target_os = "windows") {
+    build_windows_binary_command(binary_path, &args, "opencode")
+  } else {
+    let mut parts = vec![quote_posix_shell_arg(binary_path), "auth".to_string(), "login".to_string()];
+    if !provider.trim().is_empty() {
+      parts.push("--provider".to_string());
+      parts.push(quote_posix_shell_arg(provider.trim()));
+    }
+    if !method.trim().is_empty() {
+      parts.push("--method".to_string());
+      parts.push(quote_posix_shell_arg(method.trim()));
+    }
+    parts.join(" ")
+  };
+  let message = launch_terminal_command(&cwd, &command, "OpenCode 登录")?;
+  Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
+}
+
+pub(crate) fn remove_opencode_auth(body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let provider = normalize_opencode_auth_entry_key(&get_string(&object, "provider"));
+  if provider.is_empty() {
+    return Err("请先指定要移除的 OpenCode 凭证".to_string());
+  }
+  let paths = resolve_opencode_paths(body)?;
+  let raw_auth = read_text(&paths.auth_path)?;
+  let mut auth_json = parse_opencode_auth_json(&raw_auth)?;
+  if let Some(auth_object) = auth_json.as_object_mut() {
+    auth_object.remove(&provider);
+    auth_object.remove(&format!("{}/", provider));
+  }
+  write_json_file(&paths.auth_path, &auth_json)?;
+  Ok(json!({
+    "removed": true,
+    "provider": provider,
+    "authPath": paths.auth_path.to_string_lossy().to_string(),
+  }))
 }
 
 /* ═══════════════  OpenClaw  ═══════════════ */

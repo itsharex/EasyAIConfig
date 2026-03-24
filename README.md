@@ -38,6 +38,7 @@
 | **Codex CLI** | 已支持 | 已支持 | 已支持 (`codex login`) | 已支持 (`~/.codex/config.toml` + `.env`) | 已支持 |
 | **Claude Code** | 已支持 | 已支持 | 已支持 (OAuth 登录) | 已支持 (`~/.claude/settings.json`) | 已支持 |
 | **OpenClaw** | 已支持（一键 / WSL / 脚本） | 已支持（Gateway 启动） | 已支持 (`onboard`) | 已支持 (`~/.openclaw/openclaw.json`) | 已支持 |
+| **OpenCode** | 已支持（官方脚本 / Homebrew / npm / Scoop / Chocolatey） | 已支持 | 规划中 | 规划中 | 规划中 |
 
 ## [Todo] 未来功能待办（Roadmap）
 

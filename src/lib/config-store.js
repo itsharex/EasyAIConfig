@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import https from 'node:https';
 import net from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import TOML from '@iarna/toml';
@@ -11,10 +12,15 @@ import { detectProvider } from './provider-check.js';
 const APP_HOME_DIRNAME = '.codex-config-ui';
 const BACKUPS_DIRNAME = 'backups';
 const OPENAI_CODEX_PACKAGE = '@openai/codex';
+const OPENCODE_PACKAGE = 'opencode-ai';
+const OPENCODE_INSTALL_SCRIPT_UNIX = 'curl -fsSL https://opencode.ai/install | bash';
+const OPENCODE_INSTALL_TASK_TTL_MS = 30 * 60 * 1000;
+const OPENCODE_INSTALL_TASKS = new Map();
 const OPENCLAW_INSTALL_TASK_TTL_MS = 30 * 60 * 1000;
 const OPENCLAW_INSTALL_TASKS = new Map();
 const OPENCLAW_NPM_REGISTRY_CN = 'https://registry.npmmirror.com';
 
+let opencodeInstallTaskSeq = 0;
 let openclawInstallTaskSeq = 0;
 const OPENCLAW_INSTALL_SCRIPT_UNIX = 'curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm';
 const OPENCLAW_INSTALL_SCRIPT_WIN = "$env:OPENCLAW_NO_ONBOARD='1'; iwr -useb https://openclaw.ai/install.ps1 | iex";
@@ -52,6 +58,24 @@ const TOOL_REGISTRY = {
     providerKeyField: null,
     projectConfigDir: '.claude',
     supported: true,
+  },
+  opencode: {
+    id: 'opencode',
+    name: 'OpenCode',
+    description: '开放式 AI 编程助手 CLI',
+    configHome: () => process.platform === 'win32'
+      ? path.join(process.env.APPDATA?.trim() || path.join(os.homedir(), 'AppData', 'Roaming'), 'opencode')
+      : path.join(process.env.XDG_CONFIG_HOME?.trim() || path.join(os.homedir(), '.config'), 'opencode'),
+    configFormat: 'jsonc',
+    configFileName: 'opencode.json',
+    envFileName: null,
+    binaryName: 'opencode',
+    npmPackage: OPENCODE_PACKAGE,
+    installMethod: 'auto',
+    providerKeyField: null,
+    projectConfigDir: '.opencode',
+    supported: true,
+    installMethods: process.platform === 'win32' ? ['auto', 'domestic', 'npm', 'scoop', 'choco'] : ['auto', 'domestic', 'script', 'brew', 'npm'],
   },
   openclaw: {
     id: 'openclaw',
@@ -194,10 +218,13 @@ function toolBinaryCandidates(toolId) {
   if (process.platform === 'win32') {
     const preferredPrefix = toolId === 'openclaw' ? openClawNpmPrefix() : npmGlobalPrefix();
     const appData = process.env.APPDATA?.trim();
+    const home = os.homedir();
     const winCandidates = [
       ...binaryCandidatesFromDir(binaryName, preferredPrefix),
       ...binaryCandidatesFromDir(binaryName, appData ? path.join(appData, 'npm') : ''),
-      ...(toolId === 'openclaw' ? binaryCandidatesFromDir(binaryName, path.join(os.homedir(), '.local', 'bin')) : []),
+      ...(toolId === 'openclaw' ? binaryCandidatesFromDir(binaryName, path.join(home, '.local', 'bin')) : []),
+      ...(toolId === 'opencode' ? binaryCandidatesFromDir(binaryName, path.join(home, 'scoop', 'shims')) : []),
+      ...(toolId === 'opencode' ? binaryCandidatesFromDir(binaryName, path.join(process.env.ProgramData || 'C:\ProgramData', 'chocolatey', 'bin')) : []),
     ];
     winCandidates.filter(Boolean).forEach((candidate) => {
       if (existsSync(candidate)) addCandidate(candidate);
@@ -206,6 +233,20 @@ function toolBinaryCandidates(toolId) {
     const npmPrefix = npmGlobalPrefix();
     for (const unixCandidate of binaryCandidatesFromDir(binaryName, npmPrefix ? path.join(npmPrefix, 'bin') : '')) {
       if (unixCandidate && existsSync(unixCandidate)) addCandidate(unixCandidate);
+    }
+    if (toolId === 'opencode') {
+      const home = os.homedir();
+      const extraDirs = [
+        process.env.OPENCODE_INSTALL_DIR?.trim(),
+        process.env.XDG_BIN_DIR?.trim(),
+        path.join(home, 'bin'),
+        path.join(home, '.opencode', 'bin'),
+      ].filter(Boolean);
+      for (const dirPath of extraDirs) {
+        for (const unixCandidate of binaryCandidatesFromDir(binaryName, dirPath)) {
+          if (unixCandidate && existsSync(unixCandidate)) addCandidate(unixCandidate);
+        }
+      }
     }
   }
 
@@ -234,9 +275,18 @@ function toolBinaryCandidates(toolId) {
   return [...candidates];
 }
 
+function windowsBinaryCandidateRank(binPath = '') {
+  const lower = String(binPath || '').toLowerCase();
+  if (lower.endsWith('.cmd')) return 0;
+  if (lower.endsWith('.exe')) return 1;
+  if (lower.endsWith('.bat')) return 2;
+  if (lower.endsWith('.ps1')) return 4;
+  return 3;
+}
+
 function readBinaryVersion(binPath) {
   if (!binPath) return { installed: false, version: null, path: null };
-  const lower = binPath.toLowerCase();
+  const lower = String(binPath || '').toLowerCase();
   const result = process.platform === 'win32' && lower.endsWith('.ps1')
     ? runSpawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', binPath, '--version'], { encoding: 'utf8' })
     : runSpawnSync(binPath, ['--version'], { encoding: 'utf8' });
@@ -248,11 +298,19 @@ function readBinaryVersion(binPath) {
 }
 
 function findToolBinary(toolId) {
-  for (const candidate of toolBinaryCandidates(toolId)) {
-    const detected = readBinaryVersion(candidate);
-    if (detected.installed) return detected;
-  }
-  return { installed: false, version: null, path: null };
+  const candidates = toolBinaryCandidates(toolId).map((candidatePath) => readBinaryVersion(candidatePath)).filter((item) => item.installed);
+  candidates.sort((left, right) => {
+    const versionOrder = compareVersions(right.version || '', left.version || '');
+    if (versionOrder !== 0) return versionOrder;
+    return windowsBinaryCandidateRank(left.path) - windowsBinaryCandidateRank(right.path);
+  });
+  const selected = candidates[0];
+  return {
+    installed: Boolean(selected),
+    version: selected?.version || null,
+    path: selected?.path || null,
+    candidates,
+  };
 }
 
 export function listTools() {
@@ -1608,43 +1666,14 @@ function compareVersions(left, right) {
 }
 
 function codexCandidates() {
-  const paths = new Set();
-  const whichResult = runSpawnSync(process.platform === 'win32' ? 'where' : 'which', ['-a', 'codex'], { encoding: 'utf8' });
-  if (whichResult.status === 0) {
-    for (const line of (whichResult.stdout || '').split(/\r?\n/)) {
-      if (line.trim()) paths.add(line.trim());
-    }
-  }
-  const home = os.homedir();
-  const explicit = [
-    path.join(home, '.npm-global', 'bin', 'codex'),
-    '/usr/local/bin/codex',
-    '/opt/homebrew/bin/codex',
-  ];
-  for (const entry of explicit) {
-    if (entry) paths.add(entry);
-  }
-  return [...paths];
+  return toolBinaryCandidates('codex');
 }
 
 function findCodexBinary() {
-  const candidates = codexCandidates().map((candidatePath) => {
-    const result = runSpawnSync(candidatePath, ['--version'], { encoding: 'utf8' });
-    return {
-      path: candidatePath,
-      installed: result.status === 0,
-      version: result.status === 0 ? (result.stdout || result.stderr || '').trim() : null,
-    };
-  }).filter((item) => item.installed);
-
-  candidates.sort((left, right) => compareVersions(right.version, left.version));
-  const selected = candidates[0];
-
+  const detected = findToolBinary('codex');
   return {
-    installed: Boolean(selected),
-    version: selected?.version || null,
-    path: selected?.path || commandExists('codex'),
-    candidates,
+    ...detected,
+    path: detected.path || commandExists('codex'),
     installCommand: `${npmCommand()} install -g ${OPENAI_CODEX_PACKAGE}`,
   };
 }
@@ -1693,6 +1722,211 @@ async function writeText(filePath, content) {
 
 function parseToml(content) {
   return content.trim() ? TOML.parse(content) : {};
+}
+
+function stripJsonComments(content) {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < content.length; index += 1) {
+    const ch = content[index];
+    const next = content[index + 1];
+    if (inString) {
+      out += ch;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      while (index < content.length && content[index] !== "\n") index += 1;
+      if (index < content.length) out += "\n";
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      index += 2;
+      while (index < content.length && !(content[index] === '*' && content[index + 1] === '/')) {
+        if (content[index] === "\n") out += "\n";
+        index += 1;
+      }
+      index += 1;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function stripJsonTrailingCommas(content) {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < content.length; index += 1) {
+    const ch = content[index];
+    if (inString) {
+      out += ch;
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === ',') {
+      let cursor = index + 1;
+      while (cursor < content.length && /\s/.test(content[cursor])) cursor += 1;
+      if (content[cursor] === '}' || content[cursor] === ']') continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function parseJsonc(content) {
+  const trimmed = String(content || '').trim();
+  if (!trimmed) return {};
+  return JSON.parse(stripJsonTrailingCommas(stripJsonComments(trimmed)));
+}
+
+function maskSecret(value = '') {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (text.length <= 8) return `${text.slice(0, 2)}***${text.slice(-1)}`;
+  return `${text.slice(0, 4)}***${text.slice(-4)}`;
+}
+
+function openCodeGlobalConfigDir() {
+  if (process.platform === 'win32') {
+    return path.join(process.env.APPDATA?.trim() || path.join(os.homedir(), 'AppData', 'Roaming'), 'opencode');
+  }
+  return path.join(process.env.XDG_CONFIG_HOME?.trim() || path.join(os.homedir(), '.config'), 'opencode');
+}
+
+function openCodeGlobalDataDir() {
+  if (process.platform === 'win32') {
+    return path.join(process.env.APPDATA?.trim() || path.join(os.homedir(), 'AppData', 'Roaming'), 'opencode');
+  }
+  return path.join(process.env.XDG_DATA_HOME?.trim() || path.join(os.homedir(), '.local', 'share'), 'opencode');
+}
+
+function firstExistingPath(paths = [], fallbackPath = '') {
+  for (const candidate of paths) {
+    if (candidate && existsSync(candidate)) return candidate;
+  }
+  return fallbackPath || paths.find(Boolean) || '';
+}
+
+function resolveOpenCodePaths({ scope = 'global', projectPath = '' } = {}) {
+  if (scope === 'project') {
+    if (!projectPath || !projectPath.trim()) throw new Error('Project path is required for project scope');
+    const rootPath = path.resolve(projectPath.trim());
+    return {
+      scope: 'project',
+      rootPath,
+      configPath: firstExistingPath([
+        path.join(rootPath, '.opencode', 'opencode.jsonc'),
+        path.join(rootPath, '.opencode', 'opencode.json'),
+        path.join(rootPath, 'opencode.jsonc'),
+        path.join(rootPath, 'opencode.json'),
+      ], path.join(rootPath, 'opencode.json')),
+      authPath: path.join(openCodeGlobalDataDir(), 'auth.json'),
+    };
+  }
+  const rootPath = openCodeGlobalConfigDir();
+  return {
+    scope: 'global',
+    rootPath,
+    configPath: firstExistingPath([
+      path.join(rootPath, 'opencode.jsonc'),
+      path.join(rootPath, 'opencode.json'),
+      path.join(rootPath, 'config.json'),
+    ], path.join(rootPath, 'opencode.json')),
+    authPath: path.join(openCodeGlobalDataDir(), 'auth.json'),
+  };
+}
+
+function normalizeOpenCodeProviderKey(value = '') {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return normalized || 'custom';
+}
+
+function openCodeProviderFromModel(model = '') {
+  const text = String(model || '').trim();
+  if (!text.includes('/')) return '';
+  return text.split('/')[0] || '';
+}
+
+function quotePosixShellArg(value = '') {
+  return `'${String(value).replace(/'/g, `'"'"'`)}'`;
+}
+
+function normalizeOpenCodeAuthEntryKey(value = '') {
+  return String(value || '').trim().replace(/\/+$/g, '');
+}
+
+function parseOpenCodeAuthJson(content = '') {
+  const raw = String(content || '').trim();
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    throw new Error(`OpenCode 鉴权文件解析失败：${error.message}`);
+  }
+}
+
+function normalizeOpenCodeExpiry(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) return '';
+  const millis = num > 1e12 ? num : num * 1000;
+  return new Date(millis).toISOString();
+}
+
+function summarizeOpenCodeAuthEntries(authJson = {}) {
+  return Object.entries(authJson || {}).map(([key, value]) => {
+    const normalizedKey = normalizeOpenCodeAuthEntryKey(key);
+    const type = String(value?.type || '').trim().toLowerCase() || 'unknown';
+    const secret = type === 'oauth'
+      ? String(value?.access || value?.refresh || '').trim()
+      : type === 'wellknown'
+        ? String(value?.token || '').trim()
+        : String(value?.key || '').trim();
+    return {
+      key: normalizedKey,
+      type,
+      maskedSecret: maskSecret(secret),
+      expiresAt: type === 'oauth' ? normalizeOpenCodeExpiry(value?.expires) : '',
+      hasCredential: Boolean(secret),
+    };
+  }).sort((left, right) => left.key.localeCompare(right.key));
+}
+
+function findOpenCodeAuthEntry(authEntries = [], providerKey = '', baseUrl = '') {
+  const normalizedProviderKey = normalizeOpenCodeAuthEntryKey(providerKey || '');
+  const normalizedBaseUrl = normalizeOpenCodeAuthEntryKey(baseUrl || '');
+  return authEntries.find((entry) => {
+    const authKey = normalizeOpenCodeAuthEntryKey(entry?.key || '');
+    return Boolean(
+      (normalizedProviderKey && authKey === normalizedProviderKey)
+      || (normalizedBaseUrl && authKey === normalizedBaseUrl)
+    );
+  }) || null;
 }
 
 function applyPatch(target, patch) {
@@ -2114,11 +2348,31 @@ function normalizeWindowsCmdPath(raw = '') {
   return unwrapped;
 }
 
+function buildWindowsBinaryCommand(binaryPath = '', args = [], fallbackBinary = 'codex') {
+  const normalized = normalizeWindowsCmdPath(binaryPath);
+  if (!normalized) {
+    return [fallbackBinary, ...args.map(arg => quoteWindowsCmdArg(String(arg)))].join(' ');
+  }
+  if (normalized.toLowerCase().endsWith('.ps1')) {
+    return [
+      'powershell.exe',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      quoteWindowsCmdArg(normalized),
+      ...args.map(arg => quoteWindowsCmdArg(String(arg))),
+    ].join(' ');
+  }
+  return [quoteWindowsCmdArg(normalized), ...args.map(arg => quoteWindowsCmdArg(String(arg)))].join(' ');
+}
+
 function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabel = 'Codex', commandText = '' } = {}) {
   const bin = commandText || binaryPath || binaryName;
   const escapedCwd = String(cwd).replace(/([\\"$])/g, '\\$1');
   const escapedBin = String(bin).replace(/([\\"$])/g, '\\$1');
-  const windowsBin = commandText || (binaryPath ? quoteWindowsCmdArg(normalizeWindowsCmdPath(binaryPath)) : bin);
+  const windowsBin = commandText || (binaryPath ? buildWindowsBinaryCommand(binaryPath, [], binaryName) : bin);
 
   if (process.platform === 'darwin') {
     const appleScript = [
@@ -2317,6 +2571,50 @@ async function probeOpenClawGateway(gatewayUrl) {
     portListening,
     reachable: httpReady,
     status: httpReady ? 'online' : portListening ? 'warming' : 'offline',
+  };
+}
+
+function readOpenClawDaemonState(binaryPath) {
+  if (!binaryPath) {
+    return {
+      supported: false,
+      installed: false,
+      loaded: false,
+      running: false,
+      status: 'unsupported',
+      label: '不支持',
+      detail: '',
+    };
+  }
+
+  const result = runSpawnSync(binaryPath, ['daemon', 'status'], {
+    cwd: openclawHome(),
+    encoding: 'utf8',
+    timeout: 2500,
+  });
+  const text = `${result.stdout || ''}
+${result.stderr || ''}`.trim();
+  const normalized = text.toLowerCase();
+  const installed = !(/service not installed|service unit not found|could not find service/.test(normalized));
+  const loaded = /(launchagent \(loaded\)|service:\s+.*\(loaded\)|runtime:\s+running)/.test(normalized);
+  const running = /runtime:\s+running/.test(normalized);
+  const status = running ? 'running' : loaded ? 'loaded' : installed ? 'stopped' : 'not_installed';
+  const label = status === 'running'
+    ? '运行中'
+    : status === 'loaded'
+      ? '已加载'
+      : status === 'stopped'
+        ? '已关闭'
+        : '未启用';
+
+  return {
+    supported: true,
+    installed,
+    loaded,
+    running,
+    status,
+    label,
+    detail: tailText(text, 6),
   };
 }
 
@@ -2780,7 +3078,7 @@ export async function loginCodex({ cwd } = {}) {
   }
 
   const binaryText = process.platform === 'win32'
-    ? (codexBinary.path ? quoteWindowsCmdArg(normalizeWindowsCmdPath(codexBinary.path)) : 'codex')
+    ? buildWindowsBinaryCommand(codexBinary.path || '', ['login'], 'codex')
     : (codexBinary.path ? `"${String(codexBinary.path).replace(/"/g, '\\"')}"` : 'codex');
   const message = launchTerminalCommand(targetCwd, {
     binaryPath: codexBinary.path,
@@ -3012,11 +3310,790 @@ export async function loginClaudeCode({ cwd } = {}) {
   const binaryPath = String(binary.path || 'claude');
   const message = launchTerminalCommand(targetCwd, {
     commandText: process.platform === 'win32'
-      ? `${quoteWindowsCmdArg(normalizeWindowsCmdPath(binaryPath))} auth login`
+      ? buildWindowsBinaryCommand(binaryPath, ['auth', 'login'], 'claude')
       : `"${binaryPath.replace(/"/g, '\\"')}" auth login`,
     toolLabel: 'Claude Code OAuth 登录',
   });
   return { ok: true, cwd: targetCwd, message };
+}
+
+/* ═══════════════  OpenCode  ═══════════════ */
+
+function resolveOpenCodeInstallMethod(method = '') {
+  const normalized = String(method || '').trim().toLowerCase();
+  if (process.platform === 'win32') {
+    return ['auto', 'domestic', 'npm', 'scoop', 'choco'].includes(normalized) ? normalized : 'auto';
+  }
+  return ['auto', 'domestic', 'script', 'brew', 'npm'].includes(normalized) ? normalized : 'auto';
+}
+
+function canAccessGoogle(timeoutMs = 2800) {
+  return new Promise((resolve) => {
+    const req = https.get('https://www.google.com/generate_204', { timeout: timeoutMs, headers: { 'User-Agent': 'easy-ai-config/1.0' } }, (res) => {
+      res.resume();
+      resolve((res.statusCode || 0) > 0 && (res.statusCode || 0) < 500);
+    });
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.on('error', () => resolve(false));
+  });
+}
+
+async function resolveOpenCodeEffectiveMethod(method = '') {
+  const requestedMethod = resolveOpenCodeInstallMethod(method);
+  if (requestedMethod !== 'auto') return { requestedMethod, installMethod: requestedMethod, googleReachable: null };
+  const googleReachable = await canAccessGoogle();
+  return {
+    requestedMethod,
+    installMethod: googleReachable ? (process.platform === 'win32' ? 'npm' : 'script') : 'domestic',
+    googleReachable,
+  };
+}
+
+async function openCodeShellAction(commandText, options = {}) {
+  if (process.platform === 'win32') {
+    const result = await runCommand('powershell.exe', openClawWindowsPowerShellArgs(commandText), options);
+    return { ...result, command: `powershell -Command ${commandText}` };
+  }
+  const result = await runCommand('sh', ['-lc', commandText], options);
+  return { ...result, command: commandText };
+}
+
+async function openCodeNpmAction(args, { domestic = false } = {}) {
+  const finalArgs = domestic ? [...args, '--registry', OPENCLAW_NPM_REGISTRY_CN] : args;
+  const result = await runCommand(npmCommand(), finalArgs);
+  return { ...result, command: `${npmCommand()} ${finalArgs.join(' ')}` };
+}
+
+async function openCodeInstallAction(method = '') {
+  const resolved = await resolveOpenCodeEffectiveMethod(method);
+  const installMethod = resolved.installMethod;
+  let result;
+  if (installMethod === 'domestic') result = await openCodeNpmAction(['install', '-g', `${OPENCODE_PACKAGE}@latest`], { domestic: true });
+  else if (installMethod === 'npm') result = await openCodeNpmAction(['install', '-g', `${OPENCODE_PACKAGE}@latest`]);
+  else if (installMethod === 'brew') result = await openCodeShellAction('brew install anomalyco/tap/opencode');
+  else if (installMethod === 'scoop') result = await openCodeShellAction('scoop install opencode');
+  else if (installMethod === 'choco') result = await openCodeShellAction('choco install opencode -y');
+  else result = await openCodeShellAction(OPENCODE_INSTALL_SCRIPT_UNIX);
+  return { ...result, requestedMethod: resolved.requestedMethod, method: installMethod, googleReachable: resolved.googleReachable, usedDomesticMirror: installMethod === 'domestic' };
+}
+
+async function openCodeReinstallAction(method = '') {
+  const resolved = await resolveOpenCodeEffectiveMethod(method);
+  const installMethod = resolved.installMethod;
+  let result;
+  if (installMethod === 'domestic') result = await openCodeNpmAction(['install', '-g', `${OPENCODE_PACKAGE}@latest`, '--force'], { domestic: true });
+  else if (installMethod === 'npm') result = await openCodeNpmAction(['install', '-g', `${OPENCODE_PACKAGE}@latest`, '--force']);
+  else if (installMethod === 'brew') result = await openCodeShellAction('brew reinstall anomalyco/tap/opencode');
+  else if (installMethod === 'scoop') result = await openCodeShellAction('scoop uninstall opencode; scoop install opencode');
+  else if (installMethod === 'choco') result = await openCodeShellAction('choco uninstall opencode -y; choco install opencode -y');
+  else result = await openCodeShellAction(OPENCODE_INSTALL_SCRIPT_UNIX);
+  return { ...result, requestedMethod: resolved.requestedMethod, method: installMethod, googleReachable: resolved.googleReachable, usedDomesticMirror: installMethod === 'domestic' };
+}
+
+async function openCodeUpdateAction(method = '') {
+  const resolved = await resolveOpenCodeEffectiveMethod(method);
+  const installMethod = resolved.installMethod;
+  let result;
+  if (installMethod === 'domestic') result = await openCodeNpmAction(['install', '-g', `${OPENCODE_PACKAGE}@latest`], { domestic: true });
+  else if (installMethod === 'npm') result = await openCodeNpmAction(['install', '-g', `${OPENCODE_PACKAGE}@latest`]);
+  else if (installMethod === 'brew') result = await openCodeShellAction('brew upgrade anomalyco/tap/opencode || brew install anomalyco/tap/opencode');
+  else if (installMethod === 'scoop') result = await openCodeShellAction('scoop update opencode');
+  else if (installMethod === 'choco') result = await openCodeShellAction('choco upgrade opencode -y');
+  else result = await openCodeShellAction(OPENCODE_INSTALL_SCRIPT_UNIX);
+  return { ...result, requestedMethod: resolved.requestedMethod, method: installMethod, googleReachable: resolved.googleReachable, usedDomesticMirror: installMethod === 'domestic' };
+}
+
+async function openCodeUninstallAction(method = '') {
+  const resolved = await resolveOpenCodeEffectiveMethod(method);
+  const installMethod = resolved.installMethod;
+  if (installMethod === 'domestic' || installMethod === 'npm') return openCodeNpmAction(['uninstall', '-g', OPENCODE_PACKAGE]);
+  if (installMethod === 'brew') return openCodeShellAction('brew uninstall anomalyco/tap/opencode || brew uninstall opencode');
+  if (installMethod === 'scoop') return openCodeShellAction('scoop uninstall opencode');
+  if (installMethod === 'choco') return openCodeShellAction('choco uninstall opencode -y');
+  const binary = findToolBinary('opencode');
+  if (binary.installed && binary.path) {
+    return openCodeShellAction(`rm -f "${String(binary.path).replace(/"/g, '\"')}"`);
+  }
+  return { ok: true, code: 0, stdout: '', stderr: '', command: 'rm -f <opencode-binary>' };
+}
+
+
+function cleanupOpenCodeInstallTasks() {
+  const now = Date.now();
+  for (const [taskId, task] of OPENCODE_INSTALL_TASKS.entries()) {
+    if (task.status !== 'running' && (now - task.updatedAtTs) > OPENCODE_INSTALL_TASK_TTL_MS) {
+      OPENCODE_INSTALL_TASKS.delete(taskId);
+    }
+  }
+  while (OPENCODE_INSTALL_TASKS.size > 20) {
+    const removable = [...OPENCODE_INSTALL_TASKS.entries()].find(([, task]) => task.status !== 'running');
+    if (!removable) break;
+    OPENCODE_INSTALL_TASKS.delete(removable[0]);
+  }
+}
+
+function openCodeInstallStepTemplate(action) {
+  if (action === 'uninstall') {
+    return [
+      { key: 'inspect', title: '检查当前安装', description: '确认当前 OpenCode 安装状态与路径', hint: '先确认当前命令在哪里。', progress: 10 },
+      { key: 'remove', title: '执行卸载命令', description: '按最终方式移除 OpenCode', hint: '正在移除全局命令和安装内容。', progress: 58 },
+      { key: 'verify', title: '验证卸载结果', description: '确认 `opencode` 命令已经不可用', hint: '马上结束，正在做最后确认。', progress: 92 },
+    ];
+  }
+  return [
+    { key: 'network', title: '检测网络环境', description: '检测 Google 可达性并判断是否走国内优化', hint: '这一步是真实网络探测，请稍等。', progress: 8 },
+    { key: 'method', title: '确定安装方式', description: '根据你的选择和网络结果确定最终安装方案', hint: '正在确认最终执行方式和命令。', progress: 28 },
+    { key: 'execute', title: '执行安装命令', description: '真正开始安装 OpenCode 与依赖', hint: '这里耗时最长，日志会持续更新。', progress: 62 },
+    { key: 'verify', title: '验证安装结果', description: '确认 `opencode` 命令已经可用', hint: '快完成了，正在验证版本和命令。', progress: 92 },
+  ];
+}
+
+function createOpenCodeInstallTask({ action, requestedMethod = '' } = {}) {
+  cleanupOpenCodeInstallTasks();
+  const steps = openCodeInstallStepTemplate(action).map((step, index) => ({ ...step, status: index === 0 ? 'running' : 'pending' }));
+  const startedAt = nowIso();
+  const task = {
+    id: `opencode-task-${Date.now()}-${opencodeInstallTaskSeq += 1}`,
+    toolId: 'opencode',
+    action,
+    requestedMethod,
+    method: '',
+    command: '',
+    googleReachable: null,
+    usedDomesticMirror: null,
+    status: 'running',
+    progress: Math.max(4, steps[0]?.progress || 4),
+    stepIndex: 0,
+    summary: steps[0]?.description || '正在准备任务…',
+    hint: steps[0]?.hint || '请稍候。',
+    detail: action === 'uninstall' ? '正在读取当前安装状态…' : '正在初始化安装任务…',
+    steps,
+    logs: [],
+    stdout: '',
+    stderr: '',
+    startedAt,
+    updatedAt: startedAt,
+    updatedAtTs: Date.now(),
+    completedAt: null,
+    version: null,
+    error: null,
+    _cancelRequested: false,
+    _cancelPromise: null,
+    _childPid: null,
+    _stdoutBuffer: '',
+    _stderrBuffer: '',
+  };
+  OPENCODE_INSTALL_TASKS.set(task.id, task);
+  return task;
+}
+
+function serializeOpenCodeInstallTask(task) {
+  return {
+    taskId: task.id,
+    toolId: task.toolId,
+    action: task.action,
+    requestedMethod: task.requestedMethod,
+    method: task.method,
+    command: task.command,
+    googleReachable: task.googleReachable,
+    usedDomesticMirror: task.usedDomesticMirror,
+    status: task.status,
+    progress: task.progress,
+    stepIndex: task.stepIndex,
+    summary: task.summary,
+    hint: task.hint,
+    detail: task.detail,
+    steps: task.steps,
+    logs: task.logs.slice(-18),
+    startedAt: task.startedAt,
+    updatedAt: task.updatedAt,
+    completedAt: task.completedAt,
+    version: task.version,
+    error: task.error,
+  };
+}
+
+function touchOpenCodeInstallTask(task) {
+  task.updatedAt = nowIso();
+  task.updatedAtTs = Date.now();
+}
+
+function setOpenCodeInstallStep(task, stepIndex, overrides = {}) {
+  const safeStepIndex = Math.max(0, Math.min(stepIndex, task.steps.length - 1));
+  if (safeStepIndex < task.stepIndex) return;
+  task.stepIndex = safeStepIndex;
+  task.progress = Math.max(task.progress, overrides.progress ?? task.steps[safeStepIndex]?.progress ?? task.progress);
+  task.summary = overrides.summary || task.steps[safeStepIndex]?.description || task.summary;
+  task.hint = overrides.hint || task.steps[safeStepIndex]?.hint || task.hint;
+  if (overrides.detail) task.detail = overrides.detail;
+  task.steps = task.steps.map((step, index) => ({
+    ...step,
+    status: index < safeStepIndex ? 'done' : index === safeStepIndex ? (overrides.status || 'running') : 'pending',
+  }));
+  touchOpenCodeInstallTask(task);
+}
+
+function cleanOpenCodeInstallLine(line) {
+  return String(line || '')
+    .replace(/[\x1B\x9B][[\]()#;?]*(?:(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-ntqry=><~]|(?:].*?(?:\x07|\x1B\\)))/g, '')
+    .replace(/\r/g, '')
+    .trim();
+}
+
+function pushOpenCodeInstallLog(task, source, line) {
+  const text = cleanOpenCodeInstallLine(line);
+  if (!text) return;
+  task.logs.push({ source, text, at: nowIso() });
+  if (task.logs.length > 160) task.logs.shift();
+  task.detail = text;
+  if (task.action !== 'uninstall' && task.stepIndex === 2 && task.status === 'running') {
+    task.progress = Math.min(88, Math.max(task.progress, 62) + 1);
+  }
+  touchOpenCodeInstallTask(task);
+}
+
+function consumeOpenCodeInstallChunk(task, source, chunk) {
+  const bufferKey = source === 'stderr' ? '_stderrBuffer' : '_stdoutBuffer';
+  const text = String(chunk || '');
+  task[source] += text;
+  const merged = `${task[bufferKey] || ''}${text}`;
+  const lines = merged.split(/\r?\n/);
+  task[bufferKey] = lines.pop() || '';
+  for (const line of lines) pushOpenCodeInstallLog(task, source, line);
+}
+
+function flushOpenCodeInstallChunk(task) {
+  for (const bufferKey of ['_stdoutBuffer', '_stderrBuffer']) {
+    if (!task[bufferKey]) continue;
+    pushOpenCodeInstallLog(task, bufferKey === '_stdoutBuffer' ? 'stdout' : 'stderr', task[bufferKey]);
+    task[bufferKey] = '';
+  }
+}
+
+function runTrackedOpenCodeCommand(task, command, args, options = {}) {
+  return new Promise((resolve) => {
+    const child = runSpawn(command, args, {
+      cwd: options.cwd,
+      env: { ...process.env, ...(options.env || {}) },
+      shell: false,
+      detached: process.platform !== 'win32',
+    });
+
+    task._childPid = child.pid || null;
+    touchOpenCodeInstallTask(task);
+
+    child.stdout?.on('data', (chunk) => consumeOpenCodeInstallChunk(task, 'stdout', chunk));
+    child.stderr?.on('data', (chunk) => consumeOpenCodeInstallChunk(task, 'stderr', chunk));
+    child.on('error', (error) => {
+      task._childPid = null;
+      pushOpenCodeInstallLog(task, 'stderr', error.message);
+      resolve({ ok: false, code: null, stdout: task.stdout, stderr: `${task.stderr}${error.message}` });
+    });
+    child.on('close', (code) => {
+      task._childPid = null;
+      flushOpenCodeInstallChunk(task);
+      resolve({ ok: code === 0, code, stdout: task.stdout, stderr: task.stderr });
+    });
+  });
+}
+
+
+function buildOpenCodeScriptUninstallCommand() {
+  const binary = findToolBinary('opencode');
+  const targets = new Set();
+  if (binary.installed && binary.path) targets.add(String(binary.path));
+  for (const dirPath of openCodeScriptInstallDirs()) {
+    targets.add(path.join(dirPath, process.platform === 'win32' ? 'opencode.exe' : 'opencode'));
+  }
+  const quoted = [...targets]
+    .filter(Boolean)
+    .map((targetPath) => `rm -f ${quotePosixShellArg(String(targetPath))}`);
+  const cleanupDirs = openCodeScriptInstallDirs()
+    .map((dirPath) => `rmdir ${quotePosixShellArg(String(dirPath))} 2>/dev/null || true`);
+  return [...quoted, ...cleanupDirs, 'hash -r 2>/dev/null || true'].join('; ');
+}
+
+function buildOpenCodeCommandPlan(action, method) {
+  const npmArgs = action === 'uninstall'
+    ? ['uninstall', '-g', OPENCODE_PACKAGE]
+    : ['install', '-g', `${OPENCODE_PACKAGE}@latest`, ...(action === 'reinstall' ? ['--force'] : [])];
+
+  if (method === 'domestic') {
+    const args = action === 'uninstall' ? npmArgs : [...npmArgs, '--registry', OPENCLAW_NPM_REGISTRY_CN];
+    return { mode: 'npm', command: npmCommand(), args, displayCommand: `${npmCommand()} ${args.join(' ')}` };
+  }
+  if (method === 'npm') {
+    return { mode: 'npm', command: npmCommand(), args: npmArgs, displayCommand: `${npmCommand()} ${npmArgs.join(' ')}` };
+  }
+  if (method === 'script') {
+    if (action === 'uninstall') {
+      const script = buildOpenCodeScriptUninstallCommand();
+      return { mode: 'shell', command: 'sh', args: ['-lc', script], displayCommand: script };
+    }
+    return { mode: 'shell', command: process.platform === 'win32' ? 'powershell.exe' : 'sh', args: process.platform === 'win32' ? openClawWindowsPowerShellArgs(OPENCODE_INSTALL_SCRIPT_UNIX) : ['-lc', OPENCODE_INSTALL_SCRIPT_UNIX], displayCommand: OPENCODE_INSTALL_SCRIPT_UNIX };
+  }
+  if (method === 'brew') {
+    const script = action === 'install'
+      ? 'brew install anomalyco/tap/opencode'
+      : action === 'reinstall'
+        ? 'brew reinstall anomalyco/tap/opencode'
+        : action === 'update'
+          ? 'brew upgrade anomalyco/tap/opencode || brew install anomalyco/tap/opencode'
+          : 'brew uninstall anomalyco/tap/opencode || brew uninstall opencode';
+    return { mode: 'shell', command: 'sh', args: ['-lc', script], displayCommand: script };
+  }
+  if (method === 'scoop') {
+    const script = action === 'install'
+      ? 'scoop install opencode'
+      : action === 'reinstall'
+        ? 'scoop uninstall opencode; scoop install opencode'
+        : action === 'update'
+          ? 'scoop update opencode'
+          : 'scoop uninstall opencode';
+    return { mode: 'shell', command: 'powershell.exe', args: openClawWindowsPowerShellArgs(script), displayCommand: script };
+  }
+  if (method === 'choco') {
+    const script = action === 'install'
+      ? 'choco install opencode -y'
+      : action === 'reinstall'
+        ? 'choco uninstall opencode -y; choco install opencode -y'
+        : action === 'update'
+          ? 'choco upgrade opencode -y'
+          : 'choco uninstall opencode -y';
+    return { mode: 'shell', command: 'powershell.exe', args: openClawWindowsPowerShellArgs(script), displayCommand: script };
+  }
+
+  const binary = findToolBinary('opencode');
+  const removeScript = binary.installed && binary.path
+    ? `rm -f "${String(binary.path).replace(/"/g, '\\"')}"`
+    : 'rm -f <opencode-binary>';
+  return { mode: 'shell', command: 'sh', args: ['-lc', removeScript], displayCommand: removeScript };
+}
+
+function openCodeScriptInstallDirs() {
+  if (process.platform === 'win32') return [];
+  const home = os.homedir();
+  return [
+    process.env.OPENCODE_INSTALL_DIR?.trim(),
+    process.env.XDG_BIN_DIR?.trim(),
+    path.join(home, 'bin'),
+    path.join(home, '.opencode', 'bin'),
+  ].filter(Boolean).map((dirPath) => path.resolve(String(dirPath)));
+}
+
+function isPathInside(parentPath, targetPath) {
+  const parent = path.resolve(String(parentPath || ''));
+  const target = path.resolve(String(targetPath || ''));
+  return target === parent || target.startsWith(`${parent}${path.sep}`);
+}
+
+function inferOpenCodeUninstallMethod() {
+  const binary = findToolBinary('opencode');
+  const rawPath = String(binary.path || '');
+  const targetPath = rawPath.toLowerCase();
+
+  if (process.platform === 'win32') {
+    if (targetPath.includes('\\scoop\\') || targetPath.includes('/scoop/')) return 'scoop';
+    if (targetPath.includes('chocolatey')) return 'choco';
+    return 'npm';
+  }
+
+  if (targetPath.includes('homebrew') || targetPath.includes('/cellar/')) return 'brew';
+
+  const npmPrefix = npmGlobalPrefix();
+  if (npmPrefix && isPathInside(path.join(npmPrefix, 'bin'), rawPath)) return 'npm';
+
+  if (openCodeScriptInstallDirs().some((dirPath) => isPathInside(dirPath, rawPath))) return 'script';
+
+  return 'script';
+}
+
+function buildOpenCodeUninstallMethods(preferredMethod = 'auto') {
+  const methods = [];
+  const add = (method) => {
+    if (!method || methods.includes(method)) return;
+    methods.push(method);
+  };
+
+  if (preferredMethod && preferredMethod !== 'auto') add(preferredMethod);
+  add(inferOpenCodeUninstallMethod());
+
+  const binary = findToolBinary('opencode');
+  const rawPath = String(binary.path || '');
+  const targetPath = rawPath.toLowerCase();
+
+  if (process.platform === 'win32') {
+    if (targetPath.includes('\\scoop\\') || targetPath.includes('/scoop/')) add('scoop');
+    if (targetPath.includes('chocolatey')) add('choco');
+    add('npm');
+  } else {
+    if (targetPath.includes('homebrew') || targetPath.includes('/cellar/')) add('brew');
+    const npmPrefix = npmGlobalPrefix();
+    if (npmPrefix && isPathInside(path.join(npmPrefix, 'bin'), rawPath)) add('npm');
+    if (openCodeScriptInstallDirs().some((dirPath) => isPathInside(dirPath, rawPath))) add('script');
+    add('npm');
+    add('script');
+    add('brew');
+  }
+
+  return methods;
+}
+
+function finishOpenCodeInstallTask(task, status, payload = {}) {
+  task.status = status;
+  if (status === 'success' || status === 'cancelled') task.progress = 100;
+  task.version = payload.version || task.version || null;
+  task.error = payload.error || null;
+  task.completedAt = nowIso();
+  task._childPid = null;
+  touchOpenCodeInstallTask(task);
+}
+
+function isOpenCodeInstallActive(task) {
+  return task && (task.status === 'running' || task.status === 'cancelling');
+}
+
+function isOpenCodeInstallCancelled(task) {
+  return Boolean(task?._cancelRequested) || task?.status === 'cancelling' || task?.status === 'cancelled';
+}
+
+async function terminateOpenCodeInstallProcess(task) {
+  const pid = Number(task?._childPid || 0);
+  if (!pid) return;
+
+  if (process.platform === 'win32') {
+    await runCommand('taskkill', ['/F', '/T', '/PID', String(pid)]).catch(() => null);
+    task._childPid = null;
+    return;
+  }
+
+  try {
+    process.kill(-pid, 'SIGTERM');
+  } catch {
+    try { process.kill(pid, 'SIGTERM'); } catch { /* noop */ }
+  }
+  await new Promise(resolve => setTimeout(resolve, 900));
+  if (await isPidAlive(pid)) {
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      try { process.kill(pid, 'SIGKILL'); } catch { /* noop */ }
+    }
+  }
+  task._childPid = null;
+}
+
+async function cancelRunningOpenCodeInstall(task) {
+  if (!task) throw new Error('OpenCode 任务不存在，可能已经过期，请重新开始');
+  if (!isOpenCodeInstallActive(task)) return serializeOpenCodeInstallTask(task);
+  if (task._cancelPromise) {
+    await task._cancelPromise;
+    return serializeOpenCodeInstallTask(task);
+  }
+
+  task._cancelRequested = true;
+  task.status = 'cancelling';
+  task.summary = task.action === 'uninstall' ? '正在中断 OpenCode 卸载…' : '正在中断 OpenCode 安装…';
+  task.hint = '先别关闭窗口，正在停止安装进程。';
+  task.detail = '正在终止当前安装命令…';
+  touchOpenCodeInstallTask(task);
+
+  task._cancelPromise = (async () => {
+    pushOpenCodeInstallLog(task, 'stderr', '收到中断请求，正在终止安装进程…');
+    await terminateOpenCodeInstallProcess(task);
+    flushOpenCodeInstallChunk(task);
+    pushOpenCodeInstallLog(task, 'stdout', '安装进程已停止，本次任务已中断。');
+    task.steps = task.steps.map((step, index) => ({
+      ...step,
+      status: index < task.stepIndex ? 'done' : index === task.stepIndex ? 'error' : 'pending',
+    }));
+    task.summary = task.action === 'uninstall' ? 'OpenCode 卸载已中断' : 'OpenCode 安装已中断';
+    task.hint = '本次任务已经停止，你可以随时重新开始。';
+    task.detail = '安装进程已终止。';
+    finishOpenCodeInstallTask(task, 'cancelled');
+    return serializeOpenCodeInstallTask(task);
+  })();
+
+  return task._cancelPromise;
+}
+
+async function runOpenCodeInstallTask(task) {
+  try {
+    const binaryBefore = findToolBinary('opencode');
+    if (task.action === 'uninstall') {
+      pushOpenCodeInstallLog(task, 'stdout', binaryBefore.installed
+        ? `检测到当前 OpenCode：${binaryBefore.path || 'opencode'}`
+        : '当前未检测到 OpenCode 命令，将执行兜底清理。');
+      const normalizedRequestedMethod = resolveOpenCodeInstallMethod(task.requestedMethod);
+      const uninstallMethods = buildOpenCodeUninstallMethods(normalizedRequestedMethod);
+      task.requestedMethod = normalizedRequestedMethod;
+      task.method = uninstallMethods[0] || inferOpenCodeUninstallMethod();
+      task.googleReachable = null;
+      task.usedDomesticMirror = task.method === 'domestic';
+      setOpenCodeInstallStep(task, 1, { detail: `准备按顺序尝试：${uninstallMethods.join(' → ')}` });
+      pushOpenCodeInstallLog(task, 'stdout', `卸载策略：${uninstallMethods.join(' -> ')}`);
+      let lastFailure = '';
+
+      for (let index = 0; index < uninstallMethods.length; index += 1) {
+        const currentMethod = uninstallMethods[index];
+        const plan = buildOpenCodeCommandPlan(task.action, currentMethod);
+        task.method = currentMethod;
+        task.command = plan.displayCommand;
+        task.usedDomesticMirror = currentMethod === 'domestic';
+        pushOpenCodeInstallLog(task, 'stdout', `尝试卸载方式 ${index + 1}/${uninstallMethods.length}：${currentMethod}`);
+        pushOpenCodeInstallLog(task, 'stdout', `执行命令：${task.command}`);
+        const result = await runTrackedOpenCodeCommand(task, plan.command, plan.args);
+        if (isOpenCodeInstallCancelled(task)) return;
+        if (!result.ok) {
+          lastFailure = summarizeInstallCommandFailure(result);
+          pushOpenCodeInstallLog(task, 'stderr', `方式 ${currentMethod} 执行失败：${lastFailure}`);
+        }
+        setOpenCodeInstallStep(task, 2, { detail: `方式 ${currentMethod} 已执行，正在验证…` });
+        const binaryAfter = findToolBinary('opencode');
+        if (!binaryAfter.installed) {
+          task.steps = task.steps.map((step) => ({ ...step, status: 'done' }));
+          task.summary = 'OpenCode 已卸载完成';
+          task.hint = '如需恢复，重新点击安装即可。';
+          task.detail = '已确认 opencode 命令不可用。';
+          finishOpenCodeInstallTask(task, 'success');
+          return;
+        }
+        pushOpenCodeInstallLog(task, 'stdout', `当前仍检测到 OpenCode：${binaryAfter.path || 'opencode'}，继续尝试下一种方式…`);
+      }
+
+      throw new Error(lastFailure || '卸载命令已执行完成，但系统里仍检测到 `opencode` 命令。');
+    }
+
+    if (task.requestedMethod === 'auto') {
+      pushOpenCodeInstallLog(task, 'stdout', '开始真实检测 Google 可达性…');
+    } else {
+      pushOpenCodeInstallLog(task, 'stdout', `已指定安装方式：${task.requestedMethod}，跳过 Google 检测。`);
+    }
+
+    const resolved = await resolveOpenCodeEffectiveMethod(task.requestedMethod);
+    if (isOpenCodeInstallCancelled(task)) return;
+    task.requestedMethod = resolved.requestedMethod;
+    task.method = resolved.installMethod;
+    task.googleReachable = resolved.googleReachable;
+    task.usedDomesticMirror = task.method === 'domestic';
+
+    if (typeof resolved.googleReachable === 'boolean') {
+      pushOpenCodeInstallLog(task, 'stdout', `Google 可达性检测结果：${resolved.googleReachable ? '可访问' : '不可访问'}`);
+    } else {
+      pushOpenCodeInstallLog(task, 'stdout', '本次按你的指定方式执行，未触发 Google 连通性检测。');
+    }
+
+    const plan = buildOpenCodeCommandPlan(task.action, task.method);
+    task.command = plan.displayCommand;
+    setOpenCodeInstallStep(task, 1, { detail: `已确认最终方式：${task.method}` });
+    pushOpenCodeInstallLog(task, 'stdout', `最终安装方式：${task.method}`);
+    pushOpenCodeInstallLog(task, 'stdout', `执行命令：${task.command}`);
+
+    if (plan.mode === 'npm') {
+      const nodeResult = runSpawnSync('node', ['--version'], { encoding: 'utf8' });
+      const npmResult = runSpawnSync(npmCommand(), ['--version'], { encoding: 'utf8' });
+      if (nodeResult.status !== 0) throw new Error('未检测到 Node.js，请先安装 Node.js 18+。');
+      if (npmResult.status !== 0) throw new Error('未检测到 npm，请先修复 npm 环境后重试。');
+      pushOpenCodeInstallLog(task, 'stdout', `Node.js ${String(nodeResult.stdout || '').trim()} / npm ${String(npmResult.stdout || '').trim()}`);
+      if (task.usedDomesticMirror) pushOpenCodeInstallLog(task, 'stdout', `已启用国内 npm 源：${OPENCLAW_NPM_REGISTRY_CN}`);
+    }
+
+    setOpenCodeInstallStep(task, 2, { detail: `正在执行：${task.command}` });
+    const result = await runTrackedOpenCodeCommand(task, plan.command, plan.args);
+    if (isOpenCodeInstallCancelled(task)) return;
+    if (!result.ok) throw new Error(summarizeInstallCommandFailure(result));
+
+    setOpenCodeInstallStep(task, 3, { detail: '安装命令执行完成，正在验证 opencode 命令…' });
+    if (isOpenCodeInstallCancelled(task)) return;
+    const binaryAfter = findToolBinary('opencode');
+    if (!binaryAfter.installed) throw new Error('安装命令已执行完成，但系统里仍未找到 `opencode` 命令。');
+    task.steps = task.steps.map((step) => ({ ...step, status: 'done' }));
+    task.summary = task.action === 'update' ? 'OpenCode 已更新完成' : task.action === 'reinstall' ? 'OpenCode 已重装完成' : 'OpenCode 已安装完成';
+    task.hint = '下一步可以直接启动 OpenCode，或先去配置 Provider / 模型。';
+    task.detail = binaryAfter.version ? `已检测到版本：${binaryAfter.version}` : '已检测到 opencode 命令。';
+    finishOpenCodeInstallTask(task, 'success', { version: binaryAfter.version });
+  } catch (error) {
+    if (task.status === 'cancelled' || task.status === 'cancelling') return;
+    task.steps = task.steps.map((step, index) => ({ ...step, status: index < task.stepIndex ? 'done' : index === task.stepIndex ? 'error' : 'pending' }));
+    task.summary = task.action === 'uninstall' ? 'OpenCode 卸载失败' : 'OpenCode 安装失败';
+    task.hint = '先看最后日志，通常能直接看到是网络、权限还是依赖问题。';
+    task.detail = error instanceof Error ? error.message : String(error);
+    finishOpenCodeInstallTask(task, 'error', { error: error instanceof Error ? error.message : String(error) });
+  }
+}
+
+export async function startOpenCodeInstallTask({ action = 'install', method = '' } = {}) {
+  const normalizedAction = ['install', 'update', 'reinstall', 'uninstall'].includes(String(action || '').trim()) ? String(action || '').trim() : 'install';
+  const task = createOpenCodeInstallTask({ action: normalizedAction, requestedMethod: resolveOpenCodeInstallMethod(method) });
+  void runOpenCodeInstallTask(task);
+  return serializeOpenCodeInstallTask(task);
+}
+
+export async function getOpenCodeInstallTask({ taskId } = {}) {
+  cleanupOpenCodeInstallTasks();
+  if (!taskId || !OPENCODE_INSTALL_TASKS.has(taskId)) {
+    throw new Error('OpenCode 任务不存在，可能已经过期，请重新开始');
+  }
+  return serializeOpenCodeInstallTask(OPENCODE_INSTALL_TASKS.get(taskId));
+}
+
+export async function cancelOpenCodeInstallTask({ taskId } = {}) {
+  cleanupOpenCodeInstallTasks();
+  if (!taskId || !OPENCODE_INSTALL_TASKS.has(taskId)) {
+    throw new Error('OpenCode 任务不存在，可能已经过期，请重新开始');
+  }
+  return cancelRunningOpenCodeInstall(OPENCODE_INSTALL_TASKS.get(taskId));
+}
+
+export async function installOpenCode({ method = '' } = {}) {
+  return openCodeInstallAction(method);
+}
+
+export async function reinstallOpenCode({ method = '' } = {}) {
+  return openCodeReinstallAction(method);
+}
+
+export async function updateOpenCode({ method = '' } = {}) {
+  return openCodeUpdateAction(method);
+}
+
+export async function uninstallOpenCode({ method = '' } = {}) {
+  return openCodeUninstallAction(method);
+}
+
+export async function launchOpenCode({ cwd } = {}) {
+  const targetCwd = path.resolve(cwd || process.cwd());
+  const binary = findToolBinary('opencode');
+  if (!binary.installed) {
+    throw new Error('OpenCode 尚未安装，请先点击安装');
+  }
+  const message = launchTerminalCommand(targetCwd, {
+    binaryPath: binary.path,
+    binaryName: 'opencode',
+    toolLabel: 'OpenCode',
+  });
+  return { ok: true, cwd: targetCwd, message };
+}
+
+export async function loginOpenCode({ cwd, provider = '', method = '' } = {}) {
+  const targetCwd = path.resolve(cwd || process.cwd());
+  const binary = findToolBinary('opencode');
+  if (!binary.installed) {
+    throw new Error('OpenCode 尚未安装，请先点击安装');
+  }
+  const binaryPath = String(binary.path || 'opencode');
+  const providerArg = String(provider || '').trim();
+  const methodArg = String(method || '').trim();
+  const message = launchTerminalCommand(targetCwd, {
+    commandText: process.platform === 'win32'
+      ? buildWindowsBinaryCommand(binaryPath, [
+        'auth',
+        'login',
+        ...(providerArg ? ['--provider', providerArg] : []),
+        ...(methodArg ? ['--method', methodArg] : []),
+      ], 'opencode')
+      : [
+        quotePosixShellArg(binaryPath),
+        'auth',
+        'login',
+        ...(providerArg ? ['--provider', quotePosixShellArg(providerArg)] : []),
+        ...(methodArg ? ['--method', quotePosixShellArg(methodArg)] : []),
+      ].join(' '),
+    toolLabel: 'OpenCode 登录',
+  });
+  return { ok: true, cwd: targetCwd, message };
+}
+
+export async function logoutOpenCodeAuth({ provider = '', scope = 'global', projectPath = '' } = {}) {
+  const authKey = normalizeOpenCodeAuthEntryKey(provider);
+  if (!authKey) throw new Error('请先指定要移除的 OpenCode 凭证');
+  const paths = resolveOpenCodePaths({ scope, projectPath });
+  const authPath = paths.authPath;
+  const authJson = parseOpenCodeAuthJson(await readText(authPath));
+  delete authJson[provider];
+  delete authJson[authKey];
+  delete authJson[`${authKey}/`];
+  await writeText(authPath, `${JSON.stringify(authJson, null, 2)}\n`);
+  return { removed: true, authPath, provider: authKey };
+}
+
+export async function loadOpenCodeState(options = {}) {
+  const paths = resolveOpenCodePaths(options || {});
+  const [rawConfig, rawAuth] = await Promise.all([
+    readText(paths.configPath),
+    readText(paths.authPath),
+  ]);
+  let config = {};
+  if (rawConfig.trim()) {
+    try {
+      config = parseJsonc(rawConfig);
+    } catch (error) {
+      throw new Error(`OpenCode 配置解析失败：${error.message}`);
+    }
+  }
+  const authJson = parseOpenCodeAuthJson(rawAuth);
+  const authEntries = summarizeOpenCodeAuthEntries(authJson);
+  const binary = findToolBinary('opencode');
+  const providers = Object.entries(config.provider || {}).map(([key, value]) => {
+    const matchedAuth = findOpenCodeAuthEntry(authEntries, key, value?.options?.baseURL || '');
+    const hasApiKey = Boolean(String(value?.options?.apiKey || '').trim());
+    return {
+      key,
+      name: value?.name || key,
+      npm: value?.npm || '',
+      baseUrl: value?.options?.baseURL || '',
+      hasApiKey,
+      hasAuth: Boolean(matchedAuth),
+      hasCredential: hasApiKey || Boolean(matchedAuth),
+      authType: matchedAuth?.type || '',
+      maskedApiKey: maskSecret(value?.options?.apiKey || ''),
+      modelIds: Object.keys(value?.models || {}),
+    };
+  });
+  const model = String(config.model || '').trim();
+  const smallModel = String(config.small_model || '').trim();
+  const activeProviderKey = openCodeProviderFromModel(model) || providers[0]?.key || '';
+  const activeProvider = providers.find((item) => item.key === activeProviderKey) || null;
+  const activeAuth = findOpenCodeAuthEntry(authEntries, activeProviderKey, activeProvider?.baseUrl || '');
+  return {
+    toolId: 'opencode',
+    scope: paths.scope,
+    rootPath: paths.rootPath,
+    configPath: paths.configPath,
+    authPath: paths.authPath,
+    binary,
+    configExists: Boolean(rawConfig.trim()),
+    authExists: Boolean(rawAuth.trim()),
+    config,
+    configJson: rawConfig.trim() ? rawConfig : JSON.stringify(config, null, 2),
+    model,
+    smallModel,
+    activeProviderKey,
+    activeProvider,
+    activeAuth,
+    authEntries,
+    providers,
+  };
+}
+
+export async function saveOpenCodeConfig({ configJson, scope = 'global', projectPath = '' } = {}) {
+  const raw = String(configJson || '').trim();
+  if (!raw) throw new Error('OpenCode 配置内容不能为空');
+  try {
+    parseJsonc(raw);
+  } catch (error) {
+    throw new Error(`OpenCode 配置解析失败：${error.message}`);
+  }
+  const paths = resolveOpenCodePaths({ scope, projectPath });
+  await writeText(paths.configPath, `${raw}\n`);
+  return { saved: true, configPath: paths.configPath, scope: paths.scope };
+}
+
+export async function saveOpenCodeRawConfig(payload = {}) {
+  return saveOpenCodeConfig(payload);
 }
 
 /* ═══════════════  OpenClaw  ═══════════════ */
@@ -3232,6 +4309,15 @@ export async function loadOpenClawState() {
   const gatewayUrl = `http://127.0.0.1:${gatewayPort}/`;
   const gatewayProbe = await probeOpenClawGateway(gatewayUrl);
   const gatewayPortOccupants = await inspectOpenClawPortOccupants(gatewayPort);
+  const daemon = binary.installed ? readOpenClawDaemonState(binary.path || 'openclaw') : {
+    supported: process.platform !== 'win32',
+    installed: false,
+    loaded: false,
+    running: false,
+    status: 'not_installed',
+    label: '未启用',
+    detail: '',
+  };
   const needsOnboarding = binary.installed && !configExists;
   const gatewayAuthMode = String(config.gateway?.auth?.mode || 'token');
   const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN || config.gateway?.auth?.token || null;
@@ -3255,6 +4341,11 @@ export async function loadOpenClawState() {
     gatewayHttpReady: gatewayProbe.httpReady,
     gatewayPortListening: gatewayProbe.portListening,
     gatewayStatus: gatewayProbe.status,
+    daemon,
+    daemonInstalled: daemon.installed,
+    daemonLoaded: daemon.loaded,
+    daemonRunning: daemon.running,
+    daemonStatus: daemon.status,
     gatewayPortOccupants,
     gatewayPortConflict: gatewayPortOccupants.some((item) => !item.likelyOpenClaw),
     needsOnboarding,
@@ -3557,36 +4648,117 @@ export async function stopOpenClaw() {
   }
 
   const binaryPath = state.binary.path || 'openclaw';
+  const cwd = openclawHome();
+  let daemonDisabled = false;
+
+  const runStopAttempt = async (command, args, options = {}) => {
+    const result = await runCommand(command, args, options);
+    attempts.push({ command: `${command} ${args.join(' ')}`.trim(), ok: result.ok, stdout: result.stdout, stderr: result.stderr });
+    return result;
+  };
+
+  if (process.platform !== 'win32') {
+    await runStopAttempt(binaryPath, ['daemon', 'stop'], { cwd });
+    const uninstallResult = await runStopAttempt(binaryPath, ['daemon', 'uninstall'], { cwd });
+    daemonDisabled = uninstallResult.ok;
+  }
+
   for (const args of [['gateway', 'stop'], ['stop']]) {
-    const result = await runCommand(binaryPath, args, { cwd: openclawHome() });
-    attempts.push({ command: `${binaryPath} ${args.join(' ')}`, ok: result.ok, stdout: result.stdout, stderr: result.stderr });
+    const result = await runStopAttempt(binaryPath, args, { cwd });
     if (result.ok) break;
   }
 
   if (process.platform === 'win32') {
     for (const pid of await findWindowsListeningPids(state.gatewayPort || '18789')) {
-      const result = await runCommand('taskkill', ['/F', '/T', '/PID', String(pid)]);
-      attempts.push({ command: `taskkill /F /T /PID ${pid}`, ok: result.ok, stdout: result.stdout, stderr: result.stderr });
+      await runStopAttempt('taskkill', ['/F', '/T', '/PID', String(pid)]);
     }
-    const result = await runCommand('taskkill', ['/F', '/T', '/IM', 'openclaw.exe']);
-    attempts.push({ command: 'taskkill /F /T /IM openclaw.exe', ok: result.ok, stdout: result.stdout, stderr: result.stderr });
+    await runStopAttempt('taskkill', ['/F', '/T', '/IM', 'openclaw.exe']);
   } else {
-    const result = await runCommand('pkill', ['-f', 'openclaw']);
-    attempts.push({ command: 'pkill -f openclaw', ok: result.ok, stdout: result.stdout, stderr: result.stderr });
+    await runStopAttempt('pkill', ['-f', 'openclaw']);
   }
 
   await new Promise((resolve) => setTimeout(resolve, 900));
-  const after = await loadOpenClawState();
+  let after = await loadOpenClawState();
+
+  if ((after.gatewayReachable || after.gatewayPortListening) && process.platform !== 'win32') {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await runStopAttempt('pkill', ['-f', 'openclaw']);
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    after = await loadOpenClawState();
+  }
+
   if (after.gatewayReachable || after.gatewayPortListening) {
-    throw new Error('OpenClaw Gateway 仍在运行，请手动检查终端进程');
+    throw new Error('OpenClaw Gateway 仍在运行，已自动尝试停止常驻服务，请稍后重试或检查残留进程');
   }
 
   return {
     stopped: true,
     attempts,
+    daemonDisabled,
     gatewayReachable: after.gatewayReachable,
     gatewayUrl: after.gatewayUrl,
-    message: 'OpenClaw Gateway 已停止',
+    message: daemonDisabled ? 'OpenClaw Gateway 与常驻服务已停止' : 'OpenClaw Gateway 已停止',
+  };
+}
+
+export async function setOpenClawDaemonEnabled({ enabled } = {}) {
+  let state = await loadOpenClawState();
+  if (!state.binary?.installed) throw new Error('OpenClaw 尚未安装');
+
+  const binaryPath = state.binary.path || 'openclaw';
+  const cwd = openclawHome();
+  const attempts = [];
+  const runAttempt = async (command, args, options = {}) => {
+    const result = await runCommand(command, args, options);
+    attempts.push({ command: `${command} ${args.join(' ')}`.trim(), ok: result.ok, stdout: result.stdout, stderr: result.stderr });
+    return result;
+  };
+
+  if (!enabled) {
+    const stopped = await stopOpenClaw();
+    state = await loadOpenClawState();
+    return {
+      ok: true,
+      enabled: false,
+      attempts: [...attempts, ...(stopped.attempts || [])],
+      daemon: state.daemon,
+      message: 'OpenClaw 常驻服务已关闭',
+    };
+  }
+
+  if (!state.configExists) {
+    throw new Error('请先完成 OpenClaw 初始化，再开启常驻服务');
+  }
+
+  if (state.gatewayAuthMode === 'token' && !state.gatewayToken) {
+    await runAttempt(binaryPath, ['doctor', '--generate-gateway-token'], { cwd });
+    state = await loadOpenClawState();
+  }
+
+  const installArgs = ['daemon', 'install', '--force', '--port', String(state.gatewayPort || '18789')];
+  if (state.gatewayAuthMode === 'token' && state.gatewayToken) {
+    installArgs.push('--token', String(state.gatewayToken));
+  }
+  const installResult = await runAttempt(binaryPath, installArgs, { cwd });
+  if (!installResult.ok) {
+    throw new Error(tailText(installResult.stderr || installResult.stdout || '', 10) || '开启常驻服务失败');
+  }
+
+  await runAttempt(binaryPath, ['daemon', 'start'], { cwd });
+  await new Promise((resolve) => setTimeout(resolve, 900));
+  state = await loadOpenClawState();
+  if (!state.daemonInstalled) {
+    throw new Error('常驻服务安装后仍未生效');
+  }
+
+  return {
+    ok: true,
+    enabled: true,
+    attempts,
+    daemon: state.daemon,
+    gatewayReachable: state.gatewayReachable,
+    gatewayUrl: state.gatewayUrl,
+    message: state.daemonRunning ? 'OpenClaw 常驻服务已开启并启动' : 'OpenClaw 常驻服务已开启',
   };
 }
 

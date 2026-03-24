@@ -12,10 +12,47 @@ const APP_HOME_DIRNAME: &str = ".codex-config-ui";
 const BACKUPS_DIRNAME: &str = "backups";
 pub(crate) const OPENAI_CODEX_PACKAGE: &str = "@openai/codex";
 pub(crate) const CLAUDE_CODE_PACKAGE: &str = "@anthropic-ai/claude-code";
+pub(crate) const OPENCODE_PACKAGE: &str = "opencode-ai";
 pub(crate) const OPENCLAW_PACKAGE: &str = "openclaw";
 
 pub(crate) fn openclaw_home() -> Result<PathBuf, String> {
   Ok(home_dir()?.join(".openclaw"))
+}
+
+pub(crate) fn opencode_config_home() -> Result<PathBuf, String> {
+  let home = home_dir()?;
+  if cfg!(target_os = "windows") {
+    let base = std::env::var("APPDATA")
+      .ok()
+      .filter(|value| !value.trim().is_empty())
+      .map(PathBuf::from)
+      .unwrap_or_else(|| home.join("AppData").join("Roaming"));
+    return Ok(base.join("opencode"));
+  }
+  let base = std::env::var("XDG_CONFIG_HOME")
+    .ok()
+    .filter(|value| !value.trim().is_empty())
+    .map(PathBuf::from)
+    .unwrap_or_else(|| home.join(".config"));
+  Ok(base.join("opencode"))
+}
+
+pub(crate) fn opencode_data_home() -> Result<PathBuf, String> {
+  let home = home_dir()?;
+  if cfg!(target_os = "windows") {
+    let base = std::env::var("APPDATA")
+      .ok()
+      .filter(|value| !value.trim().is_empty())
+      .map(PathBuf::from)
+      .unwrap_or_else(|| home.join("AppData").join("Roaming"));
+    return Ok(base.join("opencode"));
+  }
+  let base = std::env::var("XDG_DATA_HOME")
+    .ok()
+    .filter(|value| !value.trim().is_empty())
+    .map(PathBuf::from)
+    .unwrap_or_else(|| home.join(".local").join("share"));
+  Ok(base.join("opencode"))
 }
 
 pub(crate) fn ok(data: Value) -> Value {
