@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -2368,6 +2368,20 @@ function buildWindowsBinaryCommand(binaryPath = '', args = [], fallbackBinary = 
   return [quoteWindowsCmdArg(normalized), ...args.map(arg => quoteWindowsCmdArg(String(arg)))].join(' ');
 }
 
+function writeWindowsTerminalLauncher(cwd, commandText) {
+  const launcherDir = path.join(os.tmpdir(), 'easy-ai-config', 'launchers');
+  mkdirSync(launcherDir, { recursive: true });
+  const launcherPath = path.join(launcherDir, `launch-${crypto.randomUUID()}.cmd`);
+  const script = `@echo off
+cd /d ${quoteWindowsCmdArg(normalizeWindowsCmdPath(cwd))}
+${commandText}
+`;
+  const bom = Buffer.from([0xFF, 0xFE]);
+  const content = Buffer.from(script, 'utf16le');
+  writeFileSync(launcherPath, Buffer.concat([bom, content]));
+  return launcherPath;
+}
+
 function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabel = 'Codex', commandText = '' } = {}) {
   const bin = commandText || binaryPath || binaryName;
   const escapedCwd = String(cwd).replace(/([\\"$])/g, '\\$1');
@@ -2389,8 +2403,8 @@ function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabe
   }
 
   if (process.platform === 'win32') {
-    const windowsCwd = quoteWindowsCmdArg(normalizeWindowsCmdPath(cwd));
-    const child = spawn('cmd.exe', ['/c', 'start', '', 'cmd', '/k', `cd /d ${windowsCwd} && ${windowsBin}`], {
+    const launcherPath = writeWindowsTerminalLauncher(cwd, windowsBin);
+    const child = spawn('cmd.exe', ['/c', 'start', '', 'cmd.exe', '/d', '/k', quoteWindowsCmdArg(normalizeWindowsCmdPath(launcherPath))], {
       detached: true,
       stdio: 'ignore',
     });
