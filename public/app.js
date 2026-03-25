@@ -17,6 +17,7 @@ const state = {
   metaDirty: false,
   claudeCodeState: null,
   opencodeState: null,
+  codexAppState: null,
   openCodeDesktopState: null,
   openCodeEcosystemState: null,
   toolsCatalogQuery: '',
@@ -432,6 +433,16 @@ async function loadOpenCodeDesktopState({ render = true } = {}) {
   } catch { /* silent */ }
 }
 
+async function loadCodexAppState({ render = true } = {}) {
+  try {
+    const json = await api('/api/codex-app/state');
+    if (json.ok && json.data) {
+      state.codexAppState = json.data;
+      if (render && state.activePage === 'tools') renderToolsPage();
+    }
+  } catch { /* silent */ }
+}
+
 async function loadOpenCodeEcosystemState({ render = true } = {}) {
   try {
     const cwd = el('launchCwdInput')?.value?.trim() || state.current?.launch?.cwd || '';
@@ -453,6 +464,7 @@ async function loadTools() {
       renderStatus();
       renderToolsPage();
       updateToolSelector();
+      await loadCodexAppState({ render: false }).catch(() => {});
       await loadOpenCodeDesktopState({ render: false }).catch(() => {});
       await loadOpenCodeEcosystemState({ render: false }).catch(() => {});
       renderCurrentConfig();
@@ -509,6 +521,9 @@ const OPENCODE_DESKTOP_HOME_URL = 'https://opencode.ai/';
 const OPENCODE_IDE_DOCS_URL = 'https://opencode.ai/docs/ide';
 const OPENCODE_GITHUB_DOCS_URL = 'https://opencode.ai/docs/github';
 const OPENCODE_GITLAB_DOCS_URL = 'https://opencode.ai/docs/gitlab';
+const CODEX_APP_DOCS_URL = 'https://developers.openai.com/codex/app';
+const CODEX_APP_MAC_DOWNLOAD_URL = 'https://persistent.oaistatic.com/codex-app-prod/Codex.dmg';
+const CODEX_APP_WIN_STORE_URL = 'https://apps.microsoft.com/detail/9plm9xgg6vks';
 
 function getOpenCodeDesktopPlatformLabel(platform = '') {
   const text = String(platform || navigator.platform || '').toLowerCase();
@@ -524,6 +539,34 @@ function getToolsCatalogQuery() {
 
 function getToolsCatalogTag() {
   return String(state.toolsCatalogTag || 'all');
+}
+
+function getCodexAppCatalogItem() {
+  const data = state.codexAppState || {};
+  const platformLabel = getOpenCodeDesktopPlatformLabel(data.platform);
+  const supported = data.supported !== false && ['macOS', 'Windows'].includes(platformLabel);
+  const installed = Boolean(data.installed);
+  const fallbackDownloadUrl = platformLabel === 'Windows' ? CODEX_APP_WIN_STORE_URL : CODEX_APP_MAC_DOWNLOAD_URL;
+  const docsUrl = data.docsUrl || CODEX_APP_DOCS_URL;
+  return {
+    id: 'codex-app',
+    kind: 'desktop',
+    iconId: 'codex-app',
+    typeLabel: '客户端',
+    name: 'Codex App',
+    description: 'OpenAI 官方 Codex 客户端，独立于 Codex CLI。',
+    supported,
+    installed,
+    version: installed ? (data.installPath || `${platformLabel} 已安装`) : supported ? `${platformLabel} 一键安装` : `${platformLabel} 暂未支持`,
+    badge: installed ? '已安装' : supported ? '可安装' : '官方入口',
+    tags: ['desktop'].concat(installed ? ['installed'] : []),
+    chips: [platformLabel, installed ? '已安装' : '未安装', '独立客户端'],
+    primaryAction: { toolId: 'codex-app', action: installed ? 'open' : 'install', label: installed ? '打开 App' : '一键安装', disabled: !supported },
+    secondaryAction: installed
+      ? { toolId: 'codex-app', action: 'reinstall', label: '重新安装' }
+      : { externalUrl: data.downloadUrl || fallbackDownloadUrl, label: platformLabel === 'Windows' ? '打开商店' : '下载安装包' },
+    tertiaryAction: { externalUrl: docsUrl, label: '官方说明' },
+  };
 }
 
 function getOpenCodeDesktopCatalogItem() {
@@ -612,7 +655,7 @@ function getToolCatalogItems() {
       tool,
     };
   });
-  return [...baseItems, getOpenCodeDesktopCatalogItem(), ...getOpenCodeEcosystemCatalogItems()];
+  return [...baseItems, getCodexAppCatalogItem(), getOpenCodeDesktopCatalogItem(), ...getOpenCodeEcosystemCatalogItems()];
 }
 
 function filterToolCatalogItems(items = []) {
@@ -789,7 +832,7 @@ function renderToolsPage() {
 
 // Generic tool action handler
 async function handleToolAction(toolId, action, btn) {
-  const toolNames = { codex: 'Codex', claudecode: 'Claude Code', opencode: 'OpenCode', 'opencode-desktop': 'OpenCode Desktop', openclaw: 'OpenClaw' };
+  const toolNames = { codex: 'Codex', claudecode: 'Claude Code', opencode: 'OpenCode', 'codex-app': 'Codex App', 'opencode-desktop': 'OpenCode Desktop', openclaw: 'OpenClaw' };
   const toolName = toolNames[toolId] || toolId;
 
   const apiPrefixMap = { codex: 'codex', claudecode: 'claudecode', opencode: 'opencode', openclaw: 'openclaw' };
@@ -850,6 +893,43 @@ async function handleToolAction(toolId, action, btn) {
         await loadOpenCodeDesktopState({ render: state.activePage === 'tools' });
       } catch (error) {
         flash(error?.message || '打开 OpenCode Desktop 失败', 'error');
+      } finally {
+        setToolBtnBusy(btn, false);
+      }
+      return;
+    }
+  }
+
+  if (toolId === 'codex-app') {
+    if (action === 'install' || action === 'reinstall') {
+      setToolBtnBusy(btn, true, action === 'reinstall' ? '重装中…' : '安装中…');
+      try {
+        const json = await api('/api/codex-app/install', { method: 'POST' });
+        if (!json.ok) {
+          flash(json.error || 'Codex App 安装失败', 'error');
+          return;
+        }
+        flash(json.data?.message || '已触发 Codex App 安装流程', 'success');
+        await loadCodexAppState({ render: state.activePage === 'tools' });
+      } catch (error) {
+        flash(error?.message || 'Codex App 安装失败', 'error');
+      } finally {
+        setToolBtnBusy(btn, false);
+      }
+      return;
+    }
+    if (action === 'open') {
+      setToolBtnBusy(btn, true, '打开中…');
+      try {
+        const json = await api('/api/codex-app/open', { method: 'POST' });
+        if (!json.ok) {
+          flash(json.error || '打开 Codex App 失败', 'error');
+          return;
+        }
+        flash(json.data?.message || 'Codex App 已打开', 'success');
+        await loadCodexAppState({ render: state.activePage === 'tools' });
+      } catch (error) {
+        flash(error?.message || '打开 Codex App 失败', 'error');
       } finally {
         setToolBtnBusy(btn, false);
       }
@@ -1902,6 +1982,7 @@ async function runOpenCodeDesktopInstallAction(btn, { reinstall = false } = {}) 
 function toolIconSvg(toolId) {
   const icons = {
     codex: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5v10l-9 5-9-5V7l9-5z" opacity="0.4" /><path d="M12 12l9-5M12 12v10M12 12L3 7" /></svg>',
+    'codex-app': '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3" opacity="0.35" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>',
     claudecode: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" opacity="0.4" /><path d="M8 12h8M12 8v8" /></svg>',
     openclaw: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" opacity="0.4" /><path d="M8 14s1.5 2 4 2 4-2 4-2" /><circle cx="9" cy="10" r="1" fill="currentColor" stroke="none" /><circle cx="15" cy="10" r="1" fill="currentColor" stroke="none" /></svg>',
     opencode: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="5" opacity="0.4" /><path d="M9 8l-3 4 3 4" /><path d="M15 8l3 4-3 4" /><path d="M13 6l-2 12" /></svg>',

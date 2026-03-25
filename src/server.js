@@ -94,6 +94,10 @@ function fail(res, error) {
 const OPENCODE_DESKTOP_TASKS = new Map();
 const OPENCODE_DESKTOP_TASK_TTL_MS = 30 * 60 * 1000;
 let opencodeDesktopTaskSeq = 0;
+const CODEX_APP_MAC_DOWNLOAD_URL = 'https://persistent.oaistatic.com/codex-app-prod/Codex.dmg';
+const CODEX_APP_WIN_STORE_URL = 'https://apps.microsoft.com/detail/9plm9xgg6vks';
+const CODEX_APP_WIN_STORE_URI = 'ms-windows-store://pdp/?ProductId=9PLM9XGG6VKS';
+const CODEX_APP_DOCS_URL = 'https://developers.openai.com/codex/app';
 
 const OPENCODE_DESKTOP_DOWNLOADS = {
   darwin: {
@@ -167,6 +171,65 @@ const OPENCODE_ECOSYSTEM_EDITOR_SPECS = {
   vscodium: { label: 'VSCodium', command: 'codium', type: 'vscode' },
   zed: { label: 'Zed', command: 'zed', type: 'zed' },
 };
+
+function getCodexAppInstallationCandidates() {
+  const candidates = [];
+  if (process.platform === 'darwin') {
+    candidates.push('/Applications/Codex.app');
+    candidates.push(path.join(os.homedir(), 'Applications', 'Codex.app'));
+  } else if (process.platform === 'win32') {
+    candidates.push(path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'Programs', 'Codex', 'Codex.exe'));
+    candidates.push(path.join(process.env.USERPROFILE || os.homedir(), 'AppData', 'Local', 'Programs', 'Codex', 'Codex.exe'));
+  }
+  return candidates;
+}
+
+function getCodexAppState() {
+  const supported = process.platform === 'darwin' || process.platform === 'win32';
+  const installPath = getCodexAppInstallationCandidates().find((item) => existsSync(item)) || '';
+  const platform = process.platform === 'darwin' ? 'macos' : process.platform === 'win32' ? 'windows' : process.platform;
+  const downloadUrl = process.platform === 'darwin'
+    ? CODEX_APP_MAC_DOWNLOAD_URL
+    : process.platform === 'win32'
+      ? CODEX_APP_WIN_STORE_URL
+      : CODEX_APP_DOCS_URL;
+  return {
+    toolId: 'codex-app',
+    platform,
+    supported,
+    installed: Boolean(installPath),
+    installPath,
+    downloadUrl,
+    docsUrl: CODEX_APP_DOCS_URL,
+    storeUrl: CODEX_APP_WIN_STORE_URL,
+  };
+}
+
+async function installCodexAppDesktop() {
+  if (process.platform === 'darwin') {
+    await open(CODEX_APP_MAC_DOWNLOAD_URL);
+    return { ok: true, method: 'download', url: CODEX_APP_MAC_DOWNLOAD_URL, message: '已开始下载 Codex App 安装包（dmg）' };
+  }
+  if (process.platform === 'win32') {
+    try {
+      await open(CODEX_APP_WIN_STORE_URI);
+      return { ok: true, method: 'store', url: CODEX_APP_WIN_STORE_URI, message: '已打开 Microsoft Store，可直接安装 Codex App' };
+    } catch {
+      await open(CODEX_APP_WIN_STORE_URL);
+      return { ok: true, method: 'store-web', url: CODEX_APP_WIN_STORE_URL, message: '已打开 Microsoft Store 网页，请继续安装 Codex App' };
+    }
+  }
+  throw new Error('当前系统暂不支持 Codex App 一键安装');
+}
+
+async function openCodexAppDesktop() {
+  const state = getCodexAppState();
+  if (state.installed && state.installPath) {
+    await open(state.installPath);
+    return { ok: true, opened: true, path: state.installPath };
+  }
+  return installCodexAppDesktop();
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -961,6 +1024,30 @@ export async function startServer() {
         force: req.query.force === '1' || req.query.force === 'true',
         cacheOnly: req.query.cacheOnly === '1' || req.query.cacheOnly === 'true',
       }) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.get('/api/codex-app/state', async (_req, res) => {
+    try {
+      ok(res, { data: getCodexAppState() });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/codex-app/install', async (_req, res) => {
+    try {
+      ok(res, { data: await installCodexAppDesktop() });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/codex-app/open', async (_req, res) => {
+    try {
+      ok(res, { data: await openCodexAppDesktop() });
     } catch (error) {
       fail(res, error);
     }

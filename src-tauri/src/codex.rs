@@ -25,6 +25,10 @@ const OPENCODE_NPM_REGISTRY_CN: &str = "https://registry.npmmirror.com";
 const OPENCLAW_INSTALL_SCRIPT_UNIX: &str = "curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_NO_ONBOARD=1 bash -s -- --no-onboard --install-method npm";
 const OPENCLAW_INSTALL_SCRIPT_WIN: &str = "$env:OPENCLAW_NO_ONBOARD='1'; iwr -useb https://openclaw.ai/install.ps1 | iex";
 const OPENCLAW_NPM_REGISTRY_CN: &str = "https://registry.npmmirror.com";
+const CODEX_APP_MAC_DOWNLOAD_URL: &str = "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
+const CODEX_APP_WIN_STORE_URL: &str = "https://apps.microsoft.com/detail/9plm9xgg6vks";
+const CODEX_APP_WIN_STORE_URI: &str = "ms-windows-store://pdp/?ProductId=9PLM9XGG6VKS";
+const CODEX_APP_DOCS_URL: &str = "https://developers.openai.com/codex/app";
 
 static OPENCODE_INSTALL_TASK_SEQ: AtomicU64 = AtomicU64::new(1);
 static OPENCODE_INSTALL_TASKS: OnceLock<Mutex<BTreeMap<String, OpenCodeInstallTask>>> = OnceLock::new();
@@ -3747,6 +3751,126 @@ pub(crate) fn list_tools() -> Result<Value, String> {
       "binary": openclaw_binary,
     },
   ]))
+}
+
+fn open_target_with_system_shell(target: &str) -> Result<(), String> {
+  if target.trim().is_empty() {
+    return Err("目标不能为空".to_string());
+  }
+
+  let result = if cfg!(target_os = "macos") {
+    create_command("open").arg(target).spawn()
+  } else if cfg!(target_os = "windows") {
+    create_command("cmd").args(["/c", "start", "", target]).spawn()
+  } else {
+    create_command("xdg-open").arg(target).spawn()
+  };
+
+  result.map(|_| ()).map_err(|error| error.to_string())
+}
+
+fn codex_app_installation_candidates() -> Vec<PathBuf> {
+  let mut candidates = Vec::new();
+
+  if cfg!(target_os = "macos") {
+    candidates.push(PathBuf::from("/Applications/Codex.app"));
+    if let Ok(home) = home_dir() {
+      candidates.push(home.join("Applications").join("Codex.app"));
+    }
+  } else if cfg!(target_os = "windows") {
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+      candidates.push(PathBuf::from(local_app_data).join("Programs").join("Codex").join("Codex.exe"));
+    }
+    if let Ok(user_profile) = std::env::var("USERPROFILE") {
+      candidates.push(PathBuf::from(user_profile).join("AppData").join("Local").join("Programs").join("Codex").join("Codex.exe"));
+    }
+  }
+
+  candidates
+}
+
+fn find_codex_app_installation() -> Option<PathBuf> {
+  codex_app_installation_candidates()
+    .into_iter()
+    .find(|candidate| candidate.exists())
+}
+
+pub(crate) fn get_codex_app_state() -> Result<Value, String> {
+  let supported = cfg!(target_os = "macos") || cfg!(target_os = "windows");
+  let install_path = find_codex_app_installation();
+  let installed = install_path.is_some();
+  let platform = if cfg!(target_os = "macos") {
+    "macos"
+  } else if cfg!(target_os = "windows") {
+    "windows"
+  } else {
+    "unsupported"
+  };
+
+  let download_url = if cfg!(target_os = "macos") {
+    CODEX_APP_MAC_DOWNLOAD_URL
+  } else if cfg!(target_os = "windows") {
+    CODEX_APP_WIN_STORE_URL
+  } else {
+    CODEX_APP_DOCS_URL
+  };
+
+  Ok(json!({
+    "toolId": "codex-app",
+    "platform": platform,
+    "supported": supported,
+    "installed": installed,
+    "installPath": install_path.map(|path| path.to_string_lossy().to_string()),
+    "downloadUrl": download_url,
+    "docsUrl": CODEX_APP_DOCS_URL,
+    "storeUrl": CODEX_APP_WIN_STORE_URL,
+  }))
+}
+
+pub(crate) fn install_codex_app(_body: &Value) -> Result<Value, String> {
+  if cfg!(target_os = "macos") {
+    open_target_with_system_shell(CODEX_APP_MAC_DOWNLOAD_URL)?;
+    return Ok(json!({
+      "ok": true,
+      "method": "download",
+      "url": CODEX_APP_MAC_DOWNLOAD_URL,
+      "message": "已开始下载 Codex App 安装包（dmg）",
+    }));
+  }
+
+  if cfg!(target_os = "windows") {
+    if open_target_with_system_shell(CODEX_APP_WIN_STORE_URI).is_ok() {
+      return Ok(json!({
+        "ok": true,
+        "method": "store",
+        "url": CODEX_APP_WIN_STORE_URI,
+        "message": "已打开 Microsoft Store，可直接安装 Codex App",
+      }));
+    }
+    open_target_with_system_shell(CODEX_APP_WIN_STORE_URL)?;
+    return Ok(json!({
+      "ok": true,
+      "method": "store-web",
+      "url": CODEX_APP_WIN_STORE_URL,
+      "message": "已打开 Microsoft Store 网页，请继续安装 Codex App",
+    }));
+  }
+
+  Err("当前系统暂不支持 Codex App 一键安装".to_string())
+}
+
+pub(crate) fn open_codex_app(_body: &Value) -> Result<Value, String> {
+  if let Some(path) = find_codex_app_installation() {
+    let text = path.to_string_lossy().to_string();
+    open_target_with_system_shell(&text)?;
+    return Ok(json!({
+      "ok": true,
+      "opened": true,
+      "path": text,
+    }));
+  }
+
+  install_codex_app(&json!({}))
 }
 
 /* ═══════════════  Claude Code  ═══════════════ */
