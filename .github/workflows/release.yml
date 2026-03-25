@@ -95,6 +95,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Prepare updater endpoint
+        shell: bash
+        run: |
+          base='${{ secrets.CF_R2_PUBLIC_BASE_URL }}'
+          base="${base%/}"
+          if [ -n "$base" ]; then
+            echo "EASYAICONFIG_UPDATER_ENDPOINT=$base/latest.json" >> "$GITHUB_ENV"
+          fi
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
@@ -133,15 +142,112 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          EASYAICONFIG_UPDATER_ENDPOINT: ${{ env.EASYAICONFIG_UPDATER_ENDPOINT }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+
+  publish-r2:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    needs: [create-release, build-tauri]
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CF_R2_ACCOUNT_ID: ${{ secrets.CF_R2_ACCOUNT_ID }}
+      CF_R2_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+      CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+      CF_R2_BUCKET: ${{ secrets.CF_R2_BUCKET }}
+      CF_R2_PUBLIC_BASE_URL: ${{ secrets.CF_R2_PUBLIC_BASE_URL }}
+      CF_R2_ENDPOINT: https://${{ secrets.CF_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+      RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check R2 settings
+        id: r2
+        shell: bash
+        run: |
+          missing=0
+          for key in CF_R2_ACCOUNT_ID CF_R2_ACCESS_KEY_ID CF_R2_SECRET_ACCESS_KEY CF_R2_BUCKET CF_R2_PUBLIC_BASE_URL; do
+            if [ -z "${!key}" ]; then
+              echo "missing: $key"
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 1 ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+
+      - name: Skip R2 upload
+        if: steps.r2.outputs.enabled != 'true'
+        run: echo 'Cloudflare R2 secrets 未配置，跳过国内更新源同步。'
+
+      - name: Install tools
+        if: steps.r2.outputs.enabled == 'true'
+        run: sudo apt-get update && sudo apt-get install -y jq awscli
+
+      - name: Download release assets
+        if: steps.r2.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          mkdir -p dist/r2
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq '.assets[] | [.name, .url] | @tsv' | while IFS=$'	' read -r name url; do
+            echo "downloading $name"
+            curl -L --fail \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Accept: application/octet-stream" \
+              "$url" \
+              -o "dist/r2/$name"
+          done
+          ls -lah dist/r2
+
+      - name: Rewrite latest.json for R2
+        if: steps.r2.outputs.enabled == 'true'
+        shell: bash
+        run: |
+          base="${CF_R2_PUBLIC_BASE_URL%/}"
+          test -f dist/r2/latest.json
+          jq --arg base "$base" '
+            if .platforms then
+              .platforms |= with_entries(
+                if (.value.url? != null) then
+                  .value.url = ($base + "/" + (.value.url | split("/") | last))
+                else
+                  .
+                end
+              )
+            else . end
+          ' dist/r2/latest.json > dist/r2/latest.r2.json
+          mv dist/r2/latest.r2.json dist/r2/latest.json
+          cat dist/r2/latest.json
+
+      - name: Upload assets to R2
+        if: steps.r2.outputs.enabled == 'true'
+        shell: bash
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          base="${CF_R2_PUBLIC_BASE_URL%/}"
+          aws s3 sync dist/r2 "s3://${CF_R2_BUCKET}/" \
+            --endpoint-url "${CF_R2_ENDPOINT}" \
+            --delete
+          aws s3 cp dist/r2/latest.json "s3://${CF_R2_BUCKET}/latest.json" \
+            --endpoint-url "${CF_R2_ENDPOINT}" \
+            --cache-control 'no-store, no-cache, must-revalidate, max-age=0' \
+            --content-type 'application/json'
+          echo "R2 updater endpoint: $base/latest.json"
 
   publish-release:
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    needs: [create-release, build-tauri]
+    needs: [create-release, build-tauri, publish-r2]
     steps:
       - name: Publish release
         uses: actions/github-script@v7
