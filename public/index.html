@@ -138,6 +138,26 @@
             <button id="openAboutBtn" class="secondary subtle-btn">关于</button>
           </div>
           <div class="workspace-actions hide" id="configEditorActions">
+            <div class="cfg-editor-search-anchor" id="configEditorSearchAnchor">
+              <button type="button" id="configEditorSearchToggleBtn" class="secondary subtle-btn cfg-editor-search-toggle" title="搜索配置项">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="7" cy="7" r="4.5" />
+                  <path d="M10.5 10.5 14 14" />
+                </svg>
+              </button>
+              <div class="cfg-editor-search-popover hide" id="configEditorSearchBar">
+                <div class="cfg-editor-search">
+                  <svg class="cfg-editor-search-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                    stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="7" cy="7" r="4.5" />
+                    <path d="M10.5 10.5 14 14" />
+                  </svg>
+                  <input id="configEditorSearchInput" type="search" placeholder="搜索配置项…如 沙箱、审批、网关、Telegram"
+                    autocomplete="off" />
+                  <button type="button" id="configEditorSearchClearBtn" class="tiny-icon-btn hide" title="清空搜索">×</button>
+                </div>
+              </div>
+            </div>
             <button id="validateConfigBtn" class="secondary subtle-btn" title="检测当前配置是否正确">
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"
                 stroke-linecap="round" stroke-linejoin="round">
@@ -692,16 +712,6 @@
                   </div>
                 </div>
                 <div class="cfg-editor-header-right">
-                  <div class="cfg-editor-search" id="configEditorSearchBar">
-                    <svg class="cfg-editor-search-icon" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
-                      stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-                      <circle cx="7" cy="7" r="4.5" />
-                      <path d="M10.5 10.5 14 14" />
-                    </svg>
-                    <input id="configEditorSearchInput" type="search" placeholder="搜索配置项…如 沙箱、审批、网关、Telegram"
-                      autocomplete="off" />
-                    <button type="button" id="configEditorSearchClearBtn" class="tiny-icon-btn hide" title="清空搜索">×</button>
-                  </div>
                   <!-- View mode icons -->
                   <div class="cfg-view-icons" id="cfgViewIcons">
                     <button type="button" class="cfg-view-icon" data-cfg-view="form" title="仅表单配置">
@@ -744,6 +754,10 @@
 
                 <!-- ═══ Codex Config Editor ═══ -->
                 <section class="config-editor-main" data-tool-editor="codex">
+                  <div class="config-main-section-head">
+                    <div class="config-main-title">表单配置</div>
+                    <div class="config-main-desc">常用 Codex 配置可视化编辑，右侧保留原始 `config.toml`。</div>
+                  </div>
                   <!-- ═══ 模型与推理 ═══ -->
                   <details class="cfg-section" open>
                     <summary class="cfg-section-header">
@@ -942,6 +956,10 @@
                 </section>
                 <!-- ═══ Claude Code Config Editor ═══ -->
                 <section class="config-editor-main hide" data-tool-editor="claudecode">
+                  <div class="config-main-section-head">
+                    <div class="config-main-title">表单配置</div>
+                    <div class="config-main-desc">常用 Claude Code 配置可视化编辑，右侧保留原始配置 JSON。</div>
+                  </div>
                   <details class="cfg-section" open>
                     <summary class="cfg-section-header">
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 1.5"/></svg>
@@ -1036,6 +1054,10 @@
                 </section>
                 <!-- ═══ OpenCode Config Editor ═══ -->
                 <section class="config-editor-main hide" data-tool-editor="opencode">
+                  <div class="config-main-section-head">
+                    <div class="config-main-title">表单配置</div>
+                    <div class="config-main-desc">常用 OpenCode 配置可视化编辑，右侧保留原始配置 JSON。</div>
+                  </div>
                   <details class="cfg-section" open>
                     <summary class="cfg-section-header">
                       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5l6-3 6 3v6l-6 3-6-3z"/><path d="M2 5l6 3m0 6V8m6-3l-6 3"/></svg>
@@ -1068,9 +1090,216 @@
                       </div>
                     </div>
                   </details>
+                  <details class="cfg-section">
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 9.5a3.5 3.5 0 0 0 5 0l1-1a3.54 3.54 0 0 0-5-5l-.5.5"/><path d="M9.5 6.5a3.5 3.5 0 0 0-5 0l-1 1a3.54 3.54 0 0 0 5 5l.5-.5"/></svg>
+                      <span>Provider 管理</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="cc-provider-toolbar">
+                        <input id="opProviderSearchInput" class="provider-search-input" placeholder="搜索 Key / 名称 / URL / 模型" />
+                        <div class="cc-provider-inline-actions">
+                          <div id="opProviderListMeta" class="inline-meta">支持多 Provider 列表管理，可切默认模型</div>
+                          <button id="opProviderOpenCreateBtn" type="button" class="secondary tiny-btn">新建 Provider</button>
+                        </div>
+                      </div>
+                      <div id="opCfgProviderList" class="provider-list desktop-provider-list"></div>
+                      <div id="opProviderDetailPanel" class="cc-provider-detail hide">
+                        <div class="cc-provider-detail-head">
+                          <strong id="opProviderDetailTitle">Provider 详情</strong>
+                          <button id="opProviderDetailCloseBtn" type="button" class="secondary tiny-btn">收起</button>
+                        </div>
+                        <div class="editor-grid dense-grid">
+                          <label class="field"><span>Provider Key</span><input id="opProviderFormKey" placeholder="例如 work / openrouter / github" /></label>
+                          <label class="field"><span>Provider 名称</span><input id="opProviderFormName" placeholder="例如 公司网关" /></label>
+                          <label class="field"><span>Base URL</span><input id="opProviderFormBaseUrl" placeholder="https://your-provider.com/v1" /></label>
+                          <label class="field"><span>默认模型 ID</span><input id="opProviderFormModelId" placeholder="例如 gpt-5 / claude-sonnet-4-5" /></label>
+                          <label class="field"><span>Provider 包</span><input id="opProviderFormPackage" placeholder="默认 @ai-sdk/openai-compatible" /></label>
+                          <div class="field field-wide op-provider-model-field">
+                            <span>模型列表</span>
+                            <div class="cc-provider-toolbar op-provider-model-toolbar">
+                              <div id="opProviderModelMeta" class="inline-meta">未添加模型</div>
+                              <div class="cc-provider-inline-actions">
+                                <button id="opProviderFormTestBtn" type="button" class="secondary tiny-btn">检测连通性</button>
+                                <button id="opProviderModelDetectBtn" type="button" class="secondary tiny-btn">探测模型</button>
+                              </div>
+                            </div>
+                            <div id="opProviderModelsChips" class="chips hide"></div>
+                            <div class="op-provider-model-entry">
+                              <input id="opProviderModelInput" placeholder="输入模型 ID 后回车或点添加" />
+                              <button id="opProviderModelAddBtn" type="button" class="secondary tiny-btn">添加</button>
+                              <button id="opProviderModelsClearBtn" type="button" class="secondary tiny-btn">清空</button>
+                            </div>
+                            <div id="opProviderTestStatus" class="inline-meta">支持手动添加，也可自动探测。</div>
+                          </div>
+                          <label class="field"><span>API Key</span><input id="opProviderFormApiKey" type="password" placeholder="留空表示保持当前" /></label>
+                          <label class="field field-wide"><span>模型白名单</span><input id="opProviderFormWhitelist" placeholder="逗号分隔" /></label>
+                          <label class="field field-wide"><span>模型黑名单</span><input id="opProviderFormBlacklist" placeholder="逗号分隔" /></label>
+                          <label class="field"><span>Enterprise URL</span><input id="opProviderFormEnterpriseUrl" placeholder="可选" /></label>
+                          <label class="field"><span>启用 Cache Key</span><div class="select-wrap"><select id="opProviderFormSetCacheKey"><option value="">默认</option><option value="true">true</option><option value="false">false</option></select></div></label>
+                          <label class="field"><span>请求超时</span><input id="opProviderFormTimeout" placeholder="毫秒，或 false" /></label>
+                          <label class="field"><span>流式分块超时</span><input id="opProviderFormChunkTimeout" inputmode="numeric" placeholder="毫秒" /></label>
+                        </div>
+                        <div class="cc-provider-actions">
+                          <button id="opProviderFormApplyBtn" type="button" class="secondary tiny-btn">载入主表单</button>
+                          <button id="opProviderFormDefaultBtn" type="button" class="secondary tiny-btn">设为默认</button>
+                          <button id="opProviderFormSaveBtn" type="button" class="secondary tiny-btn">保存到列表</button>
+                          <button id="opProviderFormDeleteBtn" type="button" class="secondary tiny-btn">删除</button>
+                        </div>
+                      </div>
+                      <div class="inline-meta">复杂模型覆写继续放在下面的 Provider JSON 分片里。</div>
+                    </div>
+                  </details>
+                  <details class="cfg-section">
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8h11"/><path d="M8 2.5v11"/><rect x="2.5" y="2.5" width="11" height="11" rx="2"/></svg>
+                      <span>Provider 高级选项</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field field-wide"><span>模型白名单</span><input id="opCfgProviderWhitelistInput" placeholder="逗号分隔，如 gpt-5, gpt-4.1-mini" /></label>
+                        <label class="field field-wide"><span>模型黑名单</span><input id="opCfgProviderBlacklistInput" placeholder="逗号分隔，如 o1-preview" /></label>
+                        <label class="field"><span>Provider Enterprise URL</span><input id="opCfgProviderEnterpriseUrlInput" placeholder="如 https://github.example.com" /></label>
+                        <label class="field"><span>启用 Cache Key</span><div class="select-wrap"><select id="opCfgProviderSetCacheKeySelect"><option value="">默认</option><option value="true">true</option><option value="false">false</option></select></div></label>
+                        <label class="field"><span>请求超时</span><input id="opCfgProviderTimeoutInput" placeholder="毫秒，或 false 关闭" /></label>
+                        <label class="field"><span>流式分块超时</span><input id="opCfgProviderChunkTimeoutInput" inputmode="numeric" placeholder="毫秒，如 30000" /></label>
+                      </div>
+                    </div>
+                  </details>
+                  <details class="cfg-section">
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5a2 2 0 0 1 2 2v1h1.5a2 2 0 0 1 2 2V11a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2H6v-1a2 2 0 0 1 2-2Z"/><path d="M6 8h4M6 10.5h3"/></svg>
+                      <span>Agent 快捷配置</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>Build 模型</span><input id="opCfgAgentBuildModelInput" placeholder="如 openai/gpt-5" /></label>
+                        <label class="field"><span>Build 步数</span><input id="opCfgAgentBuildStepsInput" inputmode="numeric" placeholder="如 20" /></label>
+                        <label class="field"><span>Build 温度</span><input id="opCfgAgentBuildTemperatureInput" inputmode="decimal" placeholder="如 0.2" /></label>
+                        <label class="field"><span>Plan 模型</span><input id="opCfgAgentPlanModelInput" placeholder="如 openai/gpt-5-mini" /></label>
+                        <label class="field"><span>Plan 步数</span><input id="opCfgAgentPlanStepsInput" inputmode="numeric" placeholder="如 12" /></label>
+                        <label class="field"><span>Plan 温度</span><input id="opCfgAgentPlanTemperatureInput" inputmode="decimal" placeholder="如 0.1" /></label>
+                        <label class="field"><span>General 模型</span><input id="opCfgAgentGeneralModelInput" placeholder="如 anthropic/claude-sonnet-4-5" /></label>
+                        <label class="field"><span>General 步数</span><input id="opCfgAgentGeneralStepsInput" inputmode="numeric" placeholder="如 8" /></label>
+                        <label class="field"><span>General 温度</span><input id="opCfgAgentGeneralTemperatureInput" inputmode="decimal" placeholder="如 0.3" /></label>
+                      </div>
+                      <div class="inline-meta">这里先做最常用的 3 个 Agent；更多字段继续放在下面的 JSON 分片里。</div>
+                    </div>
+                  </details>
+                  <details class="cfg-section">
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10M3 8h10M3 11.5h10"/><circle cx="5" cy="4.5" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="11" cy="11.5" r="1"/></svg>
+                      <span>权限快捷配置</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>默认权限</span><div class="select-wrap"><select id="opCfgPermissionDefaultSelect"><option value="">默认</option><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select></div></label>
+                        <label class="field"><span>Read</span><div class="select-wrap"><select id="opCfgPermissionReadSelect"><option value="">默认</option><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select></div></label>
+                        <label class="field"><span>Edit</span><div class="select-wrap"><select id="opCfgPermissionEditSelect"><option value="">默认</option><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select></div></label>
+                        <label class="field"><span>Bash</span><div class="select-wrap"><select id="opCfgPermissionBashSelect"><option value="">默认</option><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select></div></label>
+                        <label class="field"><span>Task</span><div class="select-wrap"><select id="opCfgPermissionTaskSelect"><option value="">默认</option><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select></div></label>
+                        <label class="field"><span>Glob</span><div class="select-wrap"><select id="opCfgPermissionGlobSelect"><option value="">默认</option><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select></div></label>
+                        <label class="field"><span>Grep</span><div class="select-wrap"><select id="opCfgPermissionGrepSelect"><option value="">默认</option><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select></div></label>
+                        <label class="field"><span>List</span><div class="select-wrap"><select id="opCfgPermissionListSelect"><option value="">默认</option><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select></div></label>
+                        <label class="field"><span>WebFetch</span><div class="select-wrap"><select id="opCfgPermissionWebFetchSelect"><option value="">默认</option><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select></div></label>
+                        <label class="field"><span>WebSearch</span><div class="select-wrap"><select id="opCfgPermissionWebSearchSelect"><option value="">默认</option><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select></div></label>
+                        <label class="field"><span>Skill</span><div class="select-wrap"><select id="opCfgPermissionSkillSelect"><option value="">默认</option><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select></div></label>
+                        <label class="field"><span>LSP</span><div class="select-wrap"><select id="opCfgPermissionLspSelect"><option value="">默认</option><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select></div></label>
+                        <label class="field"><span>提问</span><div class="select-wrap"><select id="opCfgPermissionQuestionSelect"><option value="">默认</option><option value="ask">ask</option><option value="allow">allow</option><option value="deny">deny</option></select></div></label>
+                      </div>
+                      <div class="inline-meta">更复杂的路径规则 / 对象规则，继续放在 Permission JSON 里。</div>
+                    </div>
+                  </details>
+                  <details class="cfg-section">
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="5.5"/><path d="M8 4.5v3.5l2 2"/></svg>
+                      <span>运行与共享</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>日志级别</span><div class="select-wrap"><select id="opCfgLogLevel"><option value="">默认</option><option value="debug">debug</option><option value="info">info</option><option value="warn">warn</option><option value="error">error</option><option value="trace">trace</option></select></div></label>
+                        <label class="field"><span>显示用户名</span><input id="opCfgUsernameInput" placeholder="留空使用系统用户名" /></label>
+                        <label class="field"><span>默认 Agent</span><input id="opCfgDefaultAgentInput" placeholder="如 build / plan / general" /></label>
+                        <label class="field"><span>分享策略</span><div class="select-wrap"><select id="opCfgShareSelect"><option value="">默认</option><option value="manual">manual</option><option value="auto">auto</option><option value="disabled">disabled</option></select></div></label>
+                        <label class="field"><span>自动更新</span><div class="select-wrap"><select id="opCfgAutoUpdateSelect"><option value="">默认</option><option value="true">true</option><option value="false">false</option><option value="notify">notify</option></select></div></label>
+                        <label class="field"><span>快照追踪</span><div class="select-wrap"><select id="opCfgSnapshotSelect"><option value="">默认</option><option value="true">true</option><option value="false">false</option></select></div></label>
+                        <label class="field field-wide"><span>禁用 Providers</span><input id="opCfgDisabledProvidersInput" placeholder="逗号分隔，如 openai, anthropic" /></label>
+                        <label class="field field-wide"><span>启用白名单 Providers</span><input id="opCfgEnabledProvidersInput" placeholder="逗号分隔；填写后仅启用这些" /></label>
+                        <label class="field field-wide"><span>附加指令文件</span><input id="opCfgInstructionsInput" placeholder="逗号分隔，如 .opencode/AGENTS.md, docs/*.md" /></label>
+                        <label class="field field-wide"><span>插件列表</span><input id="opCfgPluginListInput" placeholder="逗号分隔，如 @acme/plugin,file:///.../plugin.js" /></label>
+                      </div>
+                    </div>
+                  </details>
+                  <details class="cfg-section">
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8h11"/><path d="M8 2.5v11"/><rect x="2.5" y="2.5" width="11" height="11" rx="2"/></svg>
+                      <span>服务与目录</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>服务端口</span><input id="opCfgServerPortInput" inputmode="numeric" placeholder="如 4096" /></label>
+                        <label class="field"><span>服务主机</span><input id="opCfgServerHostnameInput" placeholder="如 127.0.0.1" /></label>
+                        <label class="field"><span>mDNS</span><div class="select-wrap"><select id="opCfgServerMdnsSelect"><option value="">默认</option><option value="true">true</option><option value="false">false</option></select></div></label>
+                        <label class="field"><span>mDNS 域名</span><input id="opCfgServerMdnsDomainInput" placeholder="如 opencode.local" /></label>
+                        <label class="field field-wide"><span>CORS 域名</span><input id="opCfgServerCorsInput" placeholder="逗号分隔，如 http://localhost:3000, https://app.example.com" /></label>
+                        <label class="field"><span>Enterprise URL</span><input id="opCfgEnterpriseUrlInput" placeholder="如 https://console.example.com" /></label>
+                        <label class="field"><span>Skills 路径</span><input id="opCfgSkillsPathsInput" placeholder="逗号分隔" /></label>
+                        <label class="field"><span>Skills URL</span><input id="opCfgSkillsUrlsInput" placeholder="逗号分隔" /></label>
+                        <label class="field field-wide"><span>Watcher 忽略</span><input id="opCfgWatcherIgnoreInput" placeholder="逗号分隔，如 node_modules, dist, .git" /></label>
+                      </div>
+                    </div>
+                  </details>
+                  <details class="cfg-section">
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 3.5h11M2.5 8h11M2.5 12.5h11"/></svg>
+                      <span>高级能力</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field"><span>自动 Compact</span><div class="select-wrap"><select id="opCfgCompactionAutoSelect"><option value="">默认</option><option value="true">true</option><option value="false">false</option></select></div></label>
+                        <label class="field"><span>自动 Prune</span><div class="select-wrap"><select id="opCfgCompactionPruneSelect"><option value="">默认</option><option value="true">true</option><option value="false">false</option></select></div></label>
+                        <label class="field"><span>保留 Token</span><input id="opCfgCompactionReservedInput" inputmode="numeric" placeholder="如 12000" /></label>
+                        <label class="field"><span>Batch Tool</span><div class="select-wrap"><select id="opCfgExperimentalBatchToolSelect"><option value="">默认</option><option value="true">true</option><option value="false">false</option></select></div></label>
+                        <label class="field"><span>OpenTelemetry</span><div class="select-wrap"><select id="opCfgExperimentalOpenTelemetrySelect"><option value="">默认</option><option value="true">true</option><option value="false">false</option></select></div></label>
+                        <label class="field"><span>拒绝后继续</span><div class="select-wrap"><select id="opCfgExperimentalContinueOnDenySelect"><option value="">默认</option><option value="true">true</option><option value="false">false</option></select></div></label>
+                        <label class="field"><span>禁用粘贴摘要</span><div class="select-wrap"><select id="opCfgExperimentalDisablePasteSummarySelect"><option value="">默认</option><option value="true">true</option><option value="false">false</option></select></div></label>
+                        <label class="field"><span>MCP 超时(ms)</span><input id="opCfgExperimentalMcpTimeoutInput" inputmode="numeric" placeholder="如 15000" /></label>
+                        <label class="field field-wide"><span>主 Agent 专属工具</span><input id="opCfgExperimentalPrimaryToolsInput" placeholder="逗号分隔，如 bash, edit, task" /></label>
+                      </div>
+                    </div>
+                  </details>
+                  <details class="cfg-section">
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 12 13.5H4A1.5 1.5 0 0 1 2.5 12V4A1.5 1.5 0 0 1 4 2.5Z"/><path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3"/></svg>
+                      <span>高级 JSON 分片</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="editor-grid dense-grid">
+                        <label class="field field-wide"><span>Provider 全量覆盖</span><textarea id="opCfgProviderJson" rows="5" placeholder='例如：{"openai":{"options":{"timeout":300000}}}'></textarea></label>
+                        <label class="field field-wide"><span>Agent</span><textarea id="opCfgAgentJson" rows="5" placeholder='例如：{"build":{"model":"openai/gpt-5"}}'></textarea></label>
+                        <label class="field field-wide"><span>Permission</span><textarea id="opCfgPermissionJson" rows="5" placeholder='例如：{"bash":"ask","edit":"allow"}'></textarea></label>
+                        <label class="field field-wide"><span>Command</span><textarea id="opCfgCommandJson" rows="5" placeholder='例如：{"fix":{"template":"Fix this bug"}}'></textarea></label>
+                        <label class="field field-wide"><span>MCP</span><textarea id="opCfgMcpJson" rows="5" placeholder='例如：{"docs":{"type":"local","command":["npx","-y","@modelcontextprotocol/server-filesystem"]}}'></textarea></label>
+                        <label class="field field-wide"><span>Formatter</span><textarea id="opCfgFormatterJson" rows="4" placeholder='例如：{"prettier":{"command":["prettier","--write"],"extensions":[".ts"]}}'></textarea></label>
+                        <label class="field field-wide"><span>LSP</span><textarea id="opCfgLspJson" rows="4" placeholder='例如：{"typescript":{"command":["typescript-language-server","--stdio"]}}'></textarea></label>
+                      </div>
+                    </div>
+                  </details>
                 </section>
                 <!-- ═══ OpenClaw Config Editor — Control Panel ═══ -->
                 <section class="config-editor-main hide" data-tool-editor="openclaw">
+                  <div class="config-main-section-head">
+                    <div class="config-main-title">表单配置</div>
+                    <div class="config-main-desc">常用 OpenClaw 配置可视化编辑，右侧保留原始配置 JSON。</div>
+                  </div>
 
                   <!-- ── 📦 模型配置 ── -->
                   <details class="oc-panel" open>

@@ -25,9 +25,14 @@ const state = {
   toolsCatalogPageSize: 9,
   providerHealth: {},
   claudeProviderHealth: {},
+  openCodeProviderHealth: {},
   providerSecrets: {},
   claudeSelectedProviderKey: '',
   claudeProviderDetailKey: '',
+  openCodeProviderDetailKey: '',
+  openCodeProviderSearch: '',
+  openCodeProviderDraftModels: [],
+  configEditorSearchOpen: false,
   apiKeyField: {
     providerKey: '',
     baseUrl: '',
@@ -2558,24 +2563,601 @@ async function quickSwitchOpenCodeProvider(provider) {
   return { ok: true, providerKey: provider.key };
 }
 
+function getOpenCodeProviderRuntimeMeta(key = '') {
+  return (state.opencodeState?.providers || []).find((item) => item.key === key) || null;
+}
+
+function getOpenCodeEditorCurrentProviderKey() {
+  return String(el('opCfgProviderKeyInput')?.value || '').trim()
+    || openCodeProviderKeyFromModel(String(el('opCfgModelInput')?.value || '').trim())
+    || state.opencodeState?.activeProviderKey
+    || '';
+}
+
+function normalizeOpenCodeProviderModelIds(modelIds = []) {
+  const seen = new Set();
+  const normalized = [];
+  (modelIds || []).forEach((item) => {
+    const raw = String(item || '').trim();
+    if (!raw) return;
+    const value = raw.includes('/') ? raw.split('/').slice(1).join('/') : raw;
+    if (!value || seen.has(value)) return;
+    seen.add(value);
+    normalized.push(value);
+  });
+  return normalized;
+}
+
+function getOpenCodeProviderDraftModelIds({ includeInput = true } = {}) {
+  const inputModel = includeInput ? String(el('opProviderFormModelId')?.value || '').trim() : '';
+  return normalizeOpenCodeProviderModelIds(inputModel ? [inputModel, ...(state.openCodeProviderDraftModels || [])] : (state.openCodeProviderDraftModels || []));
+}
+
+function openCodeProviderConnectivityLabel(providerKey = '', provider = null) {
+  const health = state.openCodeProviderHealth[providerKey];
+  if (health?.loading) return { tone: 'muted', text: '检测中' };
+  if (health?.checked) return health.ok ? { tone: 'ok', text: '已通' } : { tone: 'bad', text: '失败' };
+  const runtime = getOpenCodeProviderRuntimeMeta(providerKey);
+  const target = provider || {};
+  if (target.options?.apiKey || runtime?.maskedApiKey) return { tone: 'muted', text: '待检测' };
+  if (runtime?.hasAuth) return { tone: 'ok', text: `${runtime.authType || 'Auth'} 就绪` };
+  return { tone: 'warn', text: '缺少 Key' };
+}
+
+function renderOpenCodeProviderTestStatus(providerKey = '', provider = null) {
+  const statusEl = el('opProviderTestStatus');
+  if (!statusEl) return;
+  const health = state.openCodeProviderHealth[providerKey];
+  const runtime = getOpenCodeProviderRuntimeMeta(providerKey);
+  if (health?.loading) {
+    statusEl.textContent = '正在检测连通性与模型列表…';
+    return;
+  }
+  if (health?.checked && health.ok) {
+    const count = Array.isArray(health.models) ? health.models.length : 0;
+    statusEl.textContent = count ? `连通成功 · 发现 ${count} 个模型` : '连通成功';
+    return;
+  }
+  if (health?.checked && !health.ok) {
+    statusEl.textContent = '最近一次检测失败，请检查 URL / Key / 网络。';
+    return;
+  }
+  if (provider?.options?.apiKey || runtime?.maskedApiKey) {
+    statusEl.textContent = '可直接做连通性检测，也可自动探测模型。';
+    return;
+  }
+  if (runtime?.hasAuth) {
+    statusEl.textContent = `${runtime.authType || 'Auth'} 已登录；如需通用 API 检测，可额外填写 API Key。`;
+    return;
+  }
+  statusEl.textContent = '支持手动添加，也可自动探测。';
+}
+
+function renderOpenCodeProviderModelChips() {
+  const chipsEl = el('opProviderModelsChips');
+  const metaEl = el('opProviderModelMeta');
+  if (!chipsEl) return;
+  const models = getOpenCodeProviderDraftModelIds();
+  chipsEl.innerHTML = models.map((model) => `
+    <button type="button" class="chip op-provider-model-chip" data-op-provider-model="${escapeHtml(model)}">
+      <span>${escapeHtml(model)}</span>
+      <span class="op-provider-model-remove" data-op-provider-model-remove="${escapeHtml(model)}">×</span>
+    </button>
+  `).join('');
+  chipsEl.classList.toggle('hide', models.length === 0);
+  if (metaEl) metaEl.textContent = models.length ? `已维护 ${models.length} 个模型` : '未添加模型';
+}
+
+function setOpenCodeProviderDraftModelIds(modelIds = [], { syncInput = true } = {}) {
+  state.openCodeProviderDraftModels = normalizeOpenCodeProviderModelIds(modelIds);
+  if (syncInput && el('opProviderFormModelId')) {
+    el('opProviderFormModelId').value = state.openCodeProviderDraftModels[0] || '';
+  }
+  renderOpenCodeProviderModelChips();
+}
+
+function buildOpenCodeProviderFromFormPreview() {
+  const form = readOpenCodeProviderEditorForm();
+  if (!form) return { providerKey: '', provider: null };
+  const providerMap = getOpenCodeConfigEditorProviderMap();
+  const baseProvider = cloneJson(
+    providerMap[form.providerKey]
+    || ((form.originalKey && form.originalKey !== '__new__') ? providerMap[form.originalKey] : null)
+    || {}
+  );
+  const provider = baseProvider;
+  if (form.name) provider.name = form.name;
+  else delete provider.name;
+  if (form.providerPackage) provider.npm = form.providerPackage;
+  else delete provider.npm;
+  if (form.whitelist.length) provider.whitelist = form.whitelist;
+  else delete provider.whitelist;
+  if (form.blacklist.length) provider.blacklist = form.blacklist;
+  else delete provider.blacklist;
+  provider.options = { ...(provider.options || {}) };
+  if (form.baseUrl) provider.options.baseURL = form.baseUrl;
+  else delete provider.options.baseURL;
+  if (form.apiKey) provider.options.apiKey = form.apiKey;
+  if (form.enterpriseUrl) provider.options.enterpriseUrl = form.enterpriseUrl;
+  else delete provider.options.enterpriseUrl;
+  if (form.setCacheKey !== undefined) provider.options.setCacheKey = form.setCacheKey;
+  else delete provider.options.setCacheKey;
+  if (form.timeout !== undefined) provider.options.timeout = form.timeout;
+  else delete provider.options.timeout;
+  if (form.chunkTimeout !== undefined) provider.options.chunkTimeout = form.chunkTimeout;
+  else delete provider.options.chunkTimeout;
+  if (isEmptyConfigValue(provider.options)) delete provider.options;
+  if (form.modelIds.length) {
+    const previousModels = cloneJson(provider.models || {});
+    provider.models = {};
+    form.modelIds.forEach((modelId) => {
+      provider.models[modelId] = previousModels[modelId] || {};
+    });
+  } else {
+    delete provider.models;
+  }
+  return { providerKey: form.providerKey, provider };
+}
+
+async function testOpenCodeProviderConnectivity(providerInput = null, { providerKey = '', delayMs = 420, refreshModels = false } = {}) {
+  const preview = providerInput ? { providerKey, provider: cloneJson(providerInput || {}) } : buildOpenCodeProviderFromFormPreview();
+  const key = preview.providerKey || providerKey || '';
+  const provider = cloneJson(preview.provider || {});
+  const runtime = key ? getOpenCodeProviderRuntimeMeta(key) : null;
+  const baseUrl = normalizeBaseUrl(provider.options?.baseURL || runtime?.baseUrl || '');
+  const apiKey = String(provider.options?.apiKey || '').trim();
+  const shouldRenderManager = Boolean(providerInput);
+
+  if (!baseUrl) return { ok: false, error: '请先填写 Base URL' };
+  if (!apiKey) {
+    if (runtime?.hasAuth) return { ok: false, error: '当前 Provider 仅有 OpenCode 登录态，无法直接做通用 API Key 检测' };
+    return { ok: false, error: '请先填写 API Key' };
+  }
+
+  if (key) state.openCodeProviderHealth[key] = { loading: true, checked: false, startedAt: Date.now() };
+  if (shouldRenderManager) renderOpenCodeProviderManager(getOpenCodeEditorCurrentProviderKey());
+  else renderOpenCodeProviderTestStatus(key, provider);
+
+  if (delayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  const json = await api('/api/provider/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      baseUrl,
+      apiKey,
+      timeoutMs: 10000,
+    }),
+    timeoutMs: 12000,
+  });
+
+  const models = normalizeOpenCodeProviderModelIds(json?.data?.models || []);
+  if (key) state.openCodeProviderHealth[key] = {
+    loading: false,
+    checked: true,
+    ok: Boolean(json?.ok),
+    models,
+    recommendedModel: pickRecommendedModel(models, models[0] || ''),
+  };
+
+  if (json?.ok && refreshModels && models.length) {
+    setOpenCodeProviderDraftModelIds(models);
+    if (el('opProviderFormModelId')) {
+      el('opProviderFormModelId').value = pickRecommendedModel(models, models[0] || '');
+    }
+  }
+
+  if (shouldRenderManager) renderOpenCodeProviderManager(getOpenCodeEditorCurrentProviderKey());
+  else renderOpenCodeProviderTestStatus(key, provider);
+  if (!json?.ok) return { ok: false, error: json?.error || '连通性检测失败' };
+  return { ok: true, data: json.data };
+}
+
+function getOpenCodeConfigEditorProviderMap() {
+  const fallback = cloneJson(state.opencodeState?.config?.provider || {});
+  const raw = String(el('opCfgProviderJson')?.value || '').trim();
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fallback;
+    return cloneJson(parsed);
+  } catch {
+    return fallback;
+  }
+}
+
+function writeOpenCodeConfigEditorProviderMap(providerMap = {}) {
+  writeJsonFragmentInput('opCfgProviderJson', providerMap || {});
+}
+
+function populateOpenCodeProviderEditorForm(provider = null, providerKey = '') {
+  const target = cloneJson(provider || {});
+  const key = providerKey || '';
+  const runtime = key ? getOpenCodeProviderRuntimeMeta(key) : null;
+  const modelIds = normalizeOpenCodeProviderModelIds([
+    ...Object.keys(target.models || {}),
+    ...(runtime?.modelIds || []),
+  ]);
+  const setValue = (id, value = '') => {
+    const input = el(id);
+    if (!input) return;
+    input.value = value === null || value === undefined ? '' : String(value);
+  };
+  setValue('opProviderFormKey', key);
+  setValue('opProviderFormName', target.name || '');
+  setValue('opProviderFormBaseUrl', target.options?.baseURL || runtime?.baseUrl || '');
+  setValue('opProviderFormModelId', modelIds[0] || '');
+  setValue('opProviderFormPackage', target.npm || '@ai-sdk/openai-compatible');
+  setValue('opProviderFormWhitelist', Array.isArray(target.whitelist) ? target.whitelist.join(', ') : '');
+  setValue('opProviderFormBlacklist', Array.isArray(target.blacklist) ? target.blacklist.join(', ') : '');
+  setValue('opProviderFormEnterpriseUrl', target.options?.enterpriseUrl || '');
+  setValue('opProviderFormSetCacheKey', typeof target.options?.setCacheKey === 'boolean' ? String(target.options.setCacheKey) : '');
+  setValue('opProviderFormTimeout', target.options?.timeout === false ? 'false' : (target.options?.timeout || ''));
+  setValue('opProviderFormChunkTimeout', target.options?.chunkTimeout || '');
+  const apiKeyInput = el('opProviderFormApiKey');
+  if (apiKeyInput) {
+    apiKeyInput.value = '';
+    apiKeyInput.placeholder = runtime?.maskedApiKey ? `${runtime.maskedApiKey} (留空保持当前)` : '留空表示保持当前';
+  }
+  setOpenCodeProviderDraftModelIds(modelIds, { syncInput: true });
+  renderOpenCodeProviderTestStatus(key, target);
+}
+
+function readOpenCodeProviderEditorForm() {
+  const getValue = (id) => String(el(id)?.value || '').trim();
+  const parseCsv = (id) => {
+    const raw = getValue(id);
+    return raw ? raw.split(/[\n,]/).map((item) => item.trim()).filter(Boolean) : [];
+  };
+  const originalKey = state.openCodeProviderDetailKey || '';
+  const baseUrl = normalizeBaseUrl(getValue('opProviderFormBaseUrl'));
+  const keyInput = getValue('opProviderFormKey');
+  const name = getValue('opProviderFormName');
+  const modelRaw = getValue('opProviderFormModelId');
+  const providerKey = normalizeOpenCodeProviderKey(keyInput || (originalKey && originalKey !== '__new__' ? originalKey : '') || inferProviderKey(baseUrl) || '');
+  const modelId = modelRaw.includes('/') ? modelRaw.split('/').slice(1).join('/') : modelRaw;
+  const modelIds = normalizeOpenCodeProviderModelIds(modelId ? [modelId, ...getOpenCodeProviderDraftModelIds({ includeInput: false })] : getOpenCodeProviderDraftModelIds({ includeInput: false }));
+  const providerPackage = getValue('opProviderFormPackage') || '@ai-sdk/openai-compatible';
+  const apiKey = getValue('opProviderFormApiKey');
+  const whitelist = parseCsv('opProviderFormWhitelist');
+  const blacklist = parseCsv('opProviderFormBlacklist');
+  const enterpriseUrl = getValue('opProviderFormEnterpriseUrl');
+  const setCacheKeyRaw = getValue('opProviderFormSetCacheKey');
+  const timeoutRaw = getValue('opProviderFormTimeout');
+  const chunkTimeoutRaw = getValue('opProviderFormChunkTimeout');
+  const hasAny = [keyInput, name, baseUrl, modelRaw, providerPackage, apiKey, enterpriseUrl, timeoutRaw, chunkTimeoutRaw].some(Boolean) || whitelist.length || blacklist.length;
+  if (!hasAny) return null;
+  if (!providerKey) throw new Error('请先填写 Provider Key，或填写 Base URL 让系统自动推断');
+
+  let timeout;
+  if (timeoutRaw) {
+    if (timeoutRaw === 'false') timeout = false;
+    else {
+      const parsed = Number(timeoutRaw);
+      if (!Number.isInteger(parsed) || parsed <= 0) throw new Error('Provider 请求超时必须是正整数，或 false');
+      timeout = parsed;
+    }
+  }
+
+  let chunkTimeout;
+  if (chunkTimeoutRaw) {
+    const parsed = Number(chunkTimeoutRaw);
+    if (!Number.isInteger(parsed) || parsed <= 0) throw new Error('流式分块超时必须是正整数');
+    chunkTimeout = parsed;
+  }
+
+  let setCacheKey;
+  if (setCacheKeyRaw === 'true') setCacheKey = true;
+  if (setCacheKeyRaw === 'false') setCacheKey = false;
+
+  return {
+    originalKey,
+    providerKey,
+    name,
+    baseUrl,
+    modelId: modelId.trim(),
+    modelIds,
+    providerPackage,
+    apiKey,
+    whitelist,
+    blacklist,
+    enterpriseUrl,
+    setCacheKey,
+    timeout,
+    chunkTimeout,
+  };
+}
+
+function mergeOpenCodeProviderFormIntoMap(providerMap = {}) {
+  const detailPanel = el('opProviderDetailPanel');
+  if (!detailPanel || detailPanel.classList.contains('hide')) return cloneJson(providerMap || {});
+  const form = readOpenCodeProviderEditorForm();
+  if (!form) return cloneJson(providerMap || {});
+  const nextMap = cloneJson(providerMap || {});
+  const existingProvider = cloneJson(nextMap[form.providerKey] || (form.originalKey && form.originalKey !== '__new__' ? nextMap[form.originalKey] : {}) || {});
+  if (form.originalKey && form.originalKey !== '__new__' && form.originalKey !== form.providerKey) {
+    delete nextMap[form.originalKey];
+  }
+  if (form.name) existingProvider.name = form.name;
+  else delete existingProvider.name;
+  if (form.providerPackage) existingProvider.npm = form.providerPackage;
+  else delete existingProvider.npm;
+  if (form.whitelist.length) existingProvider.whitelist = form.whitelist;
+  else delete existingProvider.whitelist;
+  if (form.blacklist.length) existingProvider.blacklist = form.blacklist;
+  else delete existingProvider.blacklist;
+  existingProvider.options = { ...(existingProvider.options || {}) };
+  if (form.baseUrl) existingProvider.options.baseURL = form.baseUrl;
+  else delete existingProvider.options.baseURL;
+  if (form.apiKey) existingProvider.options.apiKey = form.apiKey;
+  if (form.enterpriseUrl) existingProvider.options.enterpriseUrl = form.enterpriseUrl;
+  else delete existingProvider.options.enterpriseUrl;
+  if (form.setCacheKey !== undefined) existingProvider.options.setCacheKey = form.setCacheKey;
+  else delete existingProvider.options.setCacheKey;
+  if (form.timeout !== undefined) existingProvider.options.timeout = form.timeout;
+  else delete existingProvider.options.timeout;
+  if (form.chunkTimeout !== undefined) existingProvider.options.chunkTimeout = form.chunkTimeout;
+  else delete existingProvider.options.chunkTimeout;
+  if (isEmptyConfigValue(existingProvider.options)) delete existingProvider.options;
+  if (form.modelIds.length) {
+    const previousModels = cloneJson(existingProvider.models || {});
+    existingProvider.models = {};
+    form.modelIds.forEach((modelId) => {
+      existingProvider.models[modelId] = previousModels[modelId] || {};
+    });
+  } else {
+    delete existingProvider.models;
+  }
+  if (isEmptyConfigValue(existingProvider.models)) delete existingProvider.models;
+  nextMap[form.providerKey] = existingProvider;
+  state.openCodeProviderDetailKey = form.providerKey;
+  return nextMap;
+}
+
+function applyOpenCodeProviderToMainEditor(providerKey, provider = null, { setDefault = false, includeApiKey = true } = {}) {
+  const target = cloneJson(provider || {});
+  const modelId = Object.keys(target.models || {})[0] || '';
+  if (el('opCfgProviderKeyInput')) el('opCfgProviderKeyInput').value = providerKey || '';
+  if (el('opCfgProviderNameInput')) el('opCfgProviderNameInput').value = target.name || '';
+  if (el('opCfgBaseUrlInput')) el('opCfgBaseUrlInput').value = target.options?.baseURL || '';
+  if (el('opCfgProviderPackageInput')) el('opCfgProviderPackageInput').value = target.npm || '@ai-sdk/openai-compatible';
+  if (includeApiKey && target.options?.apiKey && el('opCfgApiKeyInput')) el('opCfgApiKeyInput').value = target.options.apiKey;
+  if (el('opCfgProviderWhitelistInput')) el('opCfgProviderWhitelistInput').value = Array.isArray(target.whitelist) ? target.whitelist.join(', ') : '';
+  if (el('opCfgProviderBlacklistInput')) el('opCfgProviderBlacklistInput').value = Array.isArray(target.blacklist) ? target.blacklist.join(', ') : '';
+  if (el('opCfgProviderEnterpriseUrlInput')) el('opCfgProviderEnterpriseUrlInput').value = target.options?.enterpriseUrl || '';
+  if (el('opCfgProviderSetCacheKeySelect')) el('opCfgProviderSetCacheKeySelect').value = typeof target.options?.setCacheKey === 'boolean' ? String(target.options.setCacheKey) : '';
+  if (el('opCfgProviderTimeoutInput')) el('opCfgProviderTimeoutInput').value = target.options?.timeout === false ? 'false' : String(target.options?.timeout || '');
+  if (el('opCfgProviderChunkTimeoutInput')) el('opCfgProviderChunkTimeoutInput').value = String(target.options?.chunkTimeout || '');
+  if (setDefault && modelId && el('opCfgModelInput')) el('opCfgModelInput').value = `${providerKey}/${modelId}`;
+}
+
+function saveOpenCodeProviderFormToEditor({ setDefault = false, applyToMain = false } = {}) {
+  const nextMap = mergeOpenCodeProviderFormIntoMap(getOpenCodeConfigEditorProviderMap());
+  const providerKey = state.openCodeProviderDetailKey || '';
+  const provider = providerKey ? cloneJson(nextMap[providerKey] || {}) : null;
+  writeOpenCodeConfigEditorProviderMap(nextMap);
+  if (providerKey && provider) {
+    populateOpenCodeProviderEditorForm(provider, providerKey);
+    if (applyToMain || setDefault) applyOpenCodeProviderToMainEditor(providerKey, provider, { setDefault });
+  }
+  return { providerKey, provider };
+}
+
+function deleteOpenCodeProviderFromEditor() {
+  const providerKey = state.openCodeProviderDetailKey || '';
+  if (!providerKey || providerKey === '__new__') {
+    state.openCodeProviderDetailKey = '';
+    return { ok: true, removed: false };
+  }
+  const providerMap = getOpenCodeConfigEditorProviderMap();
+  delete providerMap[providerKey];
+  writeOpenCodeConfigEditorProviderMap(providerMap);
+  if ((el('opCfgProviderKeyInput')?.value || '').trim() === providerKey) {
+    if (el('opCfgProviderKeyInput')) el('opCfgProviderKeyInput').value = '';
+    if (el('opCfgProviderNameInput')) el('opCfgProviderNameInput').value = '';
+    if (el('opCfgBaseUrlInput')) el('opCfgBaseUrlInput').value = '';
+  }
+  delete state.openCodeProviderHealth[providerKey];
+  state.openCodeProviderDraftModels = [];
+  state.openCodeProviderDetailKey = '';
+  return { ok: true, removed: true, providerKey };
+}
+
+function renderOpenCodeProviderManager(currentProviderKey = '') {
+  const providerMap = getOpenCodeConfigEditorProviderMap();
+  const providers = Object.entries(providerMap).map(([key, value]) => ({ key, ...(cloneJson(value || {})) }));
+  if (state.openCodeProviderDetailKey && state.openCodeProviderDetailKey !== '__new__' && !providers.some((provider) => provider.key === state.openCodeProviderDetailKey)) {
+    state.openCodeProviderDetailKey = '';
+  }
+  const query = normalizeStoreText(state.openCodeProviderSearch || '');
+  const visibleProviders = query
+    ? providers.filter((provider) => {
+      const runtime = getOpenCodeProviderRuntimeMeta(provider.key);
+      const haystack = normalizeStoreText([
+        provider.key,
+        provider.name,
+        provider.options?.baseURL,
+        runtime?.baseUrl,
+        ...Object.keys(provider.models || {}),
+        ...(runtime?.modelIds || []),
+      ].filter(Boolean).join(' '));
+      return haystack.includes(query);
+    })
+    : providers;
+  const providerList = el('opCfgProviderList');
+  const providerMeta = el('opProviderListMeta');
+  if (providerMeta) {
+    providerMeta.textContent = query
+      ? `搜索结果 ${visibleProviders.length} / ${providers.length}`
+      : (providers.length ? `共 ${providers.length} 个 Provider，可切默认模型` : '支持多 Provider 列表管理，可切默认模型');
+  }
+  if (providerList) {
+    providerList.innerHTML = visibleProviders.length ? visibleProviders.map((provider) => {
+      const runtime = getOpenCodeProviderRuntimeMeta(provider.key);
+      const isActive = provider.key === currentProviderKey;
+      const isOpen = provider.key === state.openCodeProviderDetailKey;
+      const modelIds = normalizeOpenCodeProviderModelIds([...Object.keys(provider.models || {}), ...(runtime?.modelIds || [])]);
+      const authText = runtime?.maskedApiKey ? runtime.maskedApiKey : runtime?.hasAuth ? `${runtime.authType || 'Auth'} 已登录` : (provider.options?.apiKey ? '已填 Key' : '未配 Key');
+      const authTone = runtime?.maskedApiKey || runtime?.hasAuth || provider.options?.apiKey ? 'ok' : 'warn';
+      const netBadge = openCodeProviderConnectivityLabel(provider.key, provider);
+      return `
+        <div class="provider-card cc-provider-row ${isActive ? 'active' : ''}" data-op-open-provider="${escapeHtml(provider.key)}">
+          <div class="provider-main">
+            <strong>${escapeHtml(provider.name || provider.key)}</strong>
+            <div class="provider-meta">${escapeHtml(provider.key)} · ${escapeHtml(provider.options?.baseURL || runtime?.baseUrl || '默认')} · ${escapeHtml(`${modelIds.length} models`)}</div>
+          </div>
+          <div class="cc-provider-inline-actions">
+            <span class="provider-pill ${authTone}">${escapeHtml(authText)}</span>
+            <span class="provider-pill ${netBadge.tone}">${escapeHtml(netBadge.text)}</span>
+            <button type="button" class="secondary tiny-btn" data-op-provider-action="check" data-op-provider-key="${escapeHtml(provider.key)}">检测</button>
+            <button type="button" class="secondary tiny-btn" data-op-provider-action="apply" data-op-provider-key="${escapeHtml(provider.key)}">载入</button>
+            <button type="button" class="secondary tiny-btn" data-op-provider-action="default" data-op-provider-key="${escapeHtml(provider.key)}">默认</button>
+            <span class="provider-option-model">${escapeHtml(isOpen ? '已展开' : (isActive ? '当前' : '详情'))}</span>
+          </div>
+        </div>
+      `;
+    }).join('') : `<div class="provider-meta">${escapeHtml(query ? '没有匹配的 Provider' : '暂无 Provider')}</div>`;
+  }
+  const detailProvider = state.openCodeProviderDetailKey === '__new__'
+    ? {}
+    : cloneJson(providerMap[state.openCodeProviderDetailKey] || {});
+  const hasDetail = state.openCodeProviderDetailKey === '__new__' || Boolean(state.openCodeProviderDetailKey && providerMap[state.openCodeProviderDetailKey]);
+  const detailPanel = el('opProviderDetailPanel');
+  const detailTitle = el('opProviderDetailTitle');
+  if (detailPanel) detailPanel.classList.toggle('hide', !hasDetail);
+  if (detailTitle) detailTitle.textContent = hasDetail
+    ? `Provider 详情 · ${state.openCodeProviderDetailKey === '__new__' ? '新建 Provider' : (detailProvider.name || state.openCodeProviderDetailKey)}`
+    : 'Provider 详情';
+  if (hasDetail) {
+    populateOpenCodeProviderEditorForm(detailProvider, state.openCodeProviderDetailKey === '__new__' ? '' : state.openCodeProviderDetailKey);
+  } else {
+    state.openCodeProviderDraftModels = [];
+    renderOpenCodeProviderModelChips();
+    renderOpenCodeProviderTestStatus('', null);
+  }
+}
+
 function populateOpenCodeConfigEditor() {
   const data = state.opencodeState || {};
+  const config = cloneJson(data.config || {});
   const active = data.activeProvider || {};
+  const currentProviderKey = data.activeProviderKey || openCodeProviderKeyFromModel(config.model || '') || '';
+  const currentProviderConfig = cloneJson(config.provider?.[currentProviderKey] || {});
   const apiInput = el('opCfgApiKeyInput');
-  el('opCfgModelInput').value = data.model || '';
-  el('opCfgSmallModelInput').value = data.smallModel || '';
-  el('opCfgProviderKeyInput').value = data.activeProviderKey || '';
-  el('opCfgProviderNameInput').value = active.name || '';
-  el('opCfgBaseUrlInput').value = active.baseUrl || '';
+  const setValue = (id, value = '') => {
+    const input = el(id);
+    if (!input) return;
+    input.value = value === null || value === undefined ? '' : String(value);
+  };
+  const setCsv = (id, value) => {
+    setValue(id, Array.isArray(value) ? value.join(', ') : '');
+  };
+  const setBoolSelect = (id, value) => {
+    setValue(id, typeof value === 'boolean' ? String(value) : '');
+  };
+  const setAutoUpdate = (id, value) => {
+    if (value === true || value === false || value === 'notify') {
+      setValue(id, String(value));
+      return;
+    }
+    setValue(id, '');
+  };
+  const setPermissionAction = (id, value) => {
+    setValue(id, typeof value === 'string' ? value : '');
+  };
+
+  el('opCfgModelInput').value = data.model || config.model || '';
+  el('opCfgSmallModelInput').value = data.smallModel || config.small_model || '';
+  el('opCfgProviderKeyInput').value = currentProviderKey;
+  el('opCfgProviderNameInput').value = active.name || currentProviderConfig.name || '';
+  el('opCfgBaseUrlInput').value = active.baseUrl || currentProviderConfig.options?.baseURL || '';
   if (apiInput) {
     apiInput.value = '';
     apiInput.placeholder = active.maskedApiKey || '留空表示保持当前';
   }
-  el('opCfgProviderPackageInput').value = active.npm || '@ai-sdk/openai-compatible';
+  el('opCfgProviderPackageInput').value = active.npm || currentProviderConfig.npm || '@ai-sdk/openai-compatible';
   el('opCfgConfigPath').value = data.configPath || '~/.config/opencode/opencode.json';
   el('opCfgAuthPath').value = data.authPath || '~/.local/share/opencode/auth.json';
   el('opCfgProvidersSummary').value = (data.providers || []).map((provider) => `${provider.key} · ${provider.baseUrl || '默认'} · ${(provider.modelIds || []).length} models`).join('\n') || '暂无';
-  el('opCfgRawJsonTextarea').value = data.configJson || JSON.stringify(data.config || {}, null, 2);
+  if (el('opProviderSearchInput')) el('opProviderSearchInput').value = state.openCodeProviderSearch || '';
+
+  setCsv('opCfgProviderWhitelistInput', currentProviderConfig.whitelist);
+  setCsv('opCfgProviderBlacklistInput', currentProviderConfig.blacklist);
+  setValue('opCfgProviderEnterpriseUrlInput', currentProviderConfig.options?.enterpriseUrl || '');
+  setBoolSelect('opCfgProviderSetCacheKeySelect', currentProviderConfig.options?.setCacheKey);
+  setValue('opCfgProviderTimeoutInput', currentProviderConfig.options?.timeout === false ? 'false' : (currentProviderConfig.options?.timeout || ''));
+  setValue('opCfgProviderChunkTimeoutInput', currentProviderConfig.options?.chunkTimeout || '');
+
+  const agentConfig = cloneJson(config.agent || config.mode || {});
+  setValue('opCfgAgentBuildModelInput', agentConfig.build?.model || '');
+  setValue('opCfgAgentBuildStepsInput', agentConfig.build?.steps || '');
+  setValue('opCfgAgentBuildTemperatureInput', agentConfig.build?.temperature || '');
+  setValue('opCfgAgentPlanModelInput', agentConfig.plan?.model || '');
+  setValue('opCfgAgentPlanStepsInput', agentConfig.plan?.steps || '');
+  setValue('opCfgAgentPlanTemperatureInput', agentConfig.plan?.temperature || '');
+  setValue('opCfgAgentGeneralModelInput', agentConfig.general?.model || '');
+  setValue('opCfgAgentGeneralStepsInput', agentConfig.general?.steps || '');
+  setValue('opCfgAgentGeneralTemperatureInput', agentConfig.general?.temperature || '');
+
+  const permissionConfig = config.permission;
+  const permissionMap = typeof permissionConfig === 'string' ? { '*': permissionConfig } : (permissionConfig && typeof permissionConfig === 'object' ? permissionConfig : {});
+  setPermissionAction('opCfgPermissionDefaultSelect', permissionMap['*']);
+  setPermissionAction('opCfgPermissionReadSelect', permissionMap.read);
+  setPermissionAction('opCfgPermissionEditSelect', permissionMap.edit);
+  setPermissionAction('opCfgPermissionBashSelect', permissionMap.bash);
+  setPermissionAction('opCfgPermissionTaskSelect', permissionMap.task);
+  setPermissionAction('opCfgPermissionGlobSelect', permissionMap.glob);
+  setPermissionAction('opCfgPermissionGrepSelect', permissionMap.grep);
+  setPermissionAction('opCfgPermissionListSelect', permissionMap.list);
+  setPermissionAction('opCfgPermissionWebFetchSelect', permissionMap.webfetch);
+  setPermissionAction('opCfgPermissionWebSearchSelect', permissionMap.websearch);
+  setPermissionAction('opCfgPermissionSkillSelect', permissionMap.skill);
+  setPermissionAction('opCfgPermissionLspSelect', permissionMap.lsp);
+  setPermissionAction('opCfgPermissionQuestionSelect', permissionMap.question);
+
+  setValue('opCfgLogLevel', config.logLevel || '');
+  setValue('opCfgUsernameInput', config.username || '');
+  setValue('opCfgDefaultAgentInput', config.default_agent || '');
+  setValue('opCfgShareSelect', ['manual', 'auto', 'disabled'].includes(config.share) ? config.share : '');
+  setAutoUpdate('opCfgAutoUpdateSelect', config.autoupdate);
+  setBoolSelect('opCfgSnapshotSelect', config.snapshot);
+  setCsv('opCfgDisabledProvidersInput', config.disabled_providers);
+  setCsv('opCfgEnabledProvidersInput', config.enabled_providers);
+  setCsv('opCfgInstructionsInput', config.instructions);
+  setCsv('opCfgPluginListInput', config.plugin);
+
+  setValue('opCfgServerPortInput', config.server?.port || '');
+  setValue('opCfgServerHostnameInput', config.server?.hostname || '');
+  setBoolSelect('opCfgServerMdnsSelect', config.server?.mdns);
+  setValue('opCfgServerMdnsDomainInput', config.server?.mdnsDomain || '');
+  setCsv('opCfgServerCorsInput', config.server?.cors);
+  setValue('opCfgEnterpriseUrlInput', config.enterprise?.url || '');
+  setCsv('opCfgSkillsPathsInput', config.skills?.paths);
+  setCsv('opCfgSkillsUrlsInput', config.skills?.urls);
+  setCsv('opCfgWatcherIgnoreInput', config.watcher?.ignore);
+
+  setBoolSelect('opCfgCompactionAutoSelect', config.compaction?.auto);
+  setBoolSelect('opCfgCompactionPruneSelect', config.compaction?.prune);
+  setValue('opCfgCompactionReservedInput', config.compaction?.reserved || '');
+  setBoolSelect('opCfgExperimentalBatchToolSelect', config.experimental?.batch_tool);
+  setBoolSelect('opCfgExperimentalOpenTelemetrySelect', config.experimental?.openTelemetry);
+  setBoolSelect('opCfgExperimentalContinueOnDenySelect', config.experimental?.continue_loop_on_deny);
+  setBoolSelect('opCfgExperimentalDisablePasteSummarySelect', config.experimental?.disable_paste_summary);
+  setValue('opCfgExperimentalMcpTimeoutInput', config.experimental?.mcp_timeout || '');
+  setCsv('opCfgExperimentalPrimaryToolsInput', config.experimental?.primary_tools);
+
+  writeJsonFragmentInput('opCfgProviderJson', config.provider || {});
+  writeJsonFragmentInput('opCfgAgentJson', config.agent || config.mode || {});
+  writeJsonFragmentInput('opCfgPermissionJson', config.permission);
+  writeJsonFragmentInput('opCfgCommandJson', config.command || {});
+  writeJsonFragmentInput('opCfgMcpJson', config.mcp || {});
+  writeJsonFragmentInput('opCfgFormatterJson', config.formatter);
+  writeJsonFragmentInput('opCfgLspJson', config.lsp);
+  renderOpenCodeProviderManager(currentProviderKey);
+
+  el('opCfgRawJsonTextarea').value = data.configJson || JSON.stringify(config, null, 2);
   syncRawConfigHighlight();
 }
 
@@ -2804,38 +3386,257 @@ function buildOpenCodeConfigFromFields() {
   const current = state.opencodeState || {};
   const existing = cloneJson(current.config || {});
   const inConfigEditor = state.activePage === 'configEditor' && getConfigEditorTool() === 'opencode';
-  const editorModel = el('opCfgModelInput')?.value || '';
-  const quickModel = el('modelSelect')?.value || '';
-  const model = (inConfigEditor ? (editorModel || quickModel || current.model || '') : (quickModel || editorModel || current.model || '')).trim();
-  if (!model) throw new Error('请先填写默认模型');
-  const smallModel = (el('opCfgSmallModelInput')?.value || current.smallModel || '').trim();
-  const editorBaseUrl = el('opCfgBaseUrlInput')?.value || '';
-  const quickBaseUrl = el('baseUrlInput')?.value || '';
+  const _sv = (id) => String(el(id)?.value || '').trim();
+  const _csvArr = (id) => {
+    const raw = _sv(id);
+    if (!raw) return undefined;
+    return raw.split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
+  };
+  const _boolSelect = (id) => {
+    const raw = _sv(id);
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    return undefined;
+  };
+  const _autoUpdate = (id) => {
+    const raw = _sv(id);
+    if (raw === 'true') return true;
+    if (raw === 'false') return false;
+    if (raw === 'notify') return 'notify';
+    return undefined;
+  };
+  const _int = (id, label, { min } = {}) => {
+    const raw = _sv(id);
+    if (!raw) return undefined;
+    const value = Number(raw);
+    if (!Number.isInteger(value)) throw new Error(`${label} 必须是整数`);
+    if (typeof min === 'number' && value < min) throw new Error(`${label} 不能小于 ${min}`);
+    return value;
+  };
+  const _float = (id, label, { min, max } = {}) => {
+    const raw = _sv(id);
+    if (!raw) return undefined;
+    const value = Number(raw);
+    if (!Number.isFinite(value)) throw new Error(`${label} 必须是数字`);
+    if (typeof min === 'number' && value < min) throw new Error(`${label} 不能小于 ${min}`);
+    if (typeof max === 'number' && value > max) throw new Error(`${label} 不能大于 ${max}`);
+    return value;
+  };
+  const _timeoutValue = (id, label, { allowFalse = false } = {}) => {
+    const raw = _sv(id);
+    if (!raw) return undefined;
+    if (allowFalse && raw === 'false') return false;
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value <= 0) throw new Error(`${label} 必须是正整数，或 false`);
+    return value;
+  };
+  const _ensureObject = (value, label) => {
+    if (value === null) return null;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`${label} 需要填写 JSON 对象`);
+    }
+    return cloneJson(value);
+  };
+  const _ensureObjectOrBoolean = (value, label) => {
+    if (value === null || value === false) return value;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`${label} 需要填写 JSON 对象或 false`);
+    }
+    return cloneJson(value);
+  };
+  const _setTop = (key, value) => {
+    setDeepConfigValue(existing, key, value);
+  };
+
+  const editorModel = _sv('opCfgModelInput');
+  const quickModel = _sv('modelSelect');
+  const model = (inConfigEditor ? (editorModel || quickModel || current.model || existing.model || '') : (quickModel || editorModel || current.model || existing.model || '')).trim();
+  const smallModel = (inConfigEditor ? _sv('opCfgSmallModelInput') : (current.smallModel || existing.small_model || _sv('opCfgSmallModelInput') || '')).trim();
+  const editorBaseUrl = _sv('opCfgBaseUrlInput');
+  const quickBaseUrl = _sv('baseUrlInput');
   const baseUrl = normalizeBaseUrl(inConfigEditor ? (editorBaseUrl || quickBaseUrl || current.activeProvider?.baseUrl || '') : (quickBaseUrl || editorBaseUrl || current.activeProvider?.baseUrl || ''));
-  const providerPackage = (el('opCfgProviderPackageInput')?.value || current.activeProvider?.npm || '@ai-sdk/openai-compatible').trim() || '@ai-sdk/openai-compatible';
-  const desiredProviderKey = (el('opCfgProviderKeyInput')?.value || openCodeProviderKeyFromModel(model) || current.activeProviderKey || inferProviderKey(baseUrl)).trim();
+  const providerKeyInput = _sv('opCfgProviderKeyInput');
+  const desiredProviderKey = (providerKeyInput || openCodeProviderKeyFromModel(model) || current.activeProviderKey || inferProviderKey(baseUrl) || '').trim();
   const providerKey = normalizeOpenCodeProviderKey(desiredProviderKey || 'custom');
-  const providerName = (el('opCfgProviderNameInput')?.value || current.activeProvider?.name || inferProviderLabel(baseUrl) || providerKey).trim() || providerKey;
-  const editorApiKey = el('opCfgApiKeyInput')?.value || '';
-  const quickApiKey = el('apiKeyInput')?.value || '';
+  const providerNameInput = _sv('opCfgProviderNameInput');
+  const providerName = (inConfigEditor ? providerNameInput : (current.activeProvider?.name || existing.provider?.[providerKey]?.name || providerNameInput || inferProviderLabel(baseUrl) || providerKey)).trim();
+  const providerPackageInput = _sv('opCfgProviderPackageInput');
+  const providerPackage = (inConfigEditor ? providerPackageInput : (current.activeProvider?.npm || existing.provider?.[providerKey]?.npm || providerPackageInput || '@ai-sdk/openai-compatible')).trim();
+  const editorApiKey = _sv('opCfgApiKeyInput');
+  const quickApiKey = _sv('apiKeyInput');
   const apiKey = (inConfigEditor ? (editorApiKey || quickApiKey || '') : (quickApiKey || editorApiKey || '')).trim();
   const modelParts = model.includes('/') ? model.split('/') : [providerKey, model];
-  const finalProviderKey = normalizeOpenCodeProviderKey(modelParts[0] || providerKey);
-  const modelId = (modelParts.slice(1).join('/') || model).trim();
+  const finalProviderKey = normalizeOpenCodeProviderKey(modelParts[0] || providerKey || 'custom');
+  const modelId = (modelParts.slice(1).join('/') || '').trim();
 
   existing.$schema = existing.$schema || 'https://opencode.ai/config.json';
-  existing.model = `${finalProviderKey}/${modelId}`;
-  if (smallModel) existing.small_model = smallModel; else delete existing.small_model;
-  existing.provider = existing.provider || {};
-  const provider = cloneJson(existing.provider[finalProviderKey] || {});
-  provider.name = providerName;
-  provider.npm = providerPackage;
-  provider.options = { ...(provider.options || {}) };
-  if (baseUrl) provider.options.baseURL = baseUrl; else delete provider.options.baseURL;
-  if (apiKey) provider.options.apiKey = apiKey;
-  provider.models = { ...(provider.models || {}) };
-  provider.models[modelId] = provider.models[modelId] || {};
-  existing.provider[finalProviderKey] = provider;
+  _setTop('model', modelId ? `${finalProviderKey}/${modelId}` : undefined);
+  _setTop('small_model', smallModel || undefined);
+  if (inConfigEditor) {
+    _setTop('logLevel', _sv('opCfgLogLevel') || undefined);
+    _setTop('username', _sv('opCfgUsernameInput') || undefined);
+    _setTop('default_agent', _sv('opCfgDefaultAgentInput') || undefined);
+    _setTop('share', _sv('opCfgShareSelect') || undefined);
+    delete existing.autoshare;
+    _setTop('autoupdate', _autoUpdate('opCfgAutoUpdateSelect'));
+    _setTop('snapshot', _boolSelect('opCfgSnapshotSelect'));
+    _setTop('disabled_providers', _csvArr('opCfgDisabledProvidersInput'));
+    _setTop('enabled_providers', _csvArr('opCfgEnabledProvidersInput'));
+    _setTop('instructions', _csvArr('opCfgInstructionsInput'));
+    _setTop('plugin', _csvArr('opCfgPluginListInput'));
+
+    _setTop('server.port', _int('opCfgServerPortInput', '服务端口', { min: 1 }));
+    _setTop('server.hostname', _sv('opCfgServerHostnameInput') || undefined);
+    _setTop('server.mdns', _boolSelect('opCfgServerMdnsSelect'));
+    _setTop('server.mdnsDomain', _sv('opCfgServerMdnsDomainInput') || undefined);
+    _setTop('server.cors', _csvArr('opCfgServerCorsInput'));
+    _setTop('enterprise.url', _sv('opCfgEnterpriseUrlInput') || undefined);
+    _setTop('skills.paths', _csvArr('opCfgSkillsPathsInput'));
+    _setTop('skills.urls', _csvArr('opCfgSkillsUrlsInput'));
+    _setTop('watcher.ignore', _csvArr('opCfgWatcherIgnoreInput'));
+
+    _setTop('compaction.auto', _boolSelect('opCfgCompactionAutoSelect'));
+    _setTop('compaction.prune', _boolSelect('opCfgCompactionPruneSelect'));
+    _setTop('compaction.reserved', _int('opCfgCompactionReservedInput', '保留 Token', { min: 0 }));
+    _setTop('experimental.batch_tool', _boolSelect('opCfgExperimentalBatchToolSelect'));
+    _setTop('experimental.openTelemetry', _boolSelect('opCfgExperimentalOpenTelemetrySelect'));
+    _setTop('experimental.continue_loop_on_deny', _boolSelect('opCfgExperimentalContinueOnDenySelect'));
+    _setTop('experimental.disable_paste_summary', _boolSelect('opCfgExperimentalDisablePasteSummarySelect'));
+    _setTop('experimental.mcp_timeout', _int('opCfgExperimentalMcpTimeoutInput', 'MCP 超时', { min: 1 }));
+    _setTop('experimental.primary_tools', _csvArr('opCfgExperimentalPrimaryToolsInput'));
+  }
+
+  const providerFragment = inConfigEditor ? readJsonFragmentInput('opCfgProviderJson', 'Provider') : null;
+  let providerMap = providerFragment === null ? cloneJson(existing.provider || {}) : _ensureObject(providerFragment, 'Provider');
+  if (inConfigEditor) providerMap = mergeOpenCodeProviderFormIntoMap(providerMap);
+  const shouldTouchProvider = Boolean(finalProviderKey) && (
+    Object.keys(providerMap || {}).length
+    || model
+    || editorBaseUrl
+    || quickBaseUrl
+    || editorApiKey
+    || quickApiKey
+    || providerKeyInput
+    || providerNameInput
+    || providerPackageInput
+    || _sv('opCfgProviderWhitelistInput')
+    || _sv('opCfgProviderBlacklistInput')
+    || _sv('opCfgProviderEnterpriseUrlInput')
+    || _sv('opCfgProviderSetCacheKeySelect')
+    || _sv('opCfgProviderTimeoutInput')
+    || _sv('opCfgProviderChunkTimeoutInput')
+    || current.activeProviderKey
+  );
+
+  if (shouldTouchProvider) {
+    const provider = cloneJson(providerMap[finalProviderKey] || existing.provider?.[finalProviderKey] || {});
+    if (providerName) provider.name = providerName;
+    else delete provider.name;
+    if (providerPackage) provider.npm = providerPackage;
+    else delete provider.npm;
+    provider.options = { ...(provider.options || {}) };
+    if (baseUrl) provider.options.baseURL = baseUrl;
+    else delete provider.options.baseURL;
+    if (apiKey) provider.options.apiKey = apiKey;
+    if (inConfigEditor) {
+      const whitelist = _csvArr('opCfgProviderWhitelistInput');
+      const blacklist = _csvArr('opCfgProviderBlacklistInput');
+      const providerEnterpriseUrl = _sv('opCfgProviderEnterpriseUrlInput') || undefined;
+      const setCacheKey = _boolSelect('opCfgProviderSetCacheKeySelect');
+      const providerTimeout = _timeoutValue('opCfgProviderTimeoutInput', 'Provider 请求超时', { allowFalse: true });
+      const chunkTimeout = _int('opCfgProviderChunkTimeoutInput', '流式分块超时', { min: 1 });
+      if (whitelist) provider.whitelist = whitelist;
+      else delete provider.whitelist;
+      if (blacklist) provider.blacklist = blacklist;
+      else delete provider.blacklist;
+      if (providerEnterpriseUrl) provider.options.enterpriseUrl = providerEnterpriseUrl;
+      else delete provider.options.enterpriseUrl;
+      if (setCacheKey !== undefined) provider.options.setCacheKey = setCacheKey;
+      else delete provider.options.setCacheKey;
+      if (providerTimeout !== undefined) provider.options.timeout = providerTimeout;
+      else delete provider.options.timeout;
+      if (chunkTimeout !== undefined) provider.options.chunkTimeout = chunkTimeout;
+      else delete provider.options.chunkTimeout;
+    }
+    if (modelId) {
+      provider.models = { ...(provider.models || {}) };
+      provider.models[modelId] = provider.models[modelId] || {};
+    }
+    if (isEmptyConfigValue(provider.options)) delete provider.options;
+    if (isEmptyConfigValue(provider.models)) delete provider.models;
+    if (isEmptyConfigValue(provider)) delete providerMap[finalProviderKey];
+    else providerMap[finalProviderKey] = provider;
+  }
+  _setTop('provider', isEmptyConfigValue(providerMap) ? undefined : providerMap);
+
+  if (inConfigEditor) {
+    const agentFragment = readJsonFragmentInput('opCfgAgentJson', 'Agent');
+    const agentMap = agentFragment === null ? cloneJson(existing.agent || {}) : _ensureObject(agentFragment, 'Agent');
+    [['build', 'Build'], ['plan', 'Plan'], ['general', 'General']].forEach(([agentKey, label]) => {
+      const nextAgent = cloneJson(agentMap[agentKey] || {});
+      const modelValue = _sv(`opCfgAgent${label}ModelInput`) || undefined;
+      const stepsValue = _int(`opCfgAgent${label}StepsInput`, `${label} 步数`, { min: 1 });
+      const temperatureValue = _float(`opCfgAgent${label}TemperatureInput`, `${label} 温度`);
+      if (modelValue) nextAgent.model = modelValue;
+      else delete nextAgent.model;
+      if (stepsValue !== undefined) nextAgent.steps = stepsValue;
+      else delete nextAgent.steps;
+      if (temperatureValue !== undefined) nextAgent.temperature = temperatureValue;
+      else delete nextAgent.temperature;
+      if (isEmptyConfigValue(nextAgent)) delete agentMap[agentKey];
+      else agentMap[agentKey] = nextAgent;
+    });
+    _setTop('agent', isEmptyConfigValue(agentMap) ? undefined : agentMap);
+    delete existing.mode;
+
+    const permissionFragment = readJsonFragmentInput('opCfgPermissionJson', 'Permission');
+    if (permissionFragment !== null && typeof permissionFragment !== 'string' && (!permissionFragment || typeof permissionFragment !== 'object' || Array.isArray(permissionFragment))) {
+      throw new Error('Permission 需要填写 JSON 对象或 ask/allow/deny');
+    }
+    const permissionMap = typeof permissionFragment === 'string'
+      ? { '*': permissionFragment }
+      : permissionFragment === null
+        ? (typeof existing.permission === 'string' ? { '*': existing.permission } : cloneJson(existing.permission || {}))
+        : cloneJson(permissionFragment);
+    [
+      ['*', 'opCfgPermissionDefaultSelect'],
+      ['read', 'opCfgPermissionReadSelect'],
+      ['edit', 'opCfgPermissionEditSelect'],
+      ['bash', 'opCfgPermissionBashSelect'],
+      ['task', 'opCfgPermissionTaskSelect'],
+      ['glob', 'opCfgPermissionGlobSelect'],
+      ['grep', 'opCfgPermissionGrepSelect'],
+      ['list', 'opCfgPermissionListSelect'],
+      ['webfetch', 'opCfgPermissionWebFetchSelect'],
+      ['websearch', 'opCfgPermissionWebSearchSelect'],
+      ['skill', 'opCfgPermissionSkillSelect'],
+      ['lsp', 'opCfgPermissionLspSelect'],
+      ['question', 'opCfgPermissionQuestionSelect'],
+    ].forEach(([permissionKey, inputId]) => {
+      const action = _sv(inputId);
+      if (action) {
+        permissionMap[permissionKey] = action;
+        return;
+      }
+      if (typeof permissionMap[permissionKey] === 'string') {
+        delete permissionMap[permissionKey];
+      }
+    });
+    _setTop('permission', isEmptyConfigValue(permissionMap) ? undefined : permissionMap);
+
+    const commandFragment = readJsonFragmentInput('opCfgCommandJson', 'Command');
+    _setTop('command', commandFragment === null ? undefined : _ensureObject(commandFragment, 'Command'));
+
+    const mcpFragment = readJsonFragmentInput('opCfgMcpJson', 'MCP');
+    _setTop('mcp', mcpFragment === null ? undefined : _ensureObject(mcpFragment, 'MCP'));
+
+    const formatterFragment = readJsonFragmentInput('opCfgFormatterJson', 'Formatter');
+    _setTop('formatter', formatterFragment === null ? undefined : _ensureObjectOrBoolean(formatterFragment, 'Formatter'));
+
+    const lspFragment = readJsonFragmentInput('opCfgLspJson', 'LSP');
+    _setTop('lsp', lspFragment === null ? undefined : _ensureObjectOrBoolean(lspFragment, 'LSP'));
+  }
+
   return existing;
 }
 
@@ -9442,12 +10243,39 @@ function filterOpenClawConfigEditor(root, query) {
   return matched;
 }
 
+function syncConfigEditorSearchPopover() {
+  const popover = el('configEditorSearchBar');
+  const toggleBtn = el('configEditorSearchToggleBtn');
+  const input = el('configEditorSearchInput');
+  const hasQuery = Boolean(String(input?.value || '').trim());
+  if (popover) popover.classList.toggle('hide', !state.configEditorSearchOpen);
+  if (toggleBtn) toggleBtn.classList.toggle('active', state.configEditorSearchOpen || hasQuery);
+}
+
+function openConfigEditorSearchPopover({ focus = true } = {}) {
+  state.configEditorSearchOpen = true;
+  syncConfigEditorSearchPopover();
+  if (focus) requestAnimationFrame(() => el('configEditorSearchInput')?.focus());
+}
+
+function closeConfigEditorSearchPopover({ force = false } = {}) {
+  const hasQuery = Boolean(String(el('configEditorSearchInput')?.value || '').trim());
+  if (!force && hasQuery) {
+    state.configEditorSearchOpen = false;
+    syncConfigEditorSearchPopover();
+    return;
+  }
+  state.configEditorSearchOpen = false;
+  syncConfigEditorSearchPopover();
+}
+
 function applyConfigEditorSearch() {
   const input = el('configEditorSearchInput');
   const clearBtn = el('configEditorSearchClearBtn');
   const empty = el('configEditorSearchEmpty');
   const root = document.querySelector(`[data-tool-editor="${getConfigEditorTool()}"]`);
   const query = normalizeStoreText(input?.value || '');
+  syncConfigEditorSearchPopover();
   if (!root) return;
 
   if (!query) {
@@ -15543,6 +16371,156 @@ function bindEvents() {
       nameInput.value = inferClaudeProviderLabel(normalized || '');
     }
   });
+  el('opCfgProviderList')?.addEventListener('click', async (event) => {
+    const actionBtn = event.target.closest('[data-op-provider-action]');
+    if (actionBtn) {
+      event.preventDefault();
+      event.stopPropagation();
+      const providerKey = actionBtn.dataset.opProviderKey || '';
+      const providerMap = getOpenCodeConfigEditorProviderMap();
+      const provider = cloneJson(providerMap[providerKey] || {});
+      if (!providerKey || isEmptyConfigValue(provider)) return;
+      state.openCodeProviderDetailKey = providerKey;
+      if (actionBtn.dataset.opProviderAction === 'check') {
+        const checked = await testOpenCodeProviderConnectivity(provider, { providerKey, delayMs: 420 });
+        if (!checked.ok) return flash(checked.error || '检测失败', 'error');
+        flash(`Provider「${providerKey}」已连通`, 'success');
+        return;
+      }
+      if (actionBtn.dataset.opProviderAction === 'apply') {
+        applyOpenCodeProviderToMainEditor(providerKey, provider, { setDefault: false });
+        renderOpenCodeProviderManager(getOpenCodeEditorCurrentProviderKey());
+        flash(`已载入 Provider「${providerKey}」`, 'success');
+        return;
+      }
+      if (actionBtn.dataset.opProviderAction === 'default') {
+        applyOpenCodeProviderToMainEditor(providerKey, provider, { setDefault: true });
+        renderOpenCodeProviderManager(getOpenCodeEditorCurrentProviderKey());
+        flash(`已设为默认 Provider「${providerKey}」`, 'success');
+      }
+      return;
+    }
+
+    const row = event.target.closest('[data-op-open-provider]');
+    if (!row) return;
+    const providerKey = row.dataset.opOpenProvider || '';
+    state.openCodeProviderDetailKey = state.openCodeProviderDetailKey === providerKey ? '' : providerKey;
+    renderOpenCodeProviderManager(getOpenCodeEditorCurrentProviderKey());
+  });
+  el('opProviderSearchInput')?.addEventListener('input', (event) => {
+    state.openCodeProviderSearch = String(event.target.value || '').trim();
+    renderOpenCodeProviderManager(getOpenCodeEditorCurrentProviderKey());
+  });
+  el('opProviderOpenCreateBtn')?.addEventListener('click', () => {
+    state.openCodeProviderDetailKey = '__new__';
+    state.openCodeProviderDraftModels = [];
+    renderOpenCodeProviderManager(getOpenCodeEditorCurrentProviderKey());
+  });
+  el('opProviderDetailCloseBtn')?.addEventListener('click', () => {
+    state.openCodeProviderDetailKey = '';
+    state.openCodeProviderDraftModels = [];
+    renderOpenCodeProviderManager(getOpenCodeEditorCurrentProviderKey());
+  });
+  el('opProviderFormApplyBtn')?.addEventListener('click', () => {
+    try {
+      const result = saveOpenCodeProviderFormToEditor({ applyToMain: true });
+      renderOpenCodeProviderManager(result.providerKey || getOpenCodeEditorCurrentProviderKey());
+      if (!result.providerKey) return flash('Provider Key 无效', 'error');
+      flash(`已载入 Provider「${result.providerKey}」`, 'success');
+    } catch (error) {
+      flash(error?.message || '载入失败', 'error');
+    }
+  });
+  el('opProviderFormDefaultBtn')?.addEventListener('click', () => {
+    try {
+      const result = saveOpenCodeProviderFormToEditor({ setDefault: true, applyToMain: true });
+      renderOpenCodeProviderManager(result.providerKey || getOpenCodeEditorCurrentProviderKey());
+      if (!result.providerKey) return flash('Provider Key 无效', 'error');
+      flash(`已设为默认 Provider「${result.providerKey}」`, 'success');
+    } catch (error) {
+      flash(error?.message || '设置失败', 'error');
+    }
+  });
+  el('opProviderFormSaveBtn')?.addEventListener('click', () => {
+    try {
+      const result = saveOpenCodeProviderFormToEditor();
+      renderOpenCodeProviderManager(result.providerKey || getOpenCodeEditorCurrentProviderKey());
+      if (!result.providerKey) return flash('Provider Key 无效', 'error');
+      flash(`Provider「${result.providerKey}」已保存到列表`, 'success');
+    } catch (error) {
+      flash(error?.message || '保存失败', 'error');
+    }
+  });
+  el('opProviderFormDeleteBtn')?.addEventListener('click', () => {
+    const result = deleteOpenCodeProviderFromEditor();
+    renderOpenCodeProviderManager(getOpenCodeEditorCurrentProviderKey());
+    if (!result.removed) return flash('已关闭 Provider 详情', 'success');
+    flash(`Provider「${result.providerKey}」已删除`, 'success');
+  });
+  el('opProviderFormTestBtn')?.addEventListener('click', async () => {
+    setBusy('opProviderFormTestBtn', true, '检测中...');
+    try {
+      const checked = await testOpenCodeProviderConnectivity(null, { delayMs: 180 });
+      setBusy('opProviderFormTestBtn', false);
+      if (!checked.ok) return flash(checked.error || '检测失败', 'error');
+      flash('Provider 已连通', 'success');
+    } catch (error) {
+      setBusy('opProviderFormTestBtn', false);
+      flash(error?.message || '检测失败', 'error');
+    }
+  });
+  el('opProviderModelDetectBtn')?.addEventListener('click', async () => {
+    setBusy('opProviderModelDetectBtn', true, '探测中...');
+    try {
+      const checked = await testOpenCodeProviderConnectivity(null, { delayMs: 180, refreshModels: true });
+      setBusy('opProviderModelDetectBtn', false);
+      if (!checked.ok) return flash(checked.error || '模型探测失败', 'error');
+      flash(`已探测到 ${(checked.data?.models || []).length} 个模型`, 'success');
+    } catch (error) {
+      setBusy('opProviderModelDetectBtn', false);
+      flash(error?.message || '模型探测失败', 'error');
+    }
+  });
+  el('opProviderModelAddBtn')?.addEventListener('click', () => {
+    const input = el('opProviderModelInput');
+    const modelId = String(input?.value || '').trim();
+    if (!modelId) return;
+    setOpenCodeProviderDraftModelIds([...getOpenCodeProviderDraftModelIds(), modelId]);
+    if (input) input.value = '';
+  });
+  el('opProviderModelInput')?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    el('opProviderModelAddBtn')?.click();
+  });
+  el('opProviderModelsClearBtn')?.addEventListener('click', () => {
+    setOpenCodeProviderDraftModelIds([]);
+  });
+  el('opProviderModelsChips')?.addEventListener('click', (event) => {
+    const removeBtn = event.target.closest('[data-op-provider-model-remove]');
+    if (!removeBtn) return;
+    const modelId = removeBtn.dataset.opProviderModelRemove || '';
+    setOpenCodeProviderDraftModelIds(getOpenCodeProviderDraftModelIds().filter((item) => item !== modelId));
+  });
+  el('opProviderFormKey')?.addEventListener('blur', (event) => {
+    event.target.value = normalizeOpenCodeProviderKey(event.target.value || '');
+  });
+  el('opProviderFormModelId')?.addEventListener('blur', (event) => {
+    const modelId = String(event.target.value || '').trim();
+    setOpenCodeProviderDraftModelIds(modelId ? [modelId, ...getOpenCodeProviderDraftModelIds({ includeInput: false })] : getOpenCodeProviderDraftModelIds({ includeInput: false }));
+  });
+  el('opProviderFormBaseUrl')?.addEventListener('blur', (event) => {
+    const normalized = normalizeBaseUrl(event.target.value || '');
+    event.target.value = normalized;
+    const keyInput = el('opProviderFormKey');
+    if (keyInput && !keyInput.value.trim()) {
+      keyInput.value = normalizeOpenCodeProviderKey(inferProviderKey(normalized || ''));
+    }
+    const nameInput = el('opProviderFormName');
+    if (nameInput && !nameInput.value.trim()) {
+      nameInput.value = inferProviderLabel(normalized || '');
+    }
+  });
   document.querySelectorAll('[data-page-target]').forEach((node) => {
     if (node.dataset.pageTarget === '__wizard__') return; // handled separately
     node.addEventListener('click', () => {
@@ -15866,7 +16844,20 @@ function bindEvents() {
     refreshRawCodeEditors();
   });
 
+  el('configEditorSearchToggleBtn')?.addEventListener('click', () => {
+    if (state.configEditorSearchOpen) {
+      closeConfigEditorSearchPopover();
+      return;
+    }
+    openConfigEditorSearchPopover({ focus: true });
+  });
   el('configEditorSearchInput')?.addEventListener('input', applyConfigEditorSearch);
+  el('configEditorSearchInput')?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    closeConfigEditorSearchPopover({ force: true });
+    el('configEditorSearchToggleBtn')?.focus();
+  });
   el('configEditorSearchClearBtn')?.addEventListener('click', () => {
     const input = el('configEditorSearchInput');
     if (!input) return;
@@ -15874,6 +16865,12 @@ function bindEvents() {
     applyConfigEditorSearch();
     input.focus();
   });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('#configEditorSearchAnchor')) {
+      closeConfigEditorSearchPopover();
+    }
+  });
+  syncConfigEditorSearchPopover();
   Object.entries(CONFIG_NUMBER_FIELDS).forEach(([inputId, spec]) => {
     el(inputId).addEventListener('input', () => {
       syncConfigNumberField(inputId, 'input');
