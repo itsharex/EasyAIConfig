@@ -3810,13 +3810,21 @@ fn normalize_windows_cmd_path(raw: &str) -> String {
 
 fn build_windows_binary_command(binary_path: &str, args: &[String], fallback_binary: &str) -> String {
   let normalized = normalize_windows_cmd_path(binary_path);
+  let lower = normalized.to_ascii_lowercase();
+
+  if !fallback_binary.trim().is_empty() && command_exists(fallback_binary).is_some() {
+    let mut parts = vec![fallback_binary.to_string()];
+    parts.extend(args.iter().map(|arg| quote_windows_cmd_arg(arg)));
+    return parts.join(" ");
+  }
+
   if normalized.trim().is_empty() {
     let mut parts = vec![fallback_binary.to_string()];
     parts.extend(args.iter().map(|arg| quote_windows_cmd_arg(arg)));
     return parts.join(" ");
   }
 
-  if normalized.to_ascii_lowercase().ends_with(".ps1") {
+  if lower.ends_with(".ps1") {
     let mut parts = vec![
       "powershell.exe".to_string(),
       "-NoProfile".to_string(),
@@ -3830,7 +3838,11 @@ fn build_windows_binary_command(binary_path: &str, args: &[String], fallback_bin
     return parts.join(" ");
   }
 
-  let mut parts = vec![quote_windows_cmd_arg(&normalized)];
+  let mut parts = Vec::new();
+  if lower.ends_with(".cmd") || lower.ends_with(".bat") {
+    parts.push("call".to_string());
+  }
+  parts.push(quote_windows_cmd_arg(&normalized));
   parts.extend(args.iter().map(|arg| quote_windows_cmd_arg(arg)));
   parts.join(" ")
 }
@@ -4971,7 +4983,7 @@ pub(crate) fn launch_openclaw(body: &Value) -> Result<Value, String> {
 
   let bin_path = binary.get("path").and_then(Value::as_str).unwrap_or("openclaw");
   let command = if cfg!(target_os = "windows") {
-    format!("{} gateway --force", quote_windows_cmd_arg(&normalize_windows_cmd_path(bin_path)))
+    build_windows_binary_command(bin_path, &["gateway".to_string(), "--force".to_string()], "openclaw")
   } else {
     format!("{} gateway --force", bin_path)
   };
