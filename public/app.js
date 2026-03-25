@@ -444,10 +444,13 @@ async function loadTools() {
     const json = await api('/api/tools');
     if (json.ok && json.data) {
       state.tools = ensureKnownTools(json.data);
+      renderStatus();
       renderToolsPage();
       updateToolSelector();
       await loadOpenCodeDesktopState({ render: false }).catch(() => {});
       await loadOpenCodeEcosystemState({ render: false }).catch(() => {});
+      renderCurrentConfig();
+      renderToolConsole();
       if (state.activePage === 'tools') renderToolsPage();
     }
   } catch { /* silent */ }
@@ -3161,8 +3164,16 @@ function populateOpenCodeConfigEditor() {
   syncRawConfigHighlight();
 }
 
+function getToolBinaryStatus(toolId = '', runtimeBinary = null) {
+  const detectedBinary = state.tools.find((tool) => tool.id === toolId)?.binary || null;
+  const runtime = runtimeBinary && typeof runtimeBinary === 'object' ? runtimeBinary : null;
+  if (runtime?.installed) return { ...(detectedBinary || {}), ...runtime };
+  if (detectedBinary?.installed) return { ...(runtime || {}), ...detectedBinary };
+  return runtime || detectedBinary || { installed: false };
+}
+
 function isCodexInstalled() {
-  return Boolean(state.current?.codexBinary?.installed || state.tools.find((tool) => tool.id === 'codex')?.binary?.installed);
+  return Boolean(getToolBinaryStatus('codex', state.current?.codexBinary).installed);
 }
 
 function isClaudeCodeInstalled(data = state.claudeCodeState || {}) {
@@ -7209,13 +7220,14 @@ function deriveOpenClawDashboardAuthDiagnostics(data = {}, lastRepair = null) {
 
 function buildCodexConsoleView() {
   const data = state.current || {};
+  const codexBinary = getToolBinaryStatus('codex', data.codexBinary);
   const providers = data.providers || [];
   const active = data.activeProvider || null;
   const login = data.login || {};
   const health = active ? state.providerHealth[active.key] : null;
   const issues = [];
 
-  if (!data.codexBinary?.installed) {
+  if (!codexBinary.installed) {
     issues.push({ tone: 'error', title: 'Codex 未安装', copy: '还没检测到 codex 命令，先去"工具安装"里安装。', action: { type: 'goto-page', page: 'tools', label: '去安装' } });
   }
   if (!data.configExists) {
@@ -7235,7 +7247,7 @@ function buildCodexConsoleView() {
   }
 
   const summary = [
-    renderToolConsoleStat('安装状态', data.codexBinary?.installed ? (data.codexBinary.version || '已安装') : '未安装', data.codexBinary?.path ? `<span class="tool-console-code">${escapeHtml(data.codexBinary.path)}</span>` : '', { icon: 'install' }),
+    renderToolConsoleStat('安装状态', codexBinary.installed ? (codexBinary.version || '已安装') : '未安装', codexBinary.path ? `<span class="tool-console-code">${escapeHtml(codexBinary.path)}</span>` : '', { icon: 'install' }),
     renderToolConsoleStat('作用域', data.scope === 'project' ? '项目级' : '全局', data.rootPath ? `<span class="tool-console-code">${escapeHtml(data.rootPath)}</span>` : '', { icon: 'scope' }),
     renderToolConsoleStat('活动 Provider', active?.name || (login.loggedIn ? 'OpenAI 官方登录' : '未选择'), active?.baseUrl ? `<span class="tool-console-code">${escapeHtml(active.baseUrl)}</span>` : login.loggedIn ? (login.plan || login.email || 'ChatGPT / OpenAI 认证已就绪') : '还没有可用 Provider', { icon: 'provider' }),
     renderToolConsoleStat('健康检测', active ? (health?.loading ? '检测中' : health?.checked ? (health.ok ? '通过' : '失败') : '未检测') : login.loggedIn ? '已登录' : '未检测', active ? `模型：${escapeHtml(data.summary?.model || '-')}` : login.loggedIn ? '官方登录模式通常无需额外 Provider' : '先保存 Provider 再检测', { icon: 'health' }),
@@ -7523,7 +7535,7 @@ function buildOpenClawConsoleView() {
 function getToolStatusDot(tool) {
   if (tool === 'codex') {
     const data = state.current || {};
-    if (!data.codexBinary?.installed) return 'error';
+    if (!getToolBinaryStatus('codex', data.codexBinary).installed) return 'error';
     const active = data.activeProvider;
     const login = data.login || {};
     if (active) {
@@ -13455,7 +13467,7 @@ function renderAppUpdateStatus() {
 
 function renderStatus() {
   renderAppUpdateStatus();
-  const codex = state.current?.codexBinary || { installed: false };
+  const codex = getToolBinaryStatus('codex', state.current?.codexBinary);
 
   // Sidebar badge
   const pill = el('codexPill');
@@ -13694,6 +13706,7 @@ function renderCurrentConfig() {
     renderQuickRailSupportPanel();
     return;
   }
+  applyCodexQuickInstallState();
   const active = state.current?.activeProvider || null;
   const login = state.current?.login || {};
   const model = state.current?.summary?.model || el('modelSelect').value || '未选择模型';
@@ -14525,13 +14538,30 @@ async function saveClaudeCodeConfigOnly() {
   flash(`Claude Code 配置已保存，当前 Provider：${providerLabel}`, 'success');
 }
 
+function getCodexLaunchCredentialWarning() {
+  const data = state.current || {};
+  const active = data.activeProvider || null;
+  const providers = Array.isArray(data.providers) ? data.providers : [];
+  const login = data.login || {};
+
+  if (active) {
+    if (active.hasApiKey) return '';
+    return `当前 Provider「${active.name || active.key || '当前'}」还没配置 API Key；如果继续启动，通常无法直接请求模型。`;
+  }
+
+  if (providers.some((provider) => provider.hasApiKey)) return '';
+  if (login.loggedIn) return '';
+  return '当前还没有配置 API Key，也没有官方登录态；继续启动后通常无法直接请求模型。';
+}
+
 async function launchCodex(buttonId = 'launchBtn', successMessage = 'Codex 已启动') {
-  const codexInstalled = state.current?.codexBinary?.installed;
+  const codexInstalled = isCodexInstalled();
   if (!codexInstalled) {
     const installed = await installCodex({ silent: true });
     if (!installed) return false;
   }
 
+  const credentialWarning = getCodexLaunchCredentialWarning();
   setBusy(buttonId, true, '启动中...');
   const launched = await api('/api/codex/launch', {
     method: 'POST',
@@ -14543,12 +14573,13 @@ async function launchCodex(buttonId = 'launchBtn', successMessage = 'Codex 已�
     flash(launched.error || '启动失败', 'error');
     return false;
   }
-  flash(successMessage, 'success');
+  const launchMessage = launched.data?.message || successMessage;
+  flash(credentialWarning ? `${launchMessage}；注意：${credentialWarning}` : launchMessage, credentialWarning ? 'warning' : 'success');
   return true;
 }
 
 async function launchCodexLogin(buttonId = '') {
-  const codexInstalled = state.current?.codexBinary?.installed;
+  const codexInstalled = isCodexInstalled();
   if (!codexInstalled) {
     const installed = await installCodex({ silent: true });
     if (!installed) return false;
@@ -14565,7 +14596,8 @@ async function launchCodexLogin(buttonId = '') {
     flash(launched.error || '启动官方登录失败', 'error');
     return false;
   }
-  flash('已在终端中打开 codex login，完成浏览器授权后点“重新检测登录状态”', 'success');
+  const launchMessage = launched.data?.message || '已在终端中打开 codex login';
+  flash(`${launchMessage}，完成浏览器授权后点“重新检测登录状态”`, 'success');
   return true;
 }
 

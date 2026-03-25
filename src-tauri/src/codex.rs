@@ -2340,7 +2340,7 @@ pub(crate) fn login_codex(body: &Value) -> Result<Value, String> {
     .filter(|text| !text.trim().is_empty())
     .unwrap_or("codex");
   let command = if cfg!(target_os = "windows") {
-    format!("{} login", quote_windows_cmd_arg(&normalize_windows_cmd_path(binary_path)))
+    build_windows_binary_command(binary_path, &["login".to_string()], "codex")
   } else {
     format!("\"{}\" login", binary_path.replace('"', "\\\""))
   };
@@ -3770,7 +3770,7 @@ fn launch_terminal_command(cwd: &Path, command_text: &str, tool_label: &str) -> 
       .arg(command_text)
       .spawn()
       .map_err(|error| error.to_string())?;
-    return Ok(format!("{} 已在新命令窗口中启动", tool_label));
+    return Ok(format!("{} 已通过 CMD（命令提示符）新窗口启动", tool_label));
   }
 
   let terminals = vec![
@@ -4046,7 +4046,7 @@ pub(crate) fn login_claudecode(body: &Value) -> Result<Value, String> {
     .filter(|text| !text.trim().is_empty())
     .unwrap_or("claude");
   let command = if cfg!(target_os = "windows") {
-    format!("{} auth login", quote_windows_cmd_arg(&normalize_windows_cmd_path(binary_path)))
+    build_windows_binary_command(binary_path, &["auth".to_string(), "login".to_string()], "claude")
   } else {
     format!("\"{}\" auth login", binary_path.replace('"', "\\\""))
   };
