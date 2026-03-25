@@ -188,7 +188,12 @@ jobs:
 
       - name: Install tools
         if: steps.r2.outputs.enabled == 'true'
-        run: sudo apt-get update && sudo apt-get install -y jq awscli
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq python3-pip
+          python3 -m pip install --user awscli
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Download release assets
         if: steps.r2.outputs.enabled == 'true'
