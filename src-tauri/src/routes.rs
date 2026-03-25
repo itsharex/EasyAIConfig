@@ -2,7 +2,8 @@ use serde_json::{json, Value};
 
 use crate::codex::{
   check_setup_environment, codex_npm_action, get_codex_release_info, launch_codex,
-  login_codex, get_codex_usage_metrics,
+  login_codex, get_codex_usage_metrics, list_codex_sessions, get_codex_session_detail,
+  resume_codex_session, fork_codex_session, export_codex_session,
   list_tools, load_claudecode_state, save_claudecode_config, save_claudecode_raw_config,
   launch_claudecode, login_claudecode, load_opencode_state, save_opencode_config,
   save_opencode_raw_config, install_opencode, reinstall_opencode, update_opencode,
@@ -44,6 +45,11 @@ async fn dispatch(app: tauri::AppHandle, path: &str, method: &str, query: &Value
     ("/api/codex/uninstall", "POST") => codex_npm_action(&["uninstall", "-g", OPENAI_CODEX_PACKAGE]),
     ("/api/codex/launch", "POST") => launch_codex(body),
     ("/api/codex/login", "POST") => login_codex(body),
+    ("/api/codex/sessions", "GET") => list_codex_sessions(query),
+    ("/api/codex/session-detail", "GET") => get_codex_session_detail(query),
+    ("/api/codex/resume", "POST") => resume_codex_session(body),
+    ("/api/codex/fork", "POST") => fork_codex_session(body),
+    ("/api/codex/session-export", "POST") => export_codex_session(body),
     ("/api/dashboard/codex-usage", "GET") => get_codex_usage_metrics(query),
     ("/api/claudecode/state", "GET") => load_claudecode_state(query),
     ("/api/claudecode/config-save", "POST") => save_claudecode_config(body),

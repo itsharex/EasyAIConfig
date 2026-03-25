@@ -71,6 +71,37 @@ fn create_backup(paths: &ScopePaths) -> Result<String, String> {
   Ok(target_dir.to_string_lossy().to_string())
 }
 
+fn launch_platform_id() -> &'static str {
+  if cfg!(target_os = "windows") {
+    "win32"
+  } else if cfg!(target_os = "macos") {
+    "darwin"
+  } else {
+    "linux"
+  }
+}
+
+fn launch_terminal_profiles() -> Value {
+  if cfg!(target_os = "windows") {
+    return json!([
+      { "id": "auto", "label": "自动选择（推荐）" },
+      { "id": "windows-terminal", "label": "Windows Terminal" },
+      { "id": "powershell-7", "label": "PowerShell 7" },
+      { "id": "powershell", "label": "Windows PowerShell" },
+      { "id": "cmd", "label": "命令提示符 CMD" }
+    ]);
+  }
+  if cfg!(target_os = "macos") {
+    return json!([
+      { "id": "auto", "label": "自动选择（推荐）" },
+      { "id": "terminal", "label": "系统终端" },
+      { "id": "iterm", "label": "iTerm" },
+      { "id": "termius", "label": "Termius" }
+    ]);
+  }
+  json!([])
+}
+
 
 pub(crate) fn load_state(query: &Value) -> Result<Value, String> {
   let query_object = parse_json_object(query);
@@ -141,6 +172,8 @@ pub(crate) fn load_state(query: &Value) -> Result<Value, String> {
         home_dir()?.to_string_lossy().to_string()
       },
       "ready": codex_binary.get("installed").and_then(Value::as_bool).unwrap_or(false),
+      "platform": launch_platform_id(),
+      "terminalProfiles": launch_terminal_profiles(),
     }
   }))
 }

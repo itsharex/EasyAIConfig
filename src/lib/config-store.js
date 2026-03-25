@@ -2382,34 +2382,227 @@ ${commandText}
   return launcherPath;
 }
 
-function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabel = 'Codex', commandText = '' } = {}) {
-  const bin = commandText || binaryPath || binaryName;
-  const escapedCwd = String(cwd).replace(/([\\"$])/g, '\\$1');
-  const escapedBin = String(bin).replace(/([\\"$])/g, '\\$1');
-  const windowsBin = commandText || (binaryPath ? buildWindowsBinaryCommand(binaryPath, [], binaryName) : bin);
+function writeWindowsPowerShellLauncher(cwd, commandText) {
+  const launcherDir = path.join(os.tmpdir(), 'easy-ai-config', 'launchers');
+  mkdirSync(launcherDir, { recursive: true });
+  const launcherPath = path.join(launcherDir, `launch-${crypto.randomUUID()}.ps1`);
+  const escapedCwd = String(normalizeWindowsCmdPath(cwd)).replace(/'/g, "''");
+  const escapedCommand = String(commandText || '').replace(/'/g, "''");
+  const script = [
+    `$ErrorActionPreference = 'Continue'`,
+    `Set-Location -LiteralPath '${escapedCwd}'`,
+    `Invoke-Expression '${escapedCommand}'`,
+  ].join('\r\n');
+  const bom = Buffer.from([0xFF, 0xFE]);
+  const content = Buffer.from(script, 'utf16le');
+  writeFileSync(launcherPath, Buffer.concat([bom, content]));
+  return launcherPath;
+}
 
-  if (process.platform === 'darwin') {
+function firstWindowsExistingPath(candidates = []) {
+  for (const candidate of candidates) {
+    const target = String(candidate || '').trim();
+    if (!target) continue;
+    if (existsSync(target)) return target;
+  }
+  return '';
+}
+
+function firstWindowsCommand(commands = []) {
+  for (const command of commands) {
+    const found = commandExists(command);
+    if (found) return normalizeWindowsCmdPath(found);
+  }
+  return '';
+}
+
+function listDarwinTerminalProfiles() {
+  if (process.platform !== 'darwin') return [];
+
+  const homeApplications = path.join(os.homedir(), 'Applications');
+  const wezterm = commandExists('wezterm');
+  const ghostty = commandExists('ghostty');
+  const alacritty = commandExists('alacritty');
+  const kitty = commandExists('kitty');
+
+  const profiles = [
+    { id: 'auto', label: '自动选择（推荐）', available: true, command: '' },
+    {
+      id: 'terminal',
+      label: 'Terminal.app',
+      available: Boolean(firstExistingPath([
+        '/System/Applications/Utilities/Terminal.app',
+        '/Applications/Utilities/Terminal.app',
+      ])),
+      command: 'Terminal',
+    },
+    {
+      id: 'iterm',
+      label: 'iTerm',
+      available: Boolean(firstExistingPath([
+        '/Applications/iTerm.app',
+        '/Applications/iTerm2.app',
+        path.join(homeApplications, 'iTerm.app'),
+        path.join(homeApplications, 'iTerm2.app'),
+      ])),
+      command: 'iTerm',
+    },
+    { id: 'wezterm', label: 'WezTerm', available: Boolean(wezterm), command: wezterm || '' },
+    { id: 'ghostty', label: 'Ghostty', available: Boolean(ghostty), command: ghostty || '' },
+    { id: 'alacritty', label: 'Alacritty', available: Boolean(alacritty), command: alacritty || '' },
+    { id: 'kitty', label: 'kitty', available: Boolean(kitty), command: kitty || '' },
+  ];
+
+  return profiles
+    .filter((profile) => profile.id === 'auto' || profile.available)
+    .map((profile) => ({ id: profile.id, label: profile.label, command: profile.command, available: profile.available }));
+}
+
+function escapeAppleScriptText(value = '') {
+  return String(value || '').replace(/\\/g, '\\\\').replace(/\"/g, '\\\"');
+}
+
+function resolveDarwinTerminalProfile(profileId = 'auto') {
+  const profiles = listDarwinTerminalProfiles();
+  const requested = profiles.find((profile) => profile.id === String(profileId || 'auto').trim());
+  if (requested && requested.id !== 'auto') return requested;
+  return profiles.find((profile) => profile.id === 'iterm')
+    || profiles.find((profile) => profile.id === 'terminal')
+    || profiles.find((profile) => profile.id === 'wezterm')
+    || profiles.find((profile) => profile.id === 'ghostty')
+    || profiles.find((profile) => profile.id !== 'auto')
+    || { id: 'terminal', label: 'Terminal.app', command: 'Terminal', available: true };
+}
+
+function launchDarwinTerminal(cwd, commandText, { toolLabel = 'Codex', terminalProfile = 'auto' } = {}) {
+  const profile = resolveDarwinTerminalProfile(terminalProfile);
+  const normalizedCwd = String(cwd || '').trim() || process.cwd();
+  const shellCommand = `cd ${quotePosixShellArg(normalizedCwd)} && ${commandText}`;
+
+  if (profile.id === 'terminal') {
     const appleScript = [
       'tell application "Terminal"',
       'activate',
-      `do script "cd ${escapedCwd} && ${escapedBin}"`,
+      `do script "${escapeAppleScriptText(shellCommand)}"`,
       'end tell',
     ].join('\n');
     const result = spawnSync('osascript', ['-e', appleScript], { encoding: 'utf8' });
     if (result.status !== 0) {
       throw new Error((result.stderr || result.stdout || 'Failed to open Terminal').trim());
     }
-    return `${toolLabel} 已在 Terminal 中启动`;
+    return `${toolLabel} 已在 ${profile.label} 中启动`;
+  }
+
+  if (profile.id === 'iterm') {
+    const appleScript = [
+      'tell application "iTerm"',
+      'activate',
+      'create window with default profile',
+      `tell current session of current window to write text "${escapeAppleScriptText(shellCommand)}"`,
+      'end tell',
+    ].join('\n');
+    const result = spawnSync('osascript', ['-e', appleScript], { encoding: 'utf8' });
+    if (result.status !== 0) {
+      throw new Error((result.stderr || result.stdout || 'Failed to open iTerm').trim());
+    }
+    return `${toolLabel} 已在 ${profile.label} 中启动`;
+  }
+
+  const terminalMap = {
+    wezterm: [profile.command || 'wezterm', ['start', '--cwd', normalizedCwd, '--', 'bash', '-lc', shellCommand]],
+    ghostty: [profile.command || 'ghostty', ['--working-directory', normalizedCwd, '-e', 'bash', '-lc', shellCommand]],
+    alacritty: [profile.command || 'alacritty', ['--working-directory', normalizedCwd, '-e', 'bash', '-lc', shellCommand]],
+    kitty: [profile.command || 'kitty', ['--directory', normalizedCwd, 'bash', '-lc', shellCommand]],
+  };
+  const [command, args] = terminalMap[profile.id] || [];
+  if (!command) {
+    throw new Error(`当前终端 ${profile.label} 暂不支持自动启动命令`);
+  }
+  const child = spawn(command, args, { detached: true, stdio: 'ignore' });
+  child.unref();
+  return `${toolLabel} 已在 ${profile.label} 中启动`;
+}
+
+export function listWindowsTerminalProfiles() {
+  if (process.platform !== 'win32') return [];
+
+  const localAppData = process.env.LOCALAPPDATA?.trim() || path.join(os.homedir(), 'AppData', 'Local');
+  const programFiles = process.env.ProgramFiles?.trim() || 'C:\\Program Files';
+  const programFilesX86 = process.env['ProgramFiles(x86)']?.trim() || 'C:\\Program Files (x86)';
+
+  const profiles = [
+    { id: 'auto', label: '自动选择（推荐）', command: '', available: true },
+    { id: 'windows-terminal', label: 'Windows Terminal', command: firstWindowsCommand(['wt.exe', 'wt']) || firstWindowsExistingPath([path.join(localAppData, 'Microsoft', 'WindowsApps', 'wt.exe')]), available: false },
+    { id: 'powershell-7', label: 'PowerShell 7', command: firstWindowsCommand(['pwsh.exe', 'pwsh']), available: false },
+    { id: 'powershell', label: 'Windows PowerShell', command: firstWindowsCommand(['powershell.exe', 'powershell']), available: false },
+    { id: 'cmd', label: '命令提示符 CMD', command: firstWindowsCommand(['cmd.exe', 'cmd']) || 'cmd.exe', available: true },
+    { id: 'wezterm', label: 'WezTerm', command: firstWindowsCommand(['wezterm.exe', 'wezterm']) || firstWindowsExistingPath([
+      path.join(localAppData, 'Programs', 'WezTerm', 'wezterm-gui.exe'),
+      path.join(programFiles, 'WezTerm', 'wezterm-gui.exe'),
+      path.join(programFilesX86, 'WezTerm', 'wezterm-gui.exe'),
+    ]), available: false },
+  ];
+
+  return profiles
+    .map((profile) => ({ ...profile, available: Boolean(profile.available || profile.command) }))
+    .filter((profile) => profile.id === 'auto' || profile.available)
+    .map((profile) => ({ id: profile.id, label: profile.label, command: profile.command, available: profile.available }));
+}
+
+function resolveWindowsTerminalProfile(profileId = 'auto') {
+  const profiles = listWindowsTerminalProfiles();
+  const requested = profiles.find((profile) => profile.id === String(profileId || 'auto').trim());
+  if (requested && requested.id !== 'auto') return requested;
+  return profiles.find((profile) => profile.id === 'windows-terminal')
+    || profiles.find((profile) => profile.id === 'powershell-7')
+    || profiles.find((profile) => profile.id === 'powershell')
+    || profiles.find((profile) => profile.id === 'cmd')
+    || profiles.find((profile) => profile.id !== 'auto')
+    || { id: 'cmd', label: '命令提示符 CMD', command: 'cmd.exe', available: true };
+}
+
+function launchWindowsTerminal(cwd, commandText, { toolLabel = 'Codex', terminalProfile = 'auto' } = {}) {
+  const profile = resolveWindowsTerminalProfile(terminalProfile);
+  const launcherCmdPath = writeWindowsTerminalLauncher(cwd, commandText);
+  const normalizedCwd = normalizeWindowsCmdPath(cwd);
+  const normalizedCmdLauncher = normalizeWindowsCmdPath(launcherCmdPath);
+
+  let command = 'cmd.exe';
+  let args = ['/c', 'start', '', 'cmd.exe', '/d', '/k', quoteWindowsCmdArg(normalizedCmdLauncher)];
+
+  if (profile.id === 'windows-terminal') {
+    command = profile.command || 'wt.exe';
+    args = ['-d', normalizedCwd, 'cmd.exe', '/d', '/k', normalizedCmdLauncher];
+  } else if (profile.id === 'powershell-7' || profile.id === 'powershell') {
+    const psLauncherPath = writeWindowsPowerShellLauncher(cwd, commandText);
+    command = profile.command || (profile.id === 'powershell-7' ? 'pwsh.exe' : 'powershell.exe');
+    args = ['-NoExit', '-ExecutionPolicy', 'Bypass', '-File', normalizeWindowsCmdPath(psLauncherPath)];
+  } else if (profile.id === 'wezterm') {
+    command = profile.command || 'wezterm.exe';
+    args = ['start', '--cwd', normalizedCwd, 'cmd.exe', '/d', '/k', normalizedCmdLauncher];
+  }
+
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: false,
+  });
+  child.unref();
+  return `${toolLabel} 已在 ${profile.label} 中启动`;
+}
+
+function launchTerminalCommand(cwd, { binaryPath, binaryName = 'codex', toolLabel = 'Codex', commandText = '', terminalProfile = 'auto' } = {}) {
+  const bin = commandText || binaryPath || binaryName;
+  const escapedCwd = String(cwd).replace(/([\\"$])/g, '\\$1');
+  const escapedBin = String(bin).replace(/([\\"$])/g, '\\$1');
+  const windowsBin = commandText || (binaryPath ? buildWindowsBinaryCommand(binaryPath, [], binaryName) : bin);
+
+  if (process.platform === 'darwin') {
+    return launchDarwinTerminal(cwd, escapedBin, { toolLabel, terminalProfile });
   }
 
   if (process.platform === 'win32') {
-    const launcherPath = writeWindowsTerminalLauncher(cwd, windowsBin);
-    const child = spawn('cmd.exe', ['/c', 'start', '', 'cmd.exe', '/d', '/k', quoteWindowsCmdArg(normalizeWindowsCmdPath(launcherPath))], {
-      detached: true,
-      stdio: 'ignore',
-    });
-    child.unref();
-    return `${toolLabel} 已在新命令窗口中启动`;
+    return launchWindowsTerminal(cwd, windowsBin, { toolLabel, terminalProfile });
   }
 
   const terminals = [
@@ -2746,6 +2939,12 @@ export async function loadState({ scope = 'global', projectPath = '', codexHome 
     launch: {
       cwd: scope === 'project' ? paths.rootPath : process.cwd(),
       ready: codexBinary.installed,
+      platform: process.platform,
+      terminalProfiles: process.platform === 'win32'
+        ? listWindowsTerminalProfiles()
+        : process.platform === 'darwin'
+          ? listDarwinTerminalProfiles()
+          : [],
     },
   }
 }
@@ -3069,7 +3268,167 @@ export async function uninstallCodex() {
   return codexNpmAction(['uninstall', '-g', OPENAI_CODEX_PACKAGE]);
 }
 
-export async function launchCodex({ cwd } = {}) {
+function normalizeCodexSessionPreview(text = '', fallback = '未命名会话') {
+  const collapsed = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!collapsed) return fallback;
+  return collapsed.length > 72 ? `${collapsed.slice(0, 72)}…` : collapsed;
+}
+
+function extractCodexUserMessagePreview(event = {}) {
+  if (event.type === 'event_msg' && event.payload?.type === 'user_message') {
+    return normalizeCodexSessionPreview(event.payload?.message || '');
+  }
+  if (event.type === 'response_item' && event.payload?.type === 'message' && event.payload?.role === 'user') {
+    const content = Array.isArray(event.payload?.content) ? event.payload.content : [];
+    const joined = content
+      .filter((item) => item?.type === 'input_text')
+      .map((item) => String(item.text || '').trim())
+      .filter(Boolean)
+      .join(' ');
+    return normalizeCodexSessionPreview(joined);
+  }
+  return '';
+}
+
+function isSameOrNestedPath(left = '', right = '') {
+  const a = String(left || '').trim();
+  const b = String(right || '').trim();
+  if (!a || !b) return false;
+  const leftPath = path.resolve(a);
+  const rightPath = path.resolve(b);
+  if (leftPath === rightPath) return true;
+  const leftPrefix = `${leftPath}${path.sep}`;
+  const rightPrefix = `${rightPath}${path.sep}`;
+  return leftPath.startsWith(rightPrefix) || rightPath.startsWith(leftPrefix);
+}
+
+async function readCodexSessionSummary(filePath) {
+  let raw = '';
+  let stat = null;
+  try {
+    [raw, stat] = await Promise.all([fs.readFile(filePath, 'utf8'), fs.stat(filePath)]);
+  } catch {
+    return null;
+  }
+
+  let sessionId = '';
+  let cwd = '';
+  let provider = '';
+  let model = '';
+  let title = '';
+
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let event = null;
+    try { event = JSON.parse(line); } catch { continue; }
+
+    if (event.type === 'session_meta') {
+      sessionId = String(event.payload?.id || sessionId || '').trim();
+      cwd = String(event.payload?.cwd || cwd || '').trim();
+      provider = String(event.payload?.model_provider || provider || '').trim();
+      const metaModel = String(event.payload?.model || '').trim();
+      if (metaModel) model = metaModel;
+      continue;
+    }
+
+    if (event.type === 'turn_context') {
+      const turnModel = String(event.payload?.model || '').trim();
+      if (turnModel) model = turnModel;
+      continue;
+    }
+
+    if (!title) {
+      title = extractCodexUserMessagePreview(event);
+    }
+  }
+
+  const updatedAtMs = Number(stat?.mtimeMs || Date.now());
+  return {
+    sessionId: sessionId || path.basename(filePath, '.jsonl'),
+    title: title || normalizeCodexSessionPreview(path.basename(filePath, '.jsonl')),
+    cwd,
+    provider: provider || 'unknown',
+    model: model || 'unknown',
+    updatedAt: new Date(updatedAtMs).toISOString(),
+    updatedAtMs,
+    filePath,
+  };
+}
+
+export async function listCodexSessions({ cwd = '', codexHome = defaultCodexHome(), limit = 20, all = false } = {}) {
+  const normalizedCodexHome = path.resolve(codexHome || defaultCodexHome());
+  const sessionsRoot = path.join(normalizedCodexHome, 'sessions');
+  const targetCwd = String(cwd || '').trim();
+  const maxItems = Math.max(1, Math.min(100, Number(limit) || 20));
+  const files = (await listFilesRecursive(sessionsRoot)).filter((filePath) => filePath.endsWith('.jsonl'));
+
+  const fileEntries = await Promise.all(files.map(async (filePath) => {
+    try {
+      const stat = await fs.stat(filePath);
+      return { filePath, mtimeMs: Number(stat.mtimeMs || 0) };
+    } catch {
+      return null;
+    }
+  }));
+
+  const sorted = fileEntries.filter(Boolean).sort((left, right) => right.mtimeMs - left.mtimeMs);
+  const items = [];
+  for (const entry of sorted) {
+    const summary = await readCodexSessionSummary(entry.filePath);
+    if (!summary) continue;
+    if (!all && targetCwd && !isSameOrNestedPath(summary.cwd, targetCwd)) continue;
+    items.push(summary);
+    if (items.length >= maxItems) break;
+  }
+
+  return {
+    ok: true,
+    source: sessionsRoot,
+    cwd: targetCwd,
+    all: Boolean(all),
+    items,
+  };
+}
+
+function buildCodexSessionCommand(codexBinary, args = []) {
+  if (process.platform === 'win32') {
+    return buildWindowsBinaryCommand(codexBinary.path || '', args, 'codex');
+  }
+  const binary = codexBinary.path ? quotePosixShellArg(String(codexBinary.path)) : 'codex';
+  return [binary, ...args.map((arg) => quotePosixShellArg(String(arg)))].join(' ');
+}
+
+async function launchCodexSessionAction({ cwd, sessionId = '', action = 'resume', last = false, terminalProfile = 'auto' } = {}) {
+  const targetCwd = path.resolve(cwd || process.cwd());
+  const codexBinary = findCodexBinary();
+  if (!codexBinary.installed) {
+    throw new Error('Codex 尚未安装，请先点击安装');
+  }
+  const subcommand = action === 'fork' ? 'fork' : 'resume';
+  const args = [subcommand];
+  if (last) args.push('--last');
+  else if (String(sessionId || '').trim()) args.push(String(sessionId || '').trim());
+  else throw new Error('缺少会话 ID');
+
+  const message = launchTerminalCommand(targetCwd, {
+    binaryPath: codexBinary.path,
+    binaryName: 'codex',
+    toolLabel: action === 'fork' ? 'Codex 分叉恢复' : 'Codex 会话恢复',
+    commandText: buildCodexSessionCommand(codexBinary, args),
+    terminalProfile,
+  });
+  return { ok: true, cwd: targetCwd, sessionId: String(sessionId || '').trim(), message };
+}
+
+export async function resumeCodexSession({ cwd, sessionId = '', last = false, terminalProfile = 'auto' } = {}) {
+  return launchCodexSessionAction({ cwd, sessionId, last, action: 'resume', terminalProfile });
+}
+
+export async function forkCodexSession({ cwd, sessionId = '', terminalProfile = 'auto' } = {}) {
+  return launchCodexSessionAction({ cwd, sessionId, action: 'fork', terminalProfile });
+}
+
+export async function launchCodex({ cwd, terminalProfile = 'auto' } = {}) {
   const targetCwd = path.resolve(cwd || process.cwd());
   const codexBinary = findCodexBinary();
   if (!codexBinary.installed) {
@@ -3080,25 +3439,24 @@ export async function launchCodex({ cwd } = {}) {
     binaryPath: codexBinary.path,
     binaryName: 'codex',
     toolLabel: 'Codex',
+    terminalProfile,
   });
   return { ok: true, cwd: targetCwd, message };
 }
 
-export async function loginCodex({ cwd } = {}) {
+export async function loginCodex({ cwd, terminalProfile = 'auto' } = {}) {
   const targetCwd = path.resolve(cwd || process.cwd());
   const codexBinary = findCodexBinary();
   if (!codexBinary.installed) {
     throw new Error('Codex 尚未安装，请先点击安装');
   }
 
-  const binaryText = process.platform === 'win32'
-    ? buildWindowsBinaryCommand(codexBinary.path || '', ['login'], 'codex')
-    : (codexBinary.path ? `"${String(codexBinary.path).replace(/"/g, '\\"')}"` : 'codex');
   const message = launchTerminalCommand(targetCwd, {
     binaryPath: codexBinary.path,
     binaryName: 'codex',
     toolLabel: 'Codex 登录',
-    commandText: `${binaryText} login`,
+    commandText: buildCodexSessionCommand(codexBinary, ['login']),
+    terminalProfile,
   });
   return { ok: true, cwd: targetCwd, message };
 }

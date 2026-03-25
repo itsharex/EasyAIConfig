@@ -2,7 +2,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -2207,7 +2207,103 @@ fn escape_applescript(text: &str) -> String {
   text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-fn launch_codex_terminal_command(cwd: &Path) -> Result<String, String> {
+fn macos_iterm_available() -> bool {
+  let home = home_dir().ok();
+  Path::new("/Applications/iTerm.app").exists()
+    || Path::new("/Applications/iTerm2.app").exists()
+    || home.as_ref().map(|h| h.join("Applications/iTerm.app").exists()).unwrap_or(false)
+    || home.as_ref().map(|h| h.join("Applications/iTerm2.app").exists()).unwrap_or(false)
+}
+
+fn macos_termius_available() -> bool {
+  let home = home_dir().ok();
+  Path::new("/Applications/Termius.app").exists()
+    || home.as_ref().map(|h| h.join("Applications/Termius.app").exists()).unwrap_or(false)
+}
+
+fn resolve_macos_terminal_profile(profile: &str) -> &'static str {
+  let normalized = profile.trim().to_lowercase();
+  if normalized == "terminal" {
+    return "terminal";
+  }
+  if normalized == "termius" {
+    return if macos_termius_available() { "termius" } else { "terminal" };
+  }
+  if normalized == "iterm" {
+    return if macos_iterm_available() { "iterm" } else { "terminal" };
+  }
+  if macos_iterm_available() { "iterm" } else { "terminal" }
+}
+
+fn launch_macos_terminal_with_profile(cwd: &Path, command_text: &str, tool_label: &str, terminal_profile: &str) -> Result<String, String> {
+  let shell_command = format!("cd {} && {}", quote_posix_shell_arg(&cwd.to_string_lossy()), command_text);
+  let resolved = resolve_macos_terminal_profile(terminal_profile);
+
+  if resolved == "termius" {
+    let opened = create_command("open")
+      .args(["-a", "Termius"])
+      .output()
+      .map_err(|error| error.to_string())?;
+    if !opened.status.success() {
+      return Err(String::from_utf8_lossy(&opened.stderr).trim().to_string());
+    }
+
+    let script = [
+      "tell application \"Termius\" to activate",
+      "delay 0.25",
+      "tell application \"System Events\"",
+      &format!("keystroke \"{}\"", escape_applescript(&shell_command)),
+      "key code 36",
+      "end tell",
+    ].join("\n");
+    let typed = create_command("osascript")
+      .arg("-e")
+      .arg(script)
+      .output()
+      .map_err(|error| error.to_string())?;
+    if typed.status.success() {
+      return Ok(format!("{} 已在 Termius 中启动", tool_label));
+    }
+
+    return Ok(format!("{} 已打开 Termius，请在 Termius 中执行：{}", tool_label, shell_command));
+  }
+
+  let script = if resolved == "iterm" {
+    [
+      "tell application \"iTerm\"",
+      "activate",
+      "create window with default profile",
+      &format!(
+        "tell current session of current window to write text \"{}\"",
+        escape_applescript(&shell_command)
+      ),
+      "end tell",
+    ]
+    .join("\n")
+  } else {
+    [
+      "tell application \"Terminal\"",
+      "activate",
+      &format!("do script \"{}\"", escape_applescript(&shell_command)),
+      "end tell",
+    ]
+    .join("\n")
+  };
+
+  let output = create_command("osascript")
+    .arg("-e")
+    .arg(script)
+    .output()
+    .map_err(|error| error.to_string())?;
+  if !output.status.success() {
+    return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+  }
+
+  let app_label = if resolved == "iterm" { "iTerm" } else { "Terminal" };
+  Ok(format!("{} 已在 {} 中启动", tool_label, app_label))
+}
+
+fn launch_codex_terminal_command(cwd: &Path, terminal_profile: &str) -> Result<String, String> {
   let codex_binary = find_codex_binary();
   let codex_path = codex_binary
     .get("path")
@@ -2217,27 +2313,8 @@ fn launch_codex_terminal_command(cwd: &Path) -> Result<String, String> {
   let cwd_text = cwd.to_string_lossy().to_string();
 
   if cfg!(target_os = "macos") {
-    let script = [
-      "tell application \"Terminal\"",
-      "activate",
-      &format!(
-        "do script \"cd {} && {}\"",
-        escape_applescript(&cwd_text),
-        escape_applescript(codex_path)
-      ),
-      "end tell",
-    ]
-    .join("\n");
-
-    let output = create_command("osascript")
-      .arg("-e")
-      .arg(script)
-      .output()
-      .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-      return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-    return Ok("Codex 已在 Terminal 中启动".to_string());
+    let command_text = quote_posix_shell_arg(codex_path);
+    return launch_macos_terminal_with_profile(cwd, &command_text, "Codex", terminal_profile);
   }
 
   if cfg!(target_os = "windows") {
@@ -2316,11 +2393,12 @@ pub(crate) fn launch_codex(body: &Value) -> Result<Value, String> {
     let input = get_string(&object, "cwd");
     if input.is_empty() { home_dir()? } else { PathBuf::from(input) }
   };
+  let terminal_profile = get_string(&object, "terminalProfile");
   let codex_binary = find_codex_binary();
   if !codex_binary.get("installed").and_then(Value::as_bool).unwrap_or(false) {
     return Err("Codex 尚未安装，请先点击安装".to_string());
   }
-  let message = launch_codex_terminal_command(&cwd)?;
+  let message = launch_codex_terminal_command(&cwd, &terminal_profile)?;
   Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
 }
 
@@ -2330,6 +2408,7 @@ pub(crate) fn login_codex(body: &Value) -> Result<Value, String> {
     let input = get_string(&object, "cwd");
     if input.is_empty() { home_dir()? } else { PathBuf::from(input) }
   };
+  let terminal_profile = get_string(&object, "terminalProfile");
   let codex_binary = find_codex_binary();
   if !codex_binary.get("installed").and_then(Value::as_bool).unwrap_or(false) {
     return Err("Codex 尚未安装，请先点击安装".to_string());
@@ -2342,10 +2421,440 @@ pub(crate) fn login_codex(body: &Value) -> Result<Value, String> {
   let command = if cfg!(target_os = "windows") {
     build_windows_binary_command(binary_path, &["login".to_string()], "codex")
   } else {
-    format!("\"{}\" login", binary_path.replace('"', "\\\""))
+    format!("{} login", quote_posix_shell_arg(binary_path))
   };
-  let message = launch_terminal_command(&cwd, &command, "Codex 登录")?;
+  let message = if cfg!(target_os = "macos") {
+    launch_macos_terminal_with_profile(&cwd, &command, "Codex 登录", &terminal_profile)?
+  } else {
+    launch_terminal_command(&cwd, &command, "Codex 登录")?
+  };
   Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
+}
+
+fn normalize_codex_session_preview(text: &str, fallback: &str) -> String {
+  let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+  if collapsed.is_empty() {
+    return fallback.to_string();
+  }
+  if collapsed.chars().count() > 72 {
+    let prefix = collapsed.chars().take(72).collect::<String>();
+    return format!("{}...", prefix);
+  }
+  collapsed
+}
+
+fn extract_codex_user_message_preview(event: &Value) -> String {
+  let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
+  let payload = event.get("payload").and_then(Value::as_object);
+  if event_type == "event_msg" && payload.and_then(|item| item.get("type")).and_then(Value::as_str) == Some("user_message") {
+    return normalize_codex_session_preview(payload.and_then(|item| item.get("message")).and_then(Value::as_str).unwrap_or(""), "");
+  }
+  if event_type == "response_item"
+    && payload.and_then(|item| item.get("type")).and_then(Value::as_str) == Some("message")
+    && payload.and_then(|item| item.get("role")).and_then(Value::as_str) == Some("user") {
+    let content = payload.and_then(|item| item.get("content")).and_then(Value::as_array);
+    let joined = content
+      .map(|items| {
+        items
+          .iter()
+          .filter(|item| item.get("type").and_then(Value::as_str) == Some("input_text"))
+          .filter_map(|item| item.get("text").and_then(Value::as_str).map(str::trim))
+          .filter(|text| !text.is_empty())
+          .collect::<Vec<_>>()
+          .join(" ")
+      })
+      .unwrap_or_default();
+    return normalize_codex_session_preview(&joined, "");
+  }
+  String::new()
+}
+
+fn normalize_path_for_compare(raw: &str) -> Option<PathBuf> {
+  let trimmed = raw.trim();
+  if trimmed.is_empty() {
+    return None;
+  }
+  let mut normalized = PathBuf::new();
+  let base = if Path::new(trimmed).is_absolute() {
+    PathBuf::from(trimmed)
+  } else {
+    std::env::current_dir().ok()?.join(trimmed)
+  };
+  for component in base.components() {
+    match component {
+      std::path::Component::CurDir => {}
+      std::path::Component::ParentDir => {
+        let _ = normalized.pop();
+      }
+      _ => normalized.push(component.as_os_str()),
+    }
+  }
+  Some(normalized)
+}
+
+fn is_same_or_nested_path(left: &str, right: &str) -> bool {
+  let Some(left_path) = normalize_path_for_compare(left) else { return false; };
+  let Some(right_path) = normalize_path_for_compare(right) else { return false; };
+  left_path == right_path || left_path.starts_with(&right_path) || right_path.starts_with(&left_path)
+}
+
+fn read_codex_session_summary(file_path: &Path, modified_ms: u64) -> Option<Value> {
+  let file = File::open(file_path).ok()?;
+  let reader = BufReader::new(file);
+  let mut session_id = String::new();
+  let mut cwd = String::new();
+  let mut provider = String::new();
+  let mut model = String::new();
+  let mut title = String::new();
+
+  for line in reader.lines().map_while(Result::ok) {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+      continue;
+    }
+    let Ok(event) = serde_json::from_str::<Value>(trimmed) else { continue; };
+    let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
+    if event_type == "session_meta" {
+      if let Some(payload) = event.get("payload").and_then(Value::as_object) {
+        let meta_id = payload.get("id").and_then(Value::as_str).unwrap_or("").trim();
+        let meta_cwd = payload.get("cwd").and_then(Value::as_str).unwrap_or("").trim();
+        let meta_provider = payload.get("model_provider").and_then(Value::as_str).unwrap_or("").trim();
+        let meta_model = payload.get("model").and_then(Value::as_str).unwrap_or("").trim();
+        if !meta_id.is_empty() { session_id = meta_id.to_string(); }
+        if !meta_cwd.is_empty() { cwd = meta_cwd.to_string(); }
+        if !meta_provider.is_empty() { provider = meta_provider.to_string(); }
+        if !meta_model.is_empty() { model = meta_model.to_string(); }
+      }
+      continue;
+    }
+    if event_type == "turn_context" {
+      if let Some(turn_model) = event
+        .get("payload")
+        .and_then(Value::as_object)
+        .and_then(|item| item.get("model"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty()) {
+        model = turn_model.to_string();
+      }
+      continue;
+    }
+    if title.is_empty() {
+      title = extract_codex_user_message_preview(&event);
+    }
+  }
+
+  let stem = file_path.file_stem().and_then(|name| name.to_str()).unwrap_or("unknown");
+  let updated_at_ms = if modified_ms > 0 { modified_ms } else { chrono::Utc::now().timestamp_millis().max(0) as u64 };
+  let updated_at = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(updated_at_ms.min(i64::MAX as u64) as i64)
+    .map(|time| time.to_rfc3339())
+    .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+
+  Some(json!({
+    "sessionId": if session_id.is_empty() { stem.to_string() } else { session_id },
+    "title": if title.is_empty() { normalize_codex_session_preview(stem, "未命名会话") } else { title },
+    "cwd": cwd,
+    "provider": if provider.is_empty() { "unknown".to_string() } else { provider },
+    "model": if model.is_empty() { "unknown".to_string() } else { model },
+    "updatedAt": updated_at,
+    "updatedAtMs": updated_at_ms,
+    "filePath": file_path.to_string_lossy().to_string(),
+  }))
+}
+
+fn build_codex_session_command(binary_path: &str, args: &[String]) -> String {
+  if cfg!(target_os = "windows") {
+    return build_windows_binary_command(binary_path, args, "codex");
+  }
+  let binary = if binary_path.trim().is_empty() { "codex".to_string() } else { quote_posix_shell_arg(binary_path) };
+  let mut parts = vec![binary];
+  parts.extend(args.iter().map(|arg| quote_posix_shell_arg(arg)));
+  parts.join(" ")
+}
+
+fn resolve_codex_session_path(file_path: &str, codex_home: &Path) -> Result<PathBuf, String> {
+  let trimmed = file_path.trim();
+  if trimmed.is_empty() {
+    return Err("缺少会话文件路径".to_string());
+  }
+  let candidate = PathBuf::from(trimmed);
+  if candidate.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+    return Err("会话文件必须是 .jsonl".to_string());
+  }
+  if !candidate.exists() {
+    return Err("会话文件不存在".to_string());
+  }
+  let sessions_root = codex_home.join("sessions");
+  if sessions_root.exists() {
+    let canonical_root = fs::canonicalize(&sessions_root).unwrap_or(sessions_root);
+    let canonical_file = fs::canonicalize(&candidate).map_err(|error| error.to_string())?;
+    if !canonical_file.starts_with(&canonical_root) {
+      return Err("会话文件不在 CODEX_HOME/sessions 目录中".to_string());
+    }
+    return Ok(canonical_file);
+  }
+  Ok(candidate)
+}
+
+fn extract_codex_event_preview(event: &Value) -> String {
+  let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
+  if event_type == "event_msg" && event.get("payload").and_then(Value::as_object).and_then(|item| item.get("type")).and_then(Value::as_str) == Some("user_message") {
+    let payload = event.get("payload").and_then(Value::as_object);
+    let message = payload.and_then(|item| item.get("message")).and_then(Value::as_str).unwrap_or("");
+    return normalize_codex_session_preview(message, "");
+  }
+  if event_type == "response_item"
+    && event.get("payload").and_then(Value::as_object).and_then(|item| item.get("type")).and_then(Value::as_str) == Some("message") {
+    let payload = event.get("payload").and_then(Value::as_object);
+    let content = payload.and_then(|item| item.get("content")).and_then(Value::as_array);
+    let joined = content
+      .map(|items| {
+        items
+          .iter()
+          .filter_map(|item| {
+            let text = item.get("text").and_then(Value::as_str).or_else(|| item.get("input_text").and_then(Value::as_str));
+            text.map(str::trim).filter(|value| !value.is_empty())
+          })
+          .collect::<Vec<_>>()
+          .join(" ")
+      })
+      .unwrap_or_default();
+    return normalize_codex_session_preview(&joined, "");
+  }
+  if event_type == "event_msg" && event.get("payload").and_then(Value::as_object).and_then(|item| item.get("type")).and_then(Value::as_str) == Some("token_count") {
+    return "token_count".to_string();
+  }
+  let payload_type = event
+    .get("payload")
+    .and_then(Value::as_object)
+    .and_then(|item| item.get("type"))
+    .and_then(Value::as_str)
+    .unwrap_or("");
+  if !payload_type.is_empty() {
+    return payload_type.to_string();
+  }
+  String::new()
+}
+
+pub(crate) fn list_codex_sessions(query: &Value) -> Result<Value, String> {
+  let query_object = parse_json_object(query);
+  let target_cwd = get_string(&query_object, "cwd");
+  let codex_home = {
+    let input = get_string(&query_object, "codexHome");
+    if input.is_empty() { default_codex_home()? } else { PathBuf::from(input) }
+  };
+  let max_items = get_string(&query_object, "limit").parse::<usize>().ok().unwrap_or(20).clamp(1, 100);
+  let show_all = matches!(get_string(&query_object, "all").trim().to_lowercase().as_str(), "1" | "true" | "yes");
+  let sessions_root = codex_home.join("sessions");
+
+  let mut file_entries = list_jsonl_files(&sessions_root)
+    .into_iter()
+    .map(|path| CodexUsageSessionFile { modified_ms: file_modified_ms(&path), path })
+    .collect::<Vec<_>>();
+  file_entries.sort_by(|left, right| right.modified_ms.cmp(&left.modified_ms));
+
+  let mut items = Vec::new();
+  for entry in file_entries {
+    if items.len() >= max_items {
+      break;
+    }
+    let Some(summary) = read_codex_session_summary(&entry.path, entry.modified_ms) else { continue; };
+    let session_cwd = summary.get("cwd").and_then(Value::as_str).unwrap_or("");
+    if !show_all && !target_cwd.trim().is_empty() && !is_same_or_nested_path(session_cwd, &target_cwd) {
+      continue;
+    }
+    items.push(summary);
+  }
+
+  Ok(json!({
+    "ok": true,
+    "source": sessions_root.to_string_lossy().to_string(),
+    "cwd": target_cwd,
+    "all": show_all,
+    "items": items,
+  }))
+}
+
+pub(crate) fn get_codex_session_detail(query: &Value) -> Result<Value, String> {
+  let query_object = parse_json_object(query);
+  let codex_home = {
+    let input = get_string(&query_object, "codexHome");
+    if input.is_empty() { default_codex_home()? } else { PathBuf::from(input) }
+  };
+  let file_path = resolve_codex_session_path(&get_string(&query_object, "filePath"), &codex_home)?;
+  let preview_limit = get_string(&query_object, "limit").parse::<usize>().ok().unwrap_or(120).clamp(20, 500);
+  let modified_ms = file_modified_ms(&file_path);
+  let summary = read_codex_session_summary(&file_path, modified_ms).unwrap_or_else(|| {
+    json!({
+      "sessionId": file_path.file_stem().and_then(|name| name.to_str()).unwrap_or("unknown"),
+      "title": file_path.file_stem().and_then(|name| name.to_str()).unwrap_or("unknown"),
+      "cwd": "",
+      "provider": "unknown",
+      "model": "unknown",
+      "updatedAt": chrono::Utc::now().to_rfc3339(),
+      "updatedAtMs": modified_ms,
+      "filePath": file_path.to_string_lossy().to_string(),
+    })
+  });
+
+  let file = File::open(&file_path).map_err(|error| error.to_string())?;
+  let reader = BufReader::new(file);
+  let mut total_lines = 0usize;
+  let mut parsed_events = 0usize;
+  let mut invalid_lines = 0usize;
+  let mut first_timestamp = String::new();
+  let mut last_timestamp = String::new();
+  let mut recent_events: VecDeque<Value> = VecDeque::new();
+
+  for line in reader.lines().map_while(Result::ok) {
+    total_lines += 1;
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+      continue;
+    }
+    let Ok(event) = serde_json::from_str::<Value>(trimmed) else {
+      invalid_lines += 1;
+      continue;
+    };
+    parsed_events += 1;
+    let timestamp = event.get("timestamp").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    if first_timestamp.is_empty() && !timestamp.is_empty() {
+      first_timestamp = timestamp.clone();
+    }
+    if !timestamp.is_empty() {
+      last_timestamp = timestamp.clone();
+    }
+    let event_type = event.get("type").and_then(Value::as_str).unwrap_or("unknown").to_string();
+    let role = event
+      .get("payload")
+      .and_then(Value::as_object)
+      .and_then(|item| item.get("role"))
+      .and_then(Value::as_str)
+      .unwrap_or("")
+      .to_string();
+    recent_events.push_back(json!({
+      "line": total_lines,
+      "type": event_type,
+      "role": role,
+      "timestamp": timestamp,
+      "preview": extract_codex_event_preview(&event),
+    }));
+    while recent_events.len() > preview_limit {
+      recent_events.pop_front();
+    }
+  }
+
+  Ok(json!({
+    "ok": true,
+    "summary": summary,
+    "stats": { "totalLines": total_lines, "parsedEvents": parsed_events, "invalidLines": invalid_lines, "firstTimestamp": first_timestamp, "lastTimestamp": last_timestamp },
+    "recentEvents": recent_events.into_iter().collect::<Vec<_>>(),
+    "previewLimit": preview_limit,
+  }))
+}
+
+fn launch_codex_session_action(body: &Value, action: &str) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let cwd = {
+    let input = get_string(&object, "cwd");
+    if input.is_empty() { home_dir()? } else { PathBuf::from(input) }
+  };
+  let session_id = get_string(&object, "sessionId").trim().to_string();
+  let last = object.get("last").and_then(Value::as_bool).unwrap_or(false);
+  let terminal_profile = get_string(&object, "terminalProfile");
+  let codex_binary = find_codex_binary();
+  if !codex_binary.get("installed").and_then(Value::as_bool).unwrap_or(false) {
+    return Err("Codex 尚未安装，请先点击安装".to_string());
+  }
+  let subcommand = if action == "fork" { "fork" } else { "resume" };
+  let mut args = vec![subcommand.to_string()];
+  if last {
+    args.push("--last".to_string());
+  } else if !session_id.is_empty() {
+    args.push(session_id.clone());
+  } else {
+    return Err("缺少会话 ID".to_string());
+  }
+
+  let binary_path = codex_binary
+    .get("path")
+    .and_then(Value::as_str)
+    .filter(|text| !text.trim().is_empty())
+    .unwrap_or("codex");
+  let command = build_codex_session_command(binary_path, &args);
+  let tool_label = if action == "fork" { "Codex 分叉恢复" } else { "Codex 会话恢复" };
+  let message = if cfg!(target_os = "macos") {
+    launch_macos_terminal_with_profile(&cwd, &command, tool_label, &terminal_profile)?
+  } else {
+    launch_terminal_command(&cwd, &command, tool_label)?
+  };
+  Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "sessionId": session_id, "message": message }))
+}
+
+pub(crate) fn resume_codex_session(body: &Value) -> Result<Value, String> {
+  launch_codex_session_action(body, "resume")
+}
+
+pub(crate) fn fork_codex_session(body: &Value) -> Result<Value, String> {
+  launch_codex_session_action(body, "fork")
+}
+
+pub(crate) fn export_codex_session(body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let codex_home = {
+    let input = get_string(&object, "codexHome");
+    if input.is_empty() { default_codex_home()? } else { PathBuf::from(input) }
+  };
+  let file_path = resolve_codex_session_path(&get_string(&object, "filePath"), &codex_home)?;
+  let format = {
+    let input = get_string(&object, "format").trim().to_lowercase();
+    if input == "json" { "json" } else { "jsonl" }
+  };
+  let modified_ms = file_modified_ms(&file_path);
+  let summary = read_codex_session_summary(&file_path, modified_ms).unwrap_or_else(|| {
+    json!({
+      "sessionId": file_path.file_stem().and_then(|name| name.to_str()).unwrap_or("unknown"),
+      "title": file_path.file_stem().and_then(|name| name.to_str()).unwrap_or("unknown"),
+      "cwd": "",
+      "provider": "unknown",
+      "model": "unknown",
+      "updatedAt": chrono::Utc::now().to_rfc3339(),
+      "updatedAtMs": modified_ms,
+      "filePath": file_path.to_string_lossy().to_string(),
+    })
+  });
+  let raw_content = fs::read_to_string(&file_path).map_err(|error| error.to_string())?;
+  let session_id = summary.get("sessionId").and_then(Value::as_str).unwrap_or("codex-session");
+  let normalized_id = session_id
+    .chars()
+    .map(|ch| if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' { ch } else { '-' })
+    .collect::<String>();
+
+  if format == "json" {
+    let events = raw_content
+      .lines()
+      .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
+      .collect::<Vec<_>>();
+    let content = serde_json::to_string_pretty(&json!({
+      "session": summary,
+      "events": events,
+    })).map_err(|error| error.to_string())?;
+    return Ok(json!({
+      "ok": true,
+      "format": "json",
+      "mime": "application/json",
+      "fileName": format!("{}-export.json", normalized_id),
+      "content": content,
+    }));
+  }
+
+  Ok(json!({
+    "ok": true,
+    "format": "jsonl",
+    "mime": "application/x-ndjson",
+    "fileName": format!("{}-export.jsonl", normalized_id),
+    "content": raw_content,
+  }))
 }
 
 #[derive(Clone, Default, Serialize)]

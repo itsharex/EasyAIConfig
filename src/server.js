@@ -15,6 +15,7 @@ import {
   getProviderSecret,
   getCodexReleaseInfo,
   getCodexUsageMetrics,
+  listCodexSessions,
   getSystemStorageState,
   installClaudeCode,
   installOpenCode,
@@ -37,6 +38,8 @@ import {
   logoutOpenCodeAuth,
   launchCodex,
   loginCodex,
+  resumeCodexSession,
+  forkCodexSession,
   launchOpenClaw,
   listBackups,
   listTools,
@@ -916,6 +919,35 @@ export async function startServer() {
   app.post('/api/codex/login', async (req, res) => {
     try {
       ok(res, { data: await loginCodex(req.body || {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.get('/api/codex/sessions', async (req, res) => {
+    try {
+      ok(res, { data: await listCodexSessions({
+        cwd: req.query.cwd || undefined,
+        codexHome: req.query.codexHome || undefined,
+        limit: req.query.limit || undefined,
+        all: req.query.all === '1' || req.query.all === 'true',
+      }) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/codex/resume', async (req, res) => {
+    try {
+      ok(res, { data: await resumeCodexSession(req.body || {}) });
+    } catch (error) {
+      fail(res, error);
+    }
+  });
+
+  app.post('/api/codex/fork', async (req, res) => {
+    try {
+      ok(res, { data: await forkCodexSession(req.body || {}) });
     } catch (error) {
       fail(res, error);
     }

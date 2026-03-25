@@ -367,8 +367,15 @@
                     <button id="editConfigQuickBtn" class="secondary">编辑配置</button>
                     <button id="saveBtn" class="secondary">保存配置</button>
                     <button id="claudeOauthLoginBtn" class="secondary hide">OAuth 登录</button>
-                    <button id="launchBtn">启动 Codex</button>
+                    <button id="launchBtn" type="button">启动 Codex</button>
                   </div>
+                  <div id="codexTerminalRow" class="launch-terminal-row hide">
+                    <div class="launch-terminal-label">启动终端</div>
+                    <div class="launch-terminal-main">
+                      <div id="codexTerminalHint" class="launch-terminal-hint"></div>
+                    </div>
+                  </div>
+                  <div id="codexTerminalMenu" class="provider-dropdown hide"></div>
                 </section>
               </section>
 
@@ -891,6 +898,29 @@
                           </div>
                         </label>
                       </div>
+                    </div>
+                  </details>
+
+                  <!-- ═══ 会话恢复 ═══ -->
+                  <details class="cfg-section">
+                    <summary class="cfg-section-header">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5A5.5 5.5 0 1 1 2.5 8"/><path d="M2 2.5v3h3"/><path d="M8 5.2v3l2 1.4"/></svg>
+                      <span>会话恢复</span>
+                      <svg class="cfg-section-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
+                    </summary>
+                    <div class="cfg-section-body">
+                      <div class="section-head slim-head resume-toolbar">
+                        <div>
+                          <div class="section-title">最近 Codex 会话</div>
+                          <div id="codexResumeHint" class="section-copy">可从这里继续上次没做完的会话。</div>
+                        </div>
+                        <div class="resume-toolbar-actions">
+                          <button id="codexResumeLastBtn" type="button" class="secondary tiny-btn">恢复上次</button>
+                          <button id="codexResumeScopeBtn" type="button" class="secondary tiny-btn">显示全部</button>
+                          <button id="codexResumeRefreshBtn" type="button" class="secondary tiny-btn">↻ 刷新</button>
+                        </div>
+                      </div>
+                      <div id="codexResumeSessions" class="resume-session-list"></div>
                     </div>
                   </details>
 

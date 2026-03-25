@@ -109,6 +109,12 @@ const state = {
   openClawLastRepair: null,
   openClawConfigView: localStorage.getItem('easyaiconfig_oc_config_view') === 'minimal' ? 'minimal' : 'full',
   codexAuthView: localStorage.getItem('easyaiconfig_codex_auth_view') === 'api_key' ? 'api_key' : 'official',
+  codexTerminalProfile: 'auto',
+  codexTerminalProfiles: [],
+  codexTerminalMenuOpen: false,
+  codexResumeSessions: [],
+  codexResumeLoading: false,
+  codexResumeShowAll: false,
   systemStorage: null,
   systemStorageLoading: false,
   configStoreGuide: { recipeId: '', values: {} },
@@ -13890,6 +13896,386 @@ function renderBackups() {
   `).join('') : '<div class="provider-meta">暂无备份</div>';
 }
 
+function getSelectedCodexTerminalProfile() {
+  return String(state.codexTerminalProfile || 'auto').trim() || 'auto';
+}
+
+function getCodexTerminalProfiles() {
+  const fromState = Array.isArray(state.current?.launch?.terminalProfiles)
+    ? state.current.launch.terminalProfiles
+    : (Array.isArray(state.codexTerminalProfiles) ? state.codexTerminalProfiles : []);
+  const platform = state.current?.launch?.platform || '';
+  if (fromState.length) {
+    if (platform === 'darwin') {
+      const allowed = new Set(['auto', 'terminal', 'iterm', 'termius']);
+      const normalized = fromState
+        .filter((item) => allowed.has(String(item?.id || '').trim()))
+        .map((item) => {
+          const id = String(item?.id || '').trim();
+          if (id === 'terminal') return { ...item, id, label: '系统终端' };
+          if (id === 'termius') return { ...item, id, label: 'Termius' };
+          return { ...item, id };
+        });
+      if (normalized.length) return normalized;
+    }
+    return fromState;
+  }
+
+  if (platform === 'darwin') {
+    return [
+      { id: 'auto', label: '自动选择（推荐）' },
+      { id: 'terminal', label: '系统终端' },
+      { id: 'iterm', label: 'iTerm' },
+      { id: 'termius', label: 'Termius' },
+    ];
+  }
+  if (platform === 'win32') {
+    return [
+      { id: 'auto', label: '自动选择（推荐）' },
+      { id: 'windows-terminal', label: 'Windows Terminal' },
+      { id: 'powershell-7', label: 'PowerShell 7' },
+      { id: 'powershell', label: 'Windows PowerShell' },
+      { id: 'cmd', label: '命令提示符 CMD' },
+    ];
+  }
+  return [];
+}
+
+function closeCodexTerminalMenu() {
+  state.codexTerminalMenuOpen = false;
+  el('codexTerminalMenu')?.classList.add('hide');
+}
+
+function openCodexTerminalMenu() {
+  const menu = el('codexTerminalMenu');
+  const button = el('launchBtn');
+  const profiles = getCodexTerminalProfiles();
+  if (!menu || !button || !profiles.length) return false;
+
+  const selected = getSelectedCodexTerminalProfile();
+  menu.innerHTML = profiles.map((profile) => `
+    <button type="button" class="provider-option ${profile.id === selected ? 'active' : ''}" data-codex-terminal-launch="${escapeHtml(profile.id)}">
+      <div class="provider-main">
+        <strong>${escapeHtml(profile.label)}</strong>
+        <div class="provider-meta">${escapeHtml(profile.id === 'auto' ? '自动选择终端并启动 Codex' : `使用 ${profile.label} 启动 Codex`)}</div>
+      </div>
+    </button>
+  `).join('');
+
+  const rect = button.getBoundingClientRect();
+  const width = Math.min(360, Math.max(260, rect.width + 80));
+  let left = rect.right - width;
+  if (left < 12) left = 12;
+  if (left + width > window.innerWidth - 12) left = window.innerWidth - width - 12;
+  menu.style.width = `${width}px`;
+  menu.style.left = `${left}px`;
+  menu.classList.remove('hide');
+  menu.style.visibility = 'hidden';
+  const menuHeight = menu.offsetHeight || 220;
+  let top = rect.top - menuHeight - 8;
+  if (top < 12) top = rect.bottom + 8;
+  menu.style.top = `${top}px`;
+  menu.style.visibility = '';
+  menu.classList.remove('hide');
+  state.codexTerminalMenuOpen = true;
+  return true;
+}
+
+function renderCodexTerminalPicker() {
+  const row = el('codexTerminalRow');
+  const hint = el('codexTerminalHint');
+  if (!row || !hint) return;
+
+  const platform = state.current?.launch?.platform || '';
+  const isSupported = platform === 'win32' || platform === 'darwin';
+  const profiles = getCodexTerminalProfiles();
+
+  state.codexTerminalProfiles = profiles;
+  if (!isSupported || !profiles.length) {
+    row.classList.add('hide');
+    hint.textContent = '';
+    closeCodexTerminalMenu();
+    return;
+  }
+
+  const profileIds = new Set(profiles.map((item) => String(item.id || '').trim()).filter(Boolean));
+  if (!profileIds.has(state.codexTerminalProfile)) {
+    state.codexTerminalProfile = 'auto';
+  }
+
+  hint.textContent = '';
+  row.classList.add('hide');
+}
+
+function getCodexResumeContext() {
+  return {
+    cwd: el('launchCwdInput')?.value?.trim() || state.current?.launch?.cwd || '',
+    codexHome: el('codexHomeInput')?.value?.trim() || state.current?.codexHome || '',
+  };
+}
+
+function quotePosixShellArg(value = '') {
+  const raw = String(value || '');
+  if (!raw) return "''";
+  return `'${raw.replace(/'/g, `'\\''`)}'`;
+}
+
+function buildCodexResumeCommand(sessionId = '') {
+  const id = String(sessionId || '').trim();
+  if (!id) return 'codex resume --last';
+  return `codex resume ${quotePosixShellArg(id)}`;
+}
+
+function downloadTextFile(fileName, content, mime = 'text/plain;charset=utf-8') {
+  const blob = new Blob([String(content || '')], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = String(fileName || 'codex-session.txt');
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 300);
+}
+
+function formatCodexResumeTime(value = '') {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '未知时间' : date.toLocaleString();
+}
+
+function formatCodexSessionDetailHtml(summary = {}, stats = {}, events = []) {
+  const sessionId = String(summary.sessionId || '').trim();
+  const cwd = String(summary.cwd || '').trim();
+  const command = buildCodexResumeCommand(sessionId);
+  const statsText = [
+    `行数 ${Number(stats.totalLines || 0)}`,
+    `事件 ${Number(stats.parsedEvents || 0)}`,
+    Number(stats.invalidLines || 0) > 0 ? `坏行 ${Number(stats.invalidLines || 0)}` : '',
+  ].filter(Boolean).join(' · ');
+  const rows = (Array.isArray(events) ? events : []).map((event) => {
+    const line = Number(event.line || 0);
+    const type = String(event.type || 'unknown').trim();
+    const role = String(event.role || '').trim();
+    const stamp = formatCodexResumeTime(event.timestamp);
+    const preview = String(event.preview || '').trim() || '-';
+    return `
+      <tr>
+        <td>${line || '-'}</td>
+        <td>${escapeHtml(type)}</td>
+        <td>${escapeHtml(role || '-')}</td>
+        <td>${escapeHtml(stamp)}</td>
+        <td title="${escapeHtml(preview)}">${escapeHtml(preview)}</td>
+      </tr>
+    `;
+  }).join('');
+  return `
+    <div class="codex-session-detail">
+      <div class="codex-session-detail-meta">
+        <div><strong>ID</strong><span>${escapeHtml(sessionId || '-')}</span></div>
+        <div><strong>模型</strong><span>${escapeHtml(String(summary.model || 'unknown'))}</span></div>
+        <div><strong>Provider</strong><span>${escapeHtml(String(summary.provider || 'unknown'))}</span></div>
+        <div><strong>更新时间</strong><span>${escapeHtml(formatCodexResumeTime(summary.updatedAt))}</span></div>
+        <div class="wide"><strong>目录</strong><span title="${escapeHtml(cwd)}">${escapeHtml(cwd || '-')}</span></div>
+        <div class="wide"><strong>恢复命令</strong><span class="mono" title="${escapeHtml(command)}">${escapeHtml(command)}</span></div>
+      </div>
+      <div class="codex-session-detail-stats">${escapeHtml(statsText)}</div>
+      <div class="codex-session-detail-actions">
+        <button type="button" class="secondary tiny-btn" data-codex-detail-copy-command="${escapeHtml(command)}">复制恢复命令</button>
+        <button type="button" class="secondary tiny-btn" data-codex-detail-export-format="jsonl" data-codex-detail-file-path="${escapeHtml(String(summary.filePath || ''))}">导出 JSONL</button>
+        <button type="button" class="secondary tiny-btn" data-codex-detail-export-format="json" data-codex-detail-file-path="${escapeHtml(String(summary.filePath || ''))}">导出 JSON</button>
+      </div>
+      <div class="codex-session-detail-table-wrap">
+        <table class="codex-session-detail-table">
+          <thead><tr><th>行</th><th>类型</th><th>角色</th><th>时间</th><th>预览</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="5">暂无可显示事件</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderCodexResumeSessions() {
+  const listEl = el('codexResumeSessions');
+  const hintEl = el('codexResumeHint');
+  const scopeBtn = el('codexResumeScopeBtn');
+  if (!listEl || !hintEl) return;
+
+  if (scopeBtn) {
+    scopeBtn.textContent = state.codexResumeShowAll ? '只看当前目录' : '显示全部';
+  }
+
+  if (!isCodexInstalled()) {
+    state.codexResumeLoading = false;
+    state.codexResumeSessions = [];
+    listEl.innerHTML = '';
+    hintEl.textContent = '当前未检测到 Codex。请先安装，再使用会话恢复。';
+    return;
+  }
+
+  if (state.codexResumeLoading) {
+    listEl.innerHTML = '<div class="provider-meta">正在扫描最近会话…</div>';
+    hintEl.textContent = '正在读取 ~/.codex/sessions 里的最近记录。';
+    return;
+  }
+
+  const items = Array.isArray(state.codexResumeSessions) ? state.codexResumeSessions : [];
+  if (!items.length) {
+    listEl.innerHTML = '<div class="provider-meta">暂无可恢复会话</div>';
+    hintEl.textContent = state.codexResumeShowAll
+      ? '还没发现可恢复的 Codex 会话。先在终端里跑一次 Codex，再回来这里恢复。'
+      : '当前仅显示与启动目录相关的会话。若没找到，可点“显示全部”。';
+    return;
+  }
+
+  hintEl.textContent = state.codexResumeShowAll
+    ? `已列出最近 ${items.length} 个会话，可直接继续或分叉恢复。`
+    : `已按当前启动目录筛出 ${items.length} 个会话；点“显示全部”可看全部历史。`;
+
+  listEl.innerHTML = items.map((item) => {
+    const sessionId = String(item.sessionId || '').trim();
+    const title = String(item.title || sessionId || '未命名会话').trim();
+    const provider = String(item.provider || 'unknown').trim();
+    const model = String(item.model || 'unknown').trim();
+    const cwd = String(item.cwd || '').trim();
+    const filePath = String(item.filePath || '').trim();
+    const resumeCommand = buildCodexResumeCommand(sessionId);
+    const meta = [sessionId, model, provider, formatCodexResumeTime(item.updatedAt)].filter(Boolean);
+    return `
+      <div class="resume-session-card">
+        <div class="resume-session-main">
+          <div class="resume-session-title">${escapeHtml(title)}</div>
+          <div class="resume-session-meta">${meta.map((part) => `<span>${escapeHtml(part)}</span>`).join('<span class="resume-session-dot">•</span>')}</div>
+          <div class="resume-session-command" title="${escapeHtml(resumeCommand)}">${escapeHtml(resumeCommand)}</div>
+          <div class="resume-session-cwd">${escapeHtml(cwd || '未记录工作目录')}</div>
+        </div>
+        <div class="resume-session-actions">
+          <button type="button" class="secondary tiny-btn" data-codex-resume-id="${escapeHtml(sessionId)}">继续</button>
+          <button type="button" class="secondary tiny-btn" data-codex-fork-id="${escapeHtml(sessionId)}">分叉</button>
+          <button type="button" class="secondary tiny-btn" data-codex-detail-path="${escapeHtml(filePath)}">详情</button>
+          <button type="button" class="secondary tiny-btn" data-codex-export-path="${escapeHtml(filePath)}">导出</button>
+          <button type="button" class="secondary tiny-btn" data-codex-copy-resume-command="${escapeHtml(resumeCommand)}">复制命令</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function loadCodexResumeSessions({ silent = true } = {}) {
+  const listEl = el('codexResumeSessions');
+  if (!listEl) return;
+  if (!isCodexInstalled()) {
+    state.codexResumeLoading = false;
+    state.codexResumeSessions = [];
+    renderCodexResumeSessions();
+    return;
+  }
+
+  state.codexResumeLoading = true;
+  renderCodexResumeSessions();
+  const context = getCodexResumeContext();
+  const params = new URLSearchParams({
+    cwd: context.cwd,
+    codexHome: context.codexHome,
+    limit: '20',
+    all: state.codexResumeShowAll ? '1' : '0',
+  });
+  const json = await api(`/api/codex/sessions?${params.toString()}`);
+  state.codexResumeLoading = false;
+  if (!json.ok) {
+    state.codexResumeSessions = [];
+    renderCodexResumeSessions();
+    if (!silent) flash(json.error || '读取会话失败', 'error');
+    return;
+  }
+  state.codexResumeSessions = json.data?.items || [];
+  renderCodexResumeSessions();
+}
+
+async function exportCodexSessionByPath(filePath, format = 'jsonl') {
+  const targetPath = String(filePath || '').trim();
+  if (!targetPath) {
+    flash('缺少会话文件路径', 'error');
+    return false;
+  }
+  const context = getCodexResumeContext();
+  const json = await api('/api/codex/session-export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      filePath: targetPath,
+      codexHome: context.codexHome,
+      format: String(format || 'jsonl').trim().toLowerCase() === 'json' ? 'json' : 'jsonl',
+    }),
+  });
+  if (!json.ok) {
+    flash(json.error || '导出会话失败', 'error');
+    return false;
+  }
+  const payload = json.data || {};
+  downloadTextFile(payload.fileName || `codex-session.${payload.format || 'jsonl'}`, payload.content || '', payload.mime || 'text/plain;charset=utf-8');
+  flash(`已导出 ${payload.fileName || '会话文件'}`, 'success');
+  return true;
+}
+
+async function openCodexSessionDetailByPath(filePath) {
+  const targetPath = String(filePath || '').trim();
+  if (!targetPath) {
+    flash('缺少会话文件路径', 'error');
+    return false;
+  }
+  const context = getCodexResumeContext();
+  const params = new URLSearchParams({
+    filePath: targetPath,
+    codexHome: context.codexHome,
+    limit: '120',
+  });
+  const json = await api(`/api/codex/session-detail?${params.toString()}`);
+  if (!json.ok) {
+    flash(json.error || '读取会话详情失败', 'error');
+    return false;
+  }
+  const data = json.data || {};
+  const body = formatCodexSessionDetailHtml(data.summary || {}, data.stats || {}, data.recentEvents || []);
+  void openUpdateDialog({
+    eyebrow: 'Codex Session',
+    title: String(data.summary?.title || data.summary?.sessionId || '会话详情'),
+    body,
+    confirmText: '关闭',
+    confirmOnly: true,
+  });
+  return true;
+}
+
+async function triggerCodexResumeAction(action, button, { sessionId = '', last = false } = {}) {
+  const endpoint = action === 'fork' ? '/api/codex/fork' : '/api/codex/resume';
+  const payload = {
+    cwd: getCodexResumeContext().cwd,
+    sessionId,
+    last,
+    terminalProfile: getSelectedCodexTerminalProfile(),
+  };
+  const originalText = button?.textContent || '';
+  if (button) {
+    button.disabled = true;
+    button.textContent = action === 'fork' ? '分叉中...' : '恢复中...';
+  }
+  const json = await api(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (button) {
+    button.disabled = false;
+    button.textContent = originalText;
+  }
+  if (!json.ok) {
+    flash(json.error || (action === 'fork' ? '分叉恢复失败' : '恢复会话失败'), 'error');
+    return false;
+  }
+  flash(json.data?.message || (action === 'fork' ? '已打开 Codex 分叉恢复' : '已打开 Codex 会话恢复'), 'success');
+  return true;
+}
+
 function fillAdvancedFromState() {
   el('scopeSelect').value = state.current?.scope || 'global';
   el('projectPathInput').value = state.current?.projectPath || '';
@@ -14122,7 +14508,10 @@ async function loadState({ preserveForm = true } = {}) {
     }
   }
   state.providerHealth = {};
+  state.codexTerminalProfiles = Array.isArray(state.current?.launch?.terminalProfiles) ? state.current.launch.terminalProfiles : [];
   fillAdvancedFromState();
+  renderCodexTerminalPicker();
+  renderCodexResumeSessions();
   renderStatus();
   renderProviders();
   syncCodexAuthView();
@@ -14130,6 +14519,7 @@ async function loadState({ preserveForm = true } = {}) {
 
   // Skip Codex form restoration when non-Codex tool is active
   if (state.activeTool === 'claudecode' || state.activeTool === 'opencode' || state.activeTool === 'openclaw') {
+    loadCodexResumeSessions({ silent: true }).catch(() => {});
     refreshProviderHealth();
     renderToolConsole();
     return;
@@ -14146,6 +14536,7 @@ async function loadState({ preserveForm = true } = {}) {
     renderModelOptions([], snapshot.selectedModel);
     syncCodexAuthView();
     renderCurrentConfig();
+    loadCodexResumeSessions({ silent: true }).catch(() => {});
     refreshProviderHealth();
     syncShortcutActiveState();
     renderToolConsole();
@@ -14154,6 +14545,8 @@ async function loadState({ preserveForm = true } = {}) {
   fillFromProvider(state.current.activeProvider || state.current.providers?.[0]);
   syncCodexAuthView();
   renderCurrentConfig();
+
+  loadCodexResumeSessions({ silent: true }).catch(() => {});
 
   // Auto-trigger provider health check so the card doesn't stay "待检测"
   refreshProviderHealth();
@@ -14554,7 +14947,7 @@ function getCodexLaunchCredentialWarning() {
   return '当前还没有配置 API Key，也没有官方登录态；继续启动后通常无法直接请求模型。';
 }
 
-async function launchCodex(buttonId = 'launchBtn', successMessage = 'Codex 已启动') {
+async function launchCodex(buttonId = 'launchBtn', successMessage = 'Codex 已启动', terminalProfile = '') {
   const codexInstalled = isCodexInstalled();
   if (!codexInstalled) {
     const installed = await installCodex({ silent: true });
@@ -14566,7 +14959,10 @@ async function launchCodex(buttonId = 'launchBtn', successMessage = 'Codex 已�
   const launched = await api('/api/codex/launch', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cwd: el('launchCwdInput').value.trim() || state.current?.launch?.cwd || '' }),
+    body: JSON.stringify({
+      cwd: el('launchCwdInput').value.trim() || state.current?.launch?.cwd || '',
+      terminalProfile: terminalProfile || getSelectedCodexTerminalProfile(),
+    }),
   });
   setBusy(buttonId, false);
   if (!launched.ok) {
@@ -14578,7 +14974,7 @@ async function launchCodex(buttonId = 'launchBtn', successMessage = 'Codex 已�
   return true;
 }
 
-async function launchCodexLogin(buttonId = '') {
+async function launchCodexLogin(buttonId = '', terminalProfile = '') {
   const codexInstalled = isCodexInstalled();
   if (!codexInstalled) {
     const installed = await installCodex({ silent: true });
@@ -14589,7 +14985,10 @@ async function launchCodexLogin(buttonId = '') {
   const launched = await api('/api/codex/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cwd: el('launchCwdInput').value.trim() || state.current?.launch?.cwd || '' }),
+    body: JSON.stringify({
+      cwd: el('launchCwdInput').value.trim() || state.current?.launch?.cwd || '',
+      terminalProfile: terminalProfile || getSelectedCodexTerminalProfile(),
+    }),
   });
   if (buttonId) setBusy(buttonId, false);
   if (!launched.ok) {
@@ -14601,7 +15000,7 @@ async function launchCodexLogin(buttonId = '') {
   return true;
 }
 
-async function launchCodexOnly() {
+async function launchCodexOnly(terminalProfile = '') {
   if (state.activeTool === 'claudecode') {
     return launchClaudeCodeOnly();
   }
@@ -14617,7 +15016,7 @@ async function launchCodexOnly() {
     }
     return launchOpenClawOnly();
   }
-  await launchCodex('launchBtn', 'Codex 已启动');
+  await launchCodex('launchBtn', 'Codex 已启动', terminalProfile);
 }
 
 async function launchOpenClawOnly() {
@@ -16061,7 +16460,26 @@ function bindEvents() {
   });
   el('saveBtn').addEventListener('click', saveConfigOnly);
   el('claudeOauthLoginBtn')?.addEventListener('click', () => launchClaudeCodeOAuthLogin('claudeOauthLoginBtn'));
-  el('launchBtn').addEventListener('click', launchCodexOnly);
+  el('launchBtn').addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (state.activeTool === 'codex') {
+      let platform = state.current?.launch?.platform || '';
+      let profiles = getCodexTerminalProfiles();
+      if ((platform === 'win32' || platform === 'darwin') && !profiles.length) {
+        await loadState({ preserveForm: true });
+        platform = state.current?.launch?.platform || platform;
+        profiles = getCodexTerminalProfiles();
+      }
+      if (platform === 'win32' || platform === 'darwin') {
+        if (state.codexTerminalMenuOpen) closeCodexTerminalMenu();
+        else openCodexTerminalMenu();
+        return false;
+      }
+    }
+    await launchCodexOnly();
+    return false;
+  });
   // OpenClaw dashboard quick button
   if (el('ocOpenDashboardBtn')) {
     el('ocOpenDashboardBtn').addEventListener('click', async () => {
@@ -16137,6 +16555,58 @@ function bindEvents() {
   el('uninstallCodexBtn')?.addEventListener('click', uninstallCodex);
   el('refreshBtn').addEventListener('click', () => loadState({ preserveForm: true }));
   el('reloadBackupsBtn').addEventListener('click', loadBackups);
+  el('codexResumeRefreshBtn')?.addEventListener('click', () => loadCodexResumeSessions({ silent: false }));
+  el('codexResumeLastBtn')?.addEventListener('click', async (event) => {
+    await triggerCodexResumeAction('resume', event.currentTarget, { last: true });
+  });
+  el('codexResumeScopeBtn')?.addEventListener('click', () => {
+    state.codexResumeShowAll = !state.codexResumeShowAll;
+    renderCodexResumeSessions();
+    loadCodexResumeSessions({ silent: true });
+  });
+  el('launchCwdInput')?.addEventListener('blur', () => loadCodexResumeSessions({ silent: true }));
+  el('codexHomeInput')?.addEventListener('blur', () => loadCodexResumeSessions({ silent: true }));
+  el('codexTerminalMenu')?.addEventListener('click', async (event) => {
+    const option = event.target.closest('[data-codex-terminal-launch]');
+    if (!option) return;
+    const selectedProfile = String(option.dataset.codexTerminalLaunch || 'auto').trim() || 'auto';
+    state.codexTerminalProfile = selectedProfile;
+    renderCodexTerminalPicker();
+    closeCodexTerminalMenu();
+    await launchCodexOnly(selectedProfile);
+  });
+
+  el('codexResumeSessions')?.addEventListener('click', async (event) => {
+    const resumeBtn = event.target.closest('[data-codex-resume-id]');
+    if (resumeBtn) {
+      await triggerCodexResumeAction('resume', resumeBtn, { sessionId: resumeBtn.dataset.codexResumeId || '' });
+      return;
+    }
+    const forkBtn = event.target.closest('[data-codex-fork-id]');
+    if (forkBtn) {
+      await triggerCodexResumeAction('fork', forkBtn, { sessionId: forkBtn.dataset.codexForkId || '' });
+      return;
+    }
+    const detailBtn = event.target.closest('[data-codex-detail-path]');
+    if (detailBtn) {
+      await openCodexSessionDetailByPath(detailBtn.dataset.codexDetailPath || '');
+      return;
+    }
+    const exportBtn = event.target.closest('[data-codex-export-path]');
+    if (exportBtn) {
+      await exportCodexSessionByPath(exportBtn.dataset.codexExportPath || '', 'jsonl');
+      return;
+    }
+    const copyCommandBtn = event.target.closest('[data-codex-copy-resume-command]');
+    if (copyCommandBtn) {
+      try {
+        await copyText(copyCommandBtn.dataset.codexCopyResumeCommand || '');
+        flash('恢复命令已复制', 'success');
+      } catch {
+        flash('复制失败', 'error');
+      }
+    }
+  });
 
   // ── Quick Shortcut buttons ──
   function applyShortcut(patch, label) {
@@ -17133,6 +17603,25 @@ function bindEvents() {
   });
   el('updateDialogConfirmBtn').addEventListener('click', () => closeUpdateDialog(true));
   document.querySelectorAll('[data-close-update-dialog]').forEach((node) => node.addEventListener('click', () => closeUpdateDialog(false)));
+  el('updateDialogBody')?.addEventListener('click', async (event) => {
+    const copyCmdBtn = event.target.closest('[data-codex-detail-copy-command]');
+    if (copyCmdBtn) {
+      try {
+        await copyText(copyCmdBtn.dataset.codexDetailCopyCommand || '');
+        flash('恢复命令已复制', 'success');
+      } catch {
+        flash('复制失败', 'error');
+      }
+      return;
+    }
+    const exportBtn = event.target.closest('[data-codex-detail-export-format]');
+    if (exportBtn) {
+      await exportCodexSessionByPath(
+        exportBtn.dataset.codexDetailFilePath || '',
+        exportBtn.dataset.codexDetailExportFormat || 'jsonl',
+      );
+    }
+  });
 
   // ── Setup Wizard bindings ──
   el('setupWizardNavBtn').addEventListener('click', (e) => {
@@ -17200,6 +17689,9 @@ bindEvents();
 window.addEventListener('click', (e) => {
   if (!e.target.closest('[data-period-dropdown]')) {
     document.querySelectorAll('[data-period-dropdown].open').forEach(el => el.classList.remove('open'));
+  }
+  if (state.codexTerminalMenuOpen && !e.target.closest('#launchBtn') && !e.target.closest('#codexTerminalMenu')) {
+    closeCodexTerminalMenu();
   }
 });
 window.addEventListener('resize', () => {
