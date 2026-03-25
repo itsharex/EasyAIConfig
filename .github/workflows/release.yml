@@ -21,9 +21,9 @@ jobs:
         id: get-tag
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=v0.0.0-dev" >> $GITHUB_OUTPUT
+            echo "tag=v0.0.0-dev" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create Release
@@ -74,23 +74,26 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS Apple Silicon
           - platform: macos-latest
             args: --target aarch64-apple-darwin
             rust_target: aarch64-apple-darwin
-          # macOS Intel
+            updater_platform: darwin-aarch64
+            artifact_name: updater-darwin-aarch64
           - platform: macos-latest
             args: --target x86_64-apple-darwin
             rust_target: x86_64-apple-darwin
-          # Windows
+            updater_platform: darwin-x86_64
+            artifact_name: updater-darwin-x86_64
           - platform: windows-latest
             args: ''
             rust_target: ''
-          # Linux
+            updater_platform: windows-x86_64
+            artifact_name: updater-windows-x86_64
           - platform: ubuntu-22.04
             args: ''
             rust_target: ''
-
+            updater_platform: linux-x86_64
+            artifact_name: updater-linux-x86_64
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -119,7 +122,6 @@ jobs:
         with:
           workspaces: './src-tauri -> target'
 
-      # Linux dependencies
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
         run: |
@@ -135,7 +137,6 @@ jobs:
       - name: Install npm dependencies
         run: npm ci || npm install
 
-
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -147,20 +148,66 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
 
+      - name: Collect updater bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/updater
+          case '${{ matrix.updater_platform }}' in
+            darwin-aarch64)
+              asset=$(find src-tauri/target/aarch64-apple-darwin/release/bundle/macos -type f -name '*.app.tar.gz' | head -n 1)
+              ;;
+            darwin-x86_64)
+              asset=$(find src-tauri/target/x86_64-apple-darwin/release/bundle/macos -type f -name '*.app.tar.gz' | head -n 1)
+              ;;
+            windows-x86_64)
+              asset=$(find src-tauri/target/release/bundle/msi -type f -name '*.msi' | head -n 1)
+              if [ -z "${asset:-}" ]; then
+                asset=$(find src-tauri/target/release/bundle/nsis -type f -name '*.exe' | head -n 1)
+              fi
+              ;;
+            linux-x86_64)
+              asset=$(find src-tauri/target/release/bundle/appimage -type f -name '*.AppImage' | head -n 1)
+              ;;
+            *)
+              echo 'unsupported updater platform'
+              exit 1
+              ;;
+          esac
+          test -n "${asset:-}"
+          sig="${asset}.sig"
+          test -f "$sig"
+          cp "$asset" dist/updater/
+          cp "$sig" dist/updater/
+          asset_name=$(basename "$asset")
+          signature=$(tr -d '\r' < "$sig" | head -n 1)
+          jq -n \
+            --arg platform '${{ matrix.updater_platform }}' \
+            --arg asset "$asset_name" \
+            --arg signature "$signature" \
+            '{platform:$platform,asset:$asset,signature:$signature}' \
+            > "dist/updater/${{ matrix.updater_platform }}.manifest.json"
+          ls -lah dist/updater
+
+      - name: Upload updater artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/updater/*
+          if-no-files-found: error
+
   publish-r2:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     needs: [create-release, build-tauri]
     env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       CF_R2_ACCOUNT_ID: ${{ secrets.CF_R2_ACCOUNT_ID }}
       CF_R2_ACCESS_KEY_ID: ${{ secrets.CF_R2_ACCESS_KEY_ID }}
       CF_R2_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
       CF_R2_BUCKET: ${{ secrets.CF_R2_BUCKET }}
       CF_R2_PUBLIC_BASE_URL: ${{ secrets.CF_R2_PUBLIC_BASE_URL }}
       CF_R2_ENDPOINT: https://${{ secrets.CF_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-      RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
       RELEASE_TAG: ${{ needs.create-release.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
@@ -195,39 +242,47 @@ jobs:
           python3 -m pip install --user awscli
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Download release assets
+      - name: Download updater artifacts
         if: steps.r2.outputs.enabled == 'true'
-        shell: bash
-        run: |
-          mkdir -p dist/r2
-          gh api "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}" --jq '.assets[] | [.name, .url] | @tsv' | while IFS=$'	' read -r name url; do
-            echo "downloading $name"
-            curl -L --fail \
-              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-              -H "Accept: application/octet-stream" \
-              "$url" \
-              -o "dist/r2/$name"
-          done
-          ls -lah dist/r2
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/r2
+          pattern: updater-*
+          merge-multiple: true
 
-      - name: Rewrite latest.json for R2
+      - name: Build latest.json for R2
         if: steps.r2.outputs.enabled == 'true'
         shell: bash
         run: |
-          base="${CF_R2_PUBLIC_BASE_URL%/}"
-          test -f dist/r2/latest.json
-          jq --arg base "$base" '
-            if .platforms then
-              .platforms |= with_entries(
-                if (.value.url? != null) then
-                  .value.url = ($base + "/" + (.value.url | split("/") | last))
-                else
-                  .
-                end
-              )
-            else . end
-          ' dist/r2/latest.json > dist/r2/latest.r2.json
-          mv dist/r2/latest.r2.json dist/r2/latest.json
+          python3 - <<'PY'
+          import datetime
+          import glob
+          import json
+          import os
+          from pathlib import Path
+
+          base = os.environ['CF_R2_PUBLIC_BASE_URL'].rstrip('/')
+          version = os.environ['RELEASE_TAG'].lstrip('v')
+          manifests = []
+          for manifest_path in sorted(glob.glob('dist/r2/*.manifest.json')):
+              with open(manifest_path, 'r', encoding='utf-8') as handle:
+                  manifests.append(json.load(handle))
+          if not manifests:
+              raise SystemExit('no updater manifests found')
+
+          latest = {
+              'version': version,
+              'notes': '',
+              'pub_date': datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z'),
+              'platforms': {},
+          }
+          for item in manifests:
+              latest['platforms'][item['platform']] = {
+                  'signature': item['signature'],
+                  'url': f"{base}/{item['asset']}",
+              }
+          Path('dist/r2/latest.json').write_text(json.dumps(latest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          PY
           cat dist/r2/latest.json
 
       - name: Upload assets to R2
@@ -238,15 +293,16 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.CF_R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
         run: |
-          base="${CF_R2_PUBLIC_BASE_URL%/}"
           aws s3 sync dist/r2 "s3://${CF_R2_BUCKET}/" \
             --endpoint-url "${CF_R2_ENDPOINT}" \
+            --exclude '*.manifest.json' \
+            --exclude 'latest.json' \
             --delete
           aws s3 cp dist/r2/latest.json "s3://${CF_R2_BUCKET}/latest.json" \
             --endpoint-url "${CF_R2_ENDPOINT}" \
             --cache-control 'no-store, no-cache, must-revalidate, max-age=0' \
             --content-type 'application/json'
-          echo "R2 updater endpoint: $base/latest.json"
+          echo "R2 updater endpoint: ${CF_R2_PUBLIC_BASE_URL%/}/latest.json"
 
   publish-release:
     permissions:
