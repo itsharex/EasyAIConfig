@@ -3764,11 +3764,10 @@ fn launch_terminal_command(cwd: &Path, command_text: &str, tool_label: &str) -> 
   }
 
   if cfg!(target_os = "windows") {
-    let launcher_path = write_windows_terminal_launcher(cwd, command_text)?;
-    let launcher_arg = normalize_windows_cmd_path(&launcher_path.to_string_lossy());
+    let cwd_arg = normalize_windows_cmd_path(&cwd.to_string_lossy());
     create_command("cmd.exe")
-      .args(["/c", "start", "", "cmd.exe", "/d", "/k", "call"])
-      .arg(&launcher_arg)
+      .args(["/c", "start", "", "/d", &cwd_arg, "cmd.exe", "/d", "/k"])
+      .arg(command_text)
       .spawn()
       .map_err(|error| error.to_string())?;
     return Ok(format!("{} 已在新命令窗口中启动", tool_label));
@@ -3836,23 +3835,6 @@ fn build_windows_binary_command(binary_path: &str, args: &[String], fallback_bin
   parts.join(" ")
 }
 
-
-fn write_windows_terminal_launcher(cwd: &Path, command_text: &str) -> Result<PathBuf, String> {
-  let launch_root = std::env::temp_dir().join("easy-ai-config").join("launchers");
-  fs::create_dir_all(&launch_root).map_err(|error| error.to_string())?;
-  let script_path = launch_root.join(format!("launch-{}.cmd", Uuid::new_v4()));
-  let cwd_text = quote_windows_cmd_arg(&normalize_windows_cmd_path(&cwd.to_string_lossy()));
-  let script = format!("@echo off
-cd /d {}
-{}
-", cwd_text, command_text);
-  let mut bytes = vec![0xFF, 0xFE];
-  for unit in script.encode_utf16() {
-    bytes.extend_from_slice(&unit.to_le_bytes());
-  }
-  fs::write(&script_path, bytes).map_err(|error| error.to_string())?;
-  Ok(script_path)
-}
 
 fn launch_terminal_for_tool(cwd: &Path, binary_path: &str, tool_label: &str, fallback_binary: &str) -> Result<String, String> {
   if cfg!(target_os = "windows") {
