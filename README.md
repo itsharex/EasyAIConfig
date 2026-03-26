@@ -18,11 +18,20 @@
 
 ## [Core] 已支持功能（当前版本）
 
+### [What's New] v1.0.41
+
+- 新增：Codex 官方登录（OAuth）与 API Key 双路径快速配置
+- 新增：官方登录场景支持一键设为默认 `OpenAI Provider`
+- 优化：`官方 + 中转 API Key` 共存时，Provider 切换更顺滑
+- 新增：Codex 会话恢复能力（最近会话浏览 / 一键恢复 / 导出）
+- 新增：独立 Codex App 的一键安装与打开入口
+
 ### 核心能力
 
 | 状态 | 功能 | 说明 |
 |------|------|------|
 | 已支持 | **Provider 管理** | 一键配置 Base URL + API Key，自动写入配置文件 |
+| 已支持 | **官方登录模式** | 自动识别 Codex/ChatGPT OAuth 登录态，可直接设为默认 OpenAI Provider |
 | 已支持 | **模型检测** | 自动发现可用模型并推荐可用版本 |
 | 已支持 | **多 Provider 切换** | 支持保存多套 Provider 并快速切换 |
 | 已支持 | **配置编辑器** | 可视化编辑 + 原始配置编辑（TOML / JSON） |
@@ -94,11 +103,11 @@ easyaiconfig
 
 ## [QuickStart] 快速开始
 
-1. **输入 Base URL** — 支持 OpenAI / 第三方 OpenAI 兼容 API
-2. **填写 API Key** — 自动识别 Provider 并生成环境变量名
-3. **检测模型** — 一键发现所有可用模型
-4. **保存配置** — 写入 `~/.codex/config.toml` + `.env`
-5. **启动 Codex** — 在终端中运行配置好的 Codex
+1. **选择认证方式** — 可直接用 `官方登录`（OAuth）或切换 `API Key` 模式
+2. **官方登录路径** — 点击「设为默认 OpenAI Provider」后直接保存并启动
+3. **API Key 路径** — 输入 Base URL + API Key，自动识别 Provider 和环境变量
+4. **检测模型** — 一键发现可用模型并推荐默认项
+5. **保存并启动** — 写入 `~/.codex/config.toml` + `.env`，并直接启动 Codex
 
 ## [Dev] 开发
 
