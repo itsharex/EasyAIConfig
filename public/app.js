@@ -3970,6 +3970,7 @@ function syncCodexAuthView() {
         ${login.accountId ? `<span class="provider-pill muted">account: ${escapeHtml(login.accountId)}</span>` : ''}
       </div>
       <div class="codex-auth-actions">
+        <button type="button" class="tiny-btn" data-codex-apply-official>设为默认 OpenAI Provider</button>
         <button type="button" class="secondary tiny-btn" data-codex-switch-api>切到 API Key 配置</button>
         <button type="button" class="secondary tiny-btn" data-codex-refresh-login>重新检测登录状态</button>
       </div>
@@ -7829,6 +7830,13 @@ async function handleToolConsoleAction(button) {
 
   if (action === 'goto-quick-tool') {
     if (targetTool) setActiveTool(targetTool);
+    if (targetTool === 'codex') {
+      const login = state.current?.login || {};
+      if (login.loggedIn && String(login.method || '').toLowerCase() === 'chatgpt') {
+        state.codexAuthView = 'official';
+        localStorage.setItem('easyaiconfig_codex_auth_view', state.codexAuthView);
+      }
+    }
     setPage('quick');
     return;
   }
@@ -12973,6 +12981,38 @@ function inferEnvKey(providerKey) {
   return providerKey.replace(/-/g, '_').toUpperCase() + '_API_KEY';
 }
 
+const CODEX_OFFICIAL_PROVIDER_KEY = 'openai';
+const CODEX_OFFICIAL_BASE_URL = 'https://api.openai.com/v1';
+
+function buildCodexOfficialProvider(login = {}, providers = []) {
+  const loggedIn = Boolean(login?.loggedIn);
+  const method = String(login?.method || '').toLowerCase();
+  if (!loggedIn || method !== 'chatgpt') return null;
+
+  const hasOpenAiProvider = (Array.isArray(providers) ? providers : []).some((provider) => {
+    const key = String(provider?.key || '').trim().toLowerCase();
+    const baseUrl = normalizeBaseUrl(provider?.baseUrl || '');
+    return key === CODEX_OFFICIAL_PROVIDER_KEY || baseUrl === CODEX_OFFICIAL_BASE_URL;
+  });
+  if (hasOpenAiProvider) return null;
+
+  return {
+    key: CODEX_OFFICIAL_PROVIDER_KEY,
+    name: 'OpenAI Official',
+    baseUrl: CODEX_OFFICIAL_BASE_URL,
+    envKey: 'OPENAI_API_KEY',
+    wireApi: 'responses',
+    hasInlineBearerToken: false,
+    isActive: false,
+    hasApiKey: false,
+    maskedApiKey: '',
+    keySource: 'oauth',
+    resolvedKeyName: 'OPENAI_API_KEY',
+    inferred: true,
+    historyOnly: false,
+  };
+}
+
 const CODEX_PROVIDER_HISTORY_STORAGE_KEY = 'easyaiconfig_codex_provider_history_v1';
 const CODEX_PROVIDER_HISTORY_MAX = 80;
 
@@ -13475,8 +13515,10 @@ function currentPayload() {
       scope: el('scopeSelect').value,
       projectPath: el('projectPathInput').value.trim(),
       codexHome: el('codexHomeInput').value.trim(),
-      providerKey: '',
-      baseUrl: '',
+      providerKey: CODEX_OFFICIAL_PROVIDER_KEY,
+      providerLabel: 'OpenAI Official',
+      envKey: 'OPENAI_API_KEY',
+      baseUrl: CODEX_OFFICIAL_BASE_URL,
       apiKey: '',
       model: el('modelSelect').value,
     };
@@ -13587,7 +13629,13 @@ function renderQuickSummary() {
 
 function providerHealthLabel(provider) {
   const item = state.providerHealth[provider.key];
+  const login = state.current?.login || {};
+  const isOfficial = String(provider?.key || '').toLowerCase() === CODEX_OFFICIAL_PROVIDER_KEY
+    || normalizeBaseUrl(provider?.baseUrl || '') === CODEX_OFFICIAL_BASE_URL;
   if (provider.historyOnly) return { text: '历史', tone: 'muted' };
+  if (isOfficial && login.loggedIn && String(login.method || '').toLowerCase() === 'chatgpt') {
+    return { text: 'OAuth', tone: 'ok' };
+  }
   if (!provider.hasApiKey) return { text: '缺少 Key', tone: 'warn' };
   if (!item) return { text: '待检测', tone: 'muted' };
   if (item.loading) return { text: '检测中', tone: 'muted' };
@@ -14579,6 +14627,10 @@ async function loadState({ preserveForm = true } = {}) {
   if (state.current && Array.isArray(state.current.providers)) {
     persistCodexProviderHistory(state.current.providers);
     state.current.providers = mergeCodexProvidersWithHistory(state.current.providers);
+    const officialProvider = buildCodexOfficialProvider(state.current?.login, state.current.providers);
+    if (officialProvider) {
+      state.current.providers.unshift(officialProvider);
+    }
     const activeKey = String(state.current?.activeProvider?.key || state.current?.summary?.modelProvider || '').trim();
     if (activeKey) {
       state.current.providers.forEach((provider) => {
@@ -16486,6 +16538,10 @@ function bindEvents() {
       localStorage.setItem('easyaiconfig_codex_auth_view', state.codexAuthView);
       syncCodexAuthView();
       flash('已切换到 API Key 配置模式', 'success');
+      return;
+    }
+    if (event.target.closest('[data-codex-apply-official]')) {
+      await saveConfigOnly();
       return;
     }
     if (event.target.closest('[data-codex-refresh-login]')) {
