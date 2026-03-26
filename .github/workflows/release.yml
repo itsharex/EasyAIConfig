@@ -177,9 +177,29 @@ jobs:
           test -n "${asset:-}"
           sig="${asset}.sig"
           test -f "$sig"
-          cp "$asset" dist/updater/
-          cp "$sig" dist/updater/
           asset_name=$(basename "$asset")
+          # Rename macOS updater bundles to include arch suffix so that
+          # aarch64 and x86_64 don't collide when artifacts are merged.
+          # Without this, both produce "EasyAIConfig.app.tar.gz" and one
+          # overwrites the other in R2, causing signature verification failure.
+          case '${{ matrix.updater_platform }}' in
+            darwin-aarch64)
+              renamed="${asset_name%.app.tar.gz}_aarch64.app.tar.gz"
+              cp "$asset" "dist/updater/${renamed}"
+              cp "$sig" "dist/updater/${renamed}.sig"
+              asset_name="$renamed"
+              ;;
+            darwin-x86_64)
+              renamed="${asset_name%.app.tar.gz}_x64.app.tar.gz"
+              cp "$asset" "dist/updater/${renamed}"
+              cp "$sig" "dist/updater/${renamed}.sig"
+              asset_name="$renamed"
+              ;;
+            *)
+              cp "$asset" dist/updater/
+              cp "$sig" dist/updater/
+              ;;
+          esac
           signature=$(tr -d '\r' < "$sig" | head -n 1)
           jq -n \
             --arg platform '${{ matrix.updater_platform }}' \

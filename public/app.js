@@ -9533,7 +9533,14 @@ function populateAboutPanel() {
     status.textContent = '正在安装更新…';
     status.className = 'about-status about-status-update';
   } else if (progressStatus === 'error') {
-    status.textContent = progress.error || '更新失败';
+    const errMsg = progress.error || '更新失败';
+    const isSigOrNet = /签名|signature|verify|网络|network|dns|timeout|connect/i.test(errMsg);
+    if (isSigOrNet) {
+      const repo = info.repository || 'lmk1010/EasyAIConfig';
+      status.innerHTML = `${escapeHtml(errMsg)} <a href="https://github.com/${escapeHtml(repo)}/releases/latest" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline;margin-left:6px;white-space:nowrap">手动下载</a>`;
+    } else {
+      status.textContent = errMsg;
+    }
     status.className = 'about-status about-status-error';
   } else if (info.available) {
     status.textContent = `可更新到 v${info.version || '-'}`;
@@ -14812,17 +14819,19 @@ function startAppUpdateProgressPolling() {
   }, 600);
 }
 
-async function handleAppUpdate(buttonId = 'appUpdateBtn') {
+async function handleAppUpdate(buttonId = 'appUpdateBtn', { skipConfirm = false } = {}) {
   const info = state.appUpdate || await loadAppUpdateState({ manual: true });
   if (!info) return;
   if (!info.enabled) return;
   if (!info.available) return;
 
-  const confirmed = window.confirm(`当前版本：${info.currentVersion}
+  if (!skipConfirm) {
+    const confirmed = window.confirm(`当前版本：${info.currentVersion}
 最新版本：${info.version}
 
 确定下载并安装客户端更新吗？安装后会自动重启。`);
-  if (!confirmed) return;
+    if (!confirmed) return;
+  }
 
   setBusy('appUpdateBtn', true, '下载中...');
   if (buttonId !== 'appUpdateBtn') setBusy(buttonId, true, '更新中...');
@@ -14831,7 +14840,43 @@ async function handleAppUpdate(buttonId = 'appUpdateBtn') {
   await loadAppUpdateProgressState({ silent: true });
   setBusy('appUpdateBtn', false);
   if (buttonId !== 'appUpdateBtn') setBusy(buttonId, false);
-  if (!json.ok) return flash(json.error || '客户端更新失败', 'error');
+  if (!json.ok) {
+    const errorText = json.error || '客户端更新失败';
+    const isSignatureError = /签名|signature|verify/i.test(errorText);
+    const isNetworkError = /网络|network|dns|timeout|timed out|connect|reset|tls|certificate/i.test(errorText);
+    const repo = info.repository || 'lmk1010/EasyAIConfig';
+    const releaseUrl = `https://github.com/${repo}/releases/latest`;
+    if (isSignatureError || isNetworkError) {
+      const hint = isSignatureError
+        ? '更新包在下载过程中可能被损坏（网络不稳定），导致签名校验失败。'
+        : '下载更新时网络出现异常，请检查网络连接。';
+      void openUpdateDialog({
+        eyebrow: '更新失败',
+        title: isSignatureError ? '签名校验失败' : '网络异常',
+        body: `<div style="display:flex;flex-direction:column;gap:12px">
+          <div style="color:var(--text-secondary);line-height:1.6">${escapeHtml(hint)}</div>
+          <div style="background:var(--bg-inset,rgba(255,255,255,.04));border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.7;color:var(--text-tertiary);word-break:break-all">${escapeHtml(errorText)}</div>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="font-weight:600;color:var(--text-primary)">建议操作：</div>
+            <div style="color:var(--text-secondary);line-height:1.6">1. 点击「重试更新」再试一次（有时换个时间段网络会恢复）</div>
+            <div style="color:var(--text-secondary);line-height:1.6">2. 或直接从 GitHub Releases 手动下载最新 .dmg 安装包覆盖安装</div>
+          </div>
+        </div>`,
+        confirmText: '重试更新',
+        cancelText: '手动下载',
+        tone: 'default',
+      }).then((retry) => {
+        if (retry) {
+          void handleAppUpdate(buttonId, { skipConfirm: true });
+        } else {
+          window.open(releaseUrl, '_blank');
+        }
+      });
+    } else {
+      return flash(errorText, 'error');
+    }
+    return;
+  }
   flash(`客户端已更新到 ${json.data?.version || info.version}，应用即将重启`, 'success');
 }
 
