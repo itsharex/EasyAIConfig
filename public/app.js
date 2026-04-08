@@ -365,7 +365,7 @@ function initTheme() {
   state.theme = resolveTheme(saved);
   applyTheme(state.theme);
   // Re-evaluate auto theme every minute
-  setInterval(() => {
+  const themeTimer = setInterval(() => {
     if (state.themePreference === 'auto') {
       const next = getAutoTheme();
       if (next !== state.theme) {
@@ -374,6 +374,7 @@ function initTheme() {
       }
     }
   }, 60000);
+  window.addEventListener('beforeunload', () => clearInterval(themeTimer));
 }
 
 function applyTheme(theme) {
@@ -461,14 +462,14 @@ async function loadOpenCodeEcosystemState({ render = true } = {}) {
 async function loadTools() {
   try {
     const json = await api('/api/tools');
-    if (json.ok && json.data) {
+if (json.ok && json.data) {
       state.tools = ensureKnownTools(json.data);
       renderStatus();
       renderToolsPage();
       updateToolSelector();
-      await loadCodexAppState({ render: false }).catch(() => {});
-      await loadOpenCodeDesktopState({ render: false }).catch(() => {});
-      await loadOpenCodeEcosystemState({ render: false }).catch(() => {});
+      await loadCodexAppState({ render: false }).catch((e) => console.warn('[loadTools] loadCodexAppState failed:', e));
+      await loadOpenCodeDesktopState({ render: false }).catch((e) => console.warn('[loadTools] loadOpenCodeDesktopState failed:', e));
+      await loadOpenCodeEcosystemState({ render: false }).catch((e) => console.warn('[loadTools] loadOpenCodeEcosystemState failed:', e));
       renderCurrentConfig();
       renderToolConsole();
       if (state.activePage === 'tools') renderToolsPage();
@@ -484,18 +485,18 @@ function shouldResyncToolRuntimeState() {
 }
 
 async function refreshToolRuntimeAfterMutation(toolId = '') {
-  await loadTools().catch(() => {});
+  await loadTools().catch((e) => console.warn('[refreshToolRuntimeAfterMutation] loadTools failed:', e));
   if (!toolId || toolId === 'codex') {
-    await loadState({ preserveForm: true }).catch(() => {});
+    await loadState({ preserveForm: true }).catch((e) => console.warn('[refreshToolRuntimeAfterMutation] loadState failed:', e));
   }
   if (!toolId || toolId === 'claudecode') {
-    await loadClaudeCodeQuickState({ force: false, cacheOnly: false }).catch(() => {});
+    await loadClaudeCodeQuickState({ force: false, cacheOnly: false }).catch((e) => console.warn('[refreshToolRuntimeAfterMutation] loadClaudeCodeQuickState failed:', e));
   }
   if (!toolId || toolId === 'opencode') {
-    await loadOpenCodeQuickState().catch(() => {});
+    await loadOpenCodeQuickState().catch((e) => console.warn('[refreshToolRuntimeAfterMutation] loadOpenCodeQuickState failed:', e));
   }
   if (!toolId || toolId === 'openclaw') {
-    await loadOpenClawQuickState().catch(() => {});
+    await loadOpenClawQuickState().catch((e) => console.warn('[refreshToolRuntimeAfterMutation] loadOpenClawQuickState failed:', e));
   }
   renderCurrentConfig();
   renderToolConsole();
@@ -507,7 +508,7 @@ async function resyncToolRuntimeState({ force = false } = {}) {
   if (!force && state.toolRuntimeSync.running) return state.toolRuntimeSync.running;
   if (!force && now - (state.toolRuntimeSync.lastAt || 0) < 1200) return;
 
-  const job = refreshToolRuntimeAfterMutation(state.activeTool || '').catch(() => {});
+  const job = refreshToolRuntimeAfterMutation(state.activeTool || '').catch((e) => console.warn('[resyncToolRuntimeState] refresh failed:', e));
 
   state.toolRuntimeSync.running = job;
   try {
@@ -2016,34 +2017,53 @@ function updateToolSelector() {
 // Per-tool form state cache
 const _toolFormCache = {};
 
+function _getToolFormCache(toolId, create = false) {
+  if (!toolId) return null;
+  if (_toolFormCache[toolId]) return _toolFormCache[toolId];
+  if (!create) return null;
+  _toolFormCache[toolId] = { dirtyFields: {} };
+  return _toolFormCache[toolId];
+}
+
+function _markCurrentToolFieldDirty(field, value) {
+  const cache = _getToolFormCache(state.activeTool, true);
+  if (!cache) return;
+  cache[field] = value;
+  cache.dirtyFields = cache.dirtyFields || {};
+  cache.dirtyFields[field] = true;
+}
+
+function _shouldPreserveToolField(toolId, field) {
+  return Boolean(_toolFormCache[toolId]?.dirtyFields?.[field]);
+}
+
 function _saveCurrentToolForm() {
   const toolId = state.activeTool;
   if (!toolId) return;
-  _toolFormCache[toolId] = {
-    baseUrl: el('baseUrlInput')?.value || '',
-    providerKey: el('claudeProviderKeyInput')?.value || '',
-    apiKey: el('apiKeyInput')?.value || '',
-    protocolValue: el('openClawProtocolSelect')?.value || '',
-    modelHtml: el('modelSelect')?.innerHTML || '',
-    modelValue: el('modelSelect')?.value || '',
-  };
+  const cache = _getToolFormCache(toolId, true);
+  cache.baseUrl = el('baseUrlInput')?.value || '';
+  cache.providerKey = el('claudeProviderKeyInput')?.value || '';
+  cache.apiKey = el('apiKeyInput')?.value || '';
+  cache.protocolValue = el('openClawProtocolSelect')?.value || '';
+  cache.modelHtml = el('modelSelect')?.innerHTML || '';
+  cache.modelValue = el('modelSelect')?.value || '';
 }
 
 function _restoreToolForm(toolId) {
-  const cache = _toolFormCache[toolId];
+  const cache = _getToolFormCache(toolId);
   if (!cache) return false;
   const baseUrlInput = el('baseUrlInput');
   const providerKeyInput = el('claudeProviderKeyInput');
   const apiKeyInput = el('apiKeyInput');
   const protocolSelect = el('openClawProtocolSelect');
   const modelSelect = el('modelSelect');
-  if (baseUrlInput) baseUrlInput.value = cache.baseUrl;
+  if (baseUrlInput) baseUrlInput.value = cache.baseUrl || '';
   if (providerKeyInput) providerKeyInput.value = cache.providerKey || '';
-  if (apiKeyInput) apiKeyInput.value = cache.apiKey;
+  if (apiKeyInput) apiKeyInput.value = cache.apiKey || '';
   if (protocolSelect && cache.protocolValue) protocolSelect.value = cache.protocolValue;
   if (modelSelect) {
-    modelSelect.innerHTML = cache.modelHtml;
-    modelSelect.value = cache.modelValue;
+    modelSelect.innerHTML = cache.modelHtml || '';
+    modelSelect.value = cache.modelValue || '';
   }
   return true;
 }
@@ -2201,7 +2221,7 @@ function setActiveTool(toolId) {
     if (baseUrlInput) baseUrlInput.placeholder = 'https://your-provider.com/v1';
     if (apiKeyInput) {
       apiKeyInput.type = 'password';
-      apiKeyInput.placeholder = 'sk-...';
+      apiKeyInput.placeholder = state.apiKeyField?.maskedValue || 'sk-...';
     }
     syncApiKeyToggle();
     applyCodexQuickInstallState();
@@ -2211,8 +2231,9 @@ function setActiveTool(toolId) {
         baseUrlInput.value = state.current.config.base_url;
       }
       if (apiKeyInput) {
-        apiKeyInput.value = state.apiKeyField?.maskedValue || '';
+        apiKeyInput.value = '';
       }
+
       if (modelSelect) {
         renderDefaultCodexModels(modelSelect, state.current?.summary?.model || '');
       }
@@ -2400,7 +2421,9 @@ async function loadClaudeCodeQuickState({ force = false, cacheOnly = false } = {
     applyClaudeCodeQuickInstallState(data);
     const claudeProviders = getClaudeProviderProfiles(data);
     const activeClaudeProvider = claudeProviders.find((provider) => provider.isActive) || claudeProviders[0] || null;
-    state.claudeSelectedProviderKey = activeClaudeProvider?.key || '';
+    const activeProviderKey = activeClaudeProvider?.key || '';
+    const activeProviderBaseUrl = activeClaudeProvider?.baseUrl || '';
+    state.claudeSelectedProviderKey = activeProviderKey;
 
     // Only update quick-page UI if Claude Code is the active tool
     if (state.activeTool !== 'claudecode') {
@@ -2460,40 +2483,42 @@ async function loadClaudeCodeQuickState({ force = false, cacheOnly = false } = {
       if (data.model) modelSelect.value = data.model;
     }
 
+    const cache = _getToolFormCache('claudecode', true);
+
     // ── Show Base URL ──
     const ev = data.envVars || {};
     const baseUrlInput = el('baseUrlInput');
-    if (baseUrlInput) {
-      if (activeClaudeProvider) {
-        baseUrlInput.value = activeClaudeProvider.baseUrl || '';
-      } else if (ev.ANTHROPIC_BASE_URL?.set) {
-        baseUrlInput.value = ev.ANTHROPIC_BASE_URL.value;
-      }
+    if (baseUrlInput && !_shouldPreserveToolField('claudecode', 'baseUrl')) {
+      const nextBaseUrl = activeClaudeProvider ? activeProviderBaseUrl : (ev.ANTHROPIC_BASE_URL?.set ? ev.ANTHROPIC_BASE_URL.value : '');
+      baseUrlInput.value = nextBaseUrl;
+      cache.baseUrl = nextBaseUrl;
     }
     const providerKeyInput = el('claudeProviderKeyInput');
-    if (providerKeyInput) {
-      providerKeyInput.value = activeClaudeProvider?.key
+    if (providerKeyInput && !_shouldPreserveToolField('claudecode', 'providerKey')) {
+      const nextProviderKey = activeProviderKey
         || normalizeProviderKey(state.claudeSelectedProviderKey || inferClaudeProviderKey(baseUrlInput?.value || ''));
+      providerKeyInput.value = nextProviderKey;
+      cache.providerKey = nextProviderKey;
     }
 
     // ── Show API Key status ──
     const apiKeyInput = el('apiKeyInput');
     if (apiKeyInput) {
+      let nextPlaceholder = 'ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN';
       if (activeClaudeProvider?.maskedAuthToken) {
-        apiKeyInput.placeholder = `${activeClaudeProvider.maskedAuthToken} (Auth Token)`;
-        apiKeyInput.value = '';
+        nextPlaceholder = `${activeClaudeProvider.maskedAuthToken} (Auth Token)`;
       } else if (activeClaudeProvider?.maskedApiKey) {
-        apiKeyInput.placeholder = `${activeClaudeProvider.maskedApiKey} (API Key)`;
-        apiKeyInput.value = '';
+        nextPlaceholder = `${activeClaudeProvider.maskedApiKey} (API Key)`;
       } else if (data.maskedApiKey) {
         const srcLabel = { shell: 'Shell 环境变量', 'settings.json': 'settings.json', env: '进程环境变量' }[data.apiKeySource] || '';
-        apiKeyInput.placeholder = `${data.maskedApiKey}${srcLabel ? ` (来自 ${srcLabel})` : ''}`;
-        apiKeyInput.value = '';
+        nextPlaceholder = `${data.maskedApiKey}${srcLabel ? ` (来自 ${srcLabel})` : ''}`;
       } else if (data.hasKeychainAuth) {
-        apiKeyInput.placeholder = '已在 Keychain 检测到 API Key 凭据';
+        nextPlaceholder = '已在 Keychain 检测到 API Key 凭据';
+      }
+      apiKeyInput.placeholder = nextPlaceholder;
+      if (!_shouldPreserveToolField('claudecode', 'apiKey')) {
         apiKeyInput.value = '';
-      } else {
-        apiKeyInput.placeholder = 'ANTHROPIC_API_KEY 或 ANTHROPIC_AUTH_TOKEN';
+        cache.apiKey = '';
       }
     }
 
@@ -2515,44 +2540,33 @@ async function loadClaudeCodeQuickState({ force = false, cacheOnly = false } = {
           parts.push(`\u2713 OAuth：${loginInfo.email || ''}${loginInfo.orgName ? ` (${loginInfo.orgName})` : ''}`);
         } else if (loginInfo.method === 'keychain') {
           parts.push('\u2713 API Key（Keychain）');
-        } else if (loginInfo.method === 'api_key') {
-          parts.push('\u2713 Token 认证');
+        } else if (loginInfo.method === 'api') {
+          parts.push('\u2713 API Key（环境变量）');
         }
+      } else if (data.hasKeychainAuth) {
+        parts.push('\u2713 已检测到 Keychain 凭据');
       } else {
-        parts.push('! 未认证');
+        parts.push('未登录');
       }
 
-      // Base URL — official vs proxy
       if (ev.ANTHROPIC_BASE_URL?.set) {
-        const url = ev.ANTHROPIC_BASE_URL.value;
-        const isOfficial = data.isOfficial;
-        parts.push(isOfficial ? `📡 官方 API` : `📡 代理：${url}`);
+        parts.push(`Base URL：${escapeHtml(ev.ANTHROPIC_BASE_URL.value || '')}`);
       }
-
-      // Token info
-      if (ev.ANTHROPIC_AUTH_TOKEN?.set) {
-        parts.push(`Token: ${ev.ANTHROPIC_AUTH_TOKEN.masked}`);
-      } else if (ev.ANTHROPIC_API_KEY?.set) {
-        parts.push(`Key: ${ev.ANTHROPIC_API_KEY.masked}`);
+      if (data.model) {
+        parts.push(`模型：${escapeHtml(data.model)}`);
       }
-
-      heroSubtitle.innerHTML = parts.map(p => `<span>${escapeHtml(p)}</span>`).join('<br>');
+      heroSubtitle.innerHTML = parts.map((part) => `<span class="status-chip">${part}</span>`).join('');
     }
 
-    // Show binary version
-    const heroTitle = document.querySelector('.hero-title');
-    if (heroTitle && data.binary?.version) {
-      heroTitle.textContent = `Claude Code · ${data.binary.version}`;
-    }
-
-    // Update right-side panel with Claude Code data
     renderCurrentConfig();
     renderToolConsole();
     return { ok: true, data };
-  } catch {
-    return { ok: false, error: '读取失败' };
+  } catch (error) {
+    console.warn('[loadClaudeCodeQuickState] failed:', error);
+    return { ok: false, error: error?.message || '读取失败' };
   }
 }
+
 
 async function ensureClaudeDashboardData({ force = false } = {}) {
   const result = await loadClaudeCodeQuickState({ force, cacheOnly: false });
@@ -3449,13 +3463,21 @@ async function loadOpenCodeQuickState() {
     const heroSubtitle = document.querySelector('.hero-subtitle');
     const baseUrlInput = el('baseUrlInput');
     const apiKeyInput = el('apiKeyInput');
+    const cache = _getToolFormCache('opencode', true);
     if (heroTitle) heroTitle.textContent = data.binary?.version ? `OpenCode · ${data.binary.version}` : 'OpenCode';
     if (heroSubtitle) heroSubtitle.textContent = '填写 OpenAI 兼容 Provider、API Key 与默认模型，保存后写入 opencode.json。';
-    if (baseUrlInput) baseUrlInput.value = data.activeProvider?.baseUrl || '';
+    if (baseUrlInput && !_shouldPreserveToolField('opencode', 'baseUrl')) {
+      const nextBaseUrl = data.activeProvider?.baseUrl || '';
+      baseUrlInput.value = nextBaseUrl;
+      cache.baseUrl = nextBaseUrl;
+    }
     if (apiKeyInput) {
       apiKeyInput.type = 'password';
-      apiKeyInput.value = '';
       apiKeyInput.placeholder = data.activeProvider?.maskedApiKey || 'API Key（留空表示保持当前）';
+      if (!_shouldPreserveToolField('opencode', 'apiKey')) {
+        apiKeyInput.value = '';
+        cache.apiKey = '';
+      }
     }
     renderOpenCodeModelOptions('modelSelect', { data, currentModel: data.model || '' });
     applyOpenCodeQuickInstallState(data);
@@ -3807,6 +3829,7 @@ async function loadOpenClawQuickState() {
     const modelSelect = el('modelSelect');
     const protocolSelect = el('openClawProtocolSelect');
     const detectionMeta = el('detectionMeta');
+    const cache = _getToolFormCache('openclaw', true);
 
     if (heroTitle && data.binary?.version) {
       heroTitle.textContent = `OpenClaw · ${data.binary.version}`;
@@ -3832,7 +3855,6 @@ async function loadOpenClawQuickState() {
     rows.push((data.gatewayToken ? iOk : iNo) + '<span>' + (data.gatewayToken ? 'Gateway Token 就绪' : 'Token 待生成') + '</span>');
     rows.push((data.daemonRunning ? iOk : iNo) + '<span>常驻服务：' + escapeHtml(getOpenClawDaemonStatusLabel(data)) + '</span>');
 
-    // Update launch button + dashboard quick row
     var _lb = el('launchBtn');
     var _dqr = el('ocDashboardQuickRow');
     state._ocGatewayUrl = data.gatewayUrl || '';
@@ -3872,22 +3894,31 @@ async function loadOpenClawQuickState() {
 
     if (protocolSelect) {
       protocolSelect.innerHTML = renderOpenClawProtocolOptions(quick.api || 'openai-completions');
-      protocolSelect.value = quick.api || 'openai-completions';
+      if (!_shouldPreserveToolField('openclaw', 'protocolValue')) {
+        protocolSelect.value = quick.api || 'openai-completions';
+        cache.protocolValue = quick.api || 'openai-completions';
+      }
     }
 
-    if (baseUrlInput) {
-      baseUrlInput.value = quick.baseUrl || '';
+    if (baseUrlInput && !_shouldPreserveToolField('openclaw', 'baseUrl')) {
+      const nextBaseUrl = quick.baseUrl || '';
+      baseUrlInput.value = nextBaseUrl;
+      cache.baseUrl = nextBaseUrl;
     }
 
     if (apiKeyInput) {
       apiKeyInput.type = 'password';
-      apiKeyInput.value = '';
+      if (!_shouldPreserveToolField('openclaw', 'apiKey')) {
+        apiKeyInput.value = '';
+        cache.apiKey = '';
+      }
     }
     syncApiKeyToggle();
 
-    const synced = syncOpenClawQuickProtocol(quick.api || 'openai-completions', quick.model || getOpenClawDefaultModel(quick.api || 'openai-completions'));
-    if (modelSelect) {
+    const synced = syncOpenClawQuickProtocol((cache.protocolValue && _shouldPreserveToolField('openclaw', 'protocolValue')) ? cache.protocolValue : (quick.api || 'openai-completions'), quick.model || getOpenClawDefaultModel(quick.api || 'openai-completions'));
+    if (modelSelect && !_shouldPreserveToolField('openclaw', 'modelValue')) {
       modelSelect.value = quick.model || synced.model;
+      cache.modelValue = modelSelect.value || '';
     }
     syncOpenClawQuickHints(synced.api, {
       maskedApiKey: quick.maskedApiKey,
@@ -3898,16 +3929,15 @@ async function loadOpenClawQuickState() {
       detectionMeta.textContent += ' 你也可以先保存好这套模型配置，安装完成后直接启动。';
     }
 
-    // Update right-side panel with OpenClaw data
     renderCurrentConfig();
     renderToolConsole();
 
-    // Auto-fetch models from URL if we have both URL and key
-    if (quick.baseUrl && quick.hasApiKey) {
+    if (quick.baseUrl && quick.hasApiKey && !_shouldPreserveToolField('openclaw', 'baseUrl') && !_shouldPreserveToolField('openclaw', 'apiKey')) {
       tryAutoFetchModels();
     }
   } catch { /* silent */ }
 }
+
 
 async function fetchOpenClawStateData() {
   const json = await api('/api/openclaw/state');
@@ -5131,10 +5161,10 @@ async function runOpenClawOnboardFlow({ autoOpenDashboard = false } = {}) {
   state.openClawSetupFlowId = flowId;
   ensureOnboardModelConfigState();
   if (!state.current) {
-    await loadState({ preserveForm: true }).catch(() => {});
+    await loadState({ preserveForm: true }).catch((e) => console.warn('[runOpenClawOnboardFlow] loadState failed:', e));
   }
   if (!state.claudeCodeState) {
-    await loadClaudeCodeQuickState().catch(() => {});
+    await loadClaudeCodeQuickState().catch((e) => console.warn('[runOpenClawOnboardFlow] loadClaudeCodeQuickState failed:', e));
   }
 
   const launchJson = await api('/api/openclaw/onboard', {
@@ -5954,8 +5984,12 @@ document.addEventListener('pointerdown', (e) => {
   state.openCodeInstallView.pauseUntil = Date.now() + 15000;
 });
 
+let _pointerupRenderTimer = null;
+
 document.addEventListener('pointerup', () => {
-  setTimeout(() => {
+  if (_pointerupRenderTimer) clearTimeout(_pointerupRenderTimer);
+  _pointerupRenderTimer = setTimeout(() => {
+    _pointerupRenderTimer = null;
     if (state.openClawInstallView.pendingTask && !shouldPauseOpenClawInstallRender()) {
       renderTrackedOpenClawDialog(state.openClawInstallView.pendingTask, { force: true });
     }
@@ -6098,13 +6132,13 @@ function stopDashboardAutoRefresh() {
 function startDashboardAutoRefresh() {
   stopDashboardAutoRefresh();
   if (!(Number(state.dashboardAutoRefreshMs) > 0)) return;
-  state.dashboardAutoRefreshTimer = setInterval(() => {
+state.dashboardAutoRefreshTimer = setInterval(() => {
     if (state.activePage !== 'dashboard' || document.hidden) return;
     if (state.dashboardTool === 'claudecode') {
-      ensureClaudeDashboardData().then(() => renderDashboardPage()).catch(() => {});
+      ensureClaudeDashboardData().then(() => renderDashboardPage()).catch((e) => console.warn('[dashboardAutoRefresh] ensureClaudeDashboardData failed:', e));
       return;
     }
-    refreshDashboardData({ silent: true }).catch(() => {});
+    refreshDashboardData({ silent: true }).catch((e) => console.warn('[dashboardAutoRefresh] refreshDashboardData failed:', e));
   }, Number(state.dashboardAutoRefreshMs));
 }
 
@@ -6466,6 +6500,7 @@ function renderDashboardPage() {
   const claudeAllCacheRead = claude.usage?.totals?.cacheRead || 0;
   const claudeAllCacheCreate = claude.usage?.totals?.cacheCreation || 0;
   const claudeAllCost = claude.usage?.totals?.cost || 0;
+  const claudeOfficialCost = claude.usage?.officialCost || 0;
   const claudeAllModels = claude.usage?.models || [];
   const claudeDaily = claude.usage?.daily || [];
   const claudeDailyModelTokens = claude.usage?.dailyModelTokens || [];
@@ -6514,7 +6549,7 @@ function renderDashboardPage() {
         { label: '输出', value: formatDashboardMetric(ct.output), sub: ct.total ? Math.round(ct.output / ct.total * 100) + '%' : '–' },
         { label: '缓存读', value: formatDashboardMetric(ct.cacheRead), sub: ct.total ? Math.round(ct.cacheRead / ct.total * 100) + '%' : '–' },
         { label: '缓存写', value: formatDashboardMetric(ct.cacheCreate), sub: '上下文填充' },
-        { label: '估算消耗', value: ct.cost ? '$' + ct.cost.toFixed(2) : '$0.00', sub: '基于官方预估', isCost: true },
+        { label: '官方累计', value: claudeOfficialCost ? '$' + claudeOfficialCost.toFixed(2) : '$0.00', sub: '来自 .claude.json', isCost: true },
       ])}
 
       <!-- Main 2-column layout -->
@@ -7992,14 +8027,19 @@ function parseApiRequest(url, options = {}) {
 async function api(url, options = {}) {
   const timeoutMs = options.timeoutMs || 20000;
 
-  if (tauriInvoke) {
+if (tauriInvoke) {
+    let timeoutId;
     try {
       const result = await Promise.race([
         tauriInvoke('backend_request', parseApiRequest(url, options)),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('请求超时')), timeoutMs)),
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('请求超时')), timeoutMs);
+        }),
       ]);
+      clearTimeout(timeoutId);
       return result;
     } catch (error) {
+      clearTimeout(timeoutId);
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   }
@@ -14712,9 +14752,9 @@ async function loadState({ preserveForm = true } = {}) {
   syncCodexAuthView();
   renderCurrentConfig();
 
-  // Skip Codex form restoration when non-Codex tool is active
+// Skip Codex form restoration when non-Codex tool is active
   if (state.activeTool === 'claudecode' || state.activeTool === 'opencode' || state.activeTool === 'openclaw') {
-    loadCodexResumeSessions({ silent: true }).catch(() => {});
+    loadCodexResumeSessions({ silent: true }).catch((e) => console.warn('[restoreFromSnapshot] loadCodexResumeSessions failed:', e));
     refreshProviderHealth();
     renderToolConsole();
     return;
@@ -14731,7 +14771,7 @@ async function loadState({ preserveForm = true } = {}) {
     renderModelOptions([], snapshot.selectedModel);
     syncCodexAuthView();
     renderCurrentConfig();
-    loadCodexResumeSessions({ silent: true }).catch(() => {});
+    loadCodexResumeSessions({ silent: true }).catch((e) => console.warn('[restoreFromSnapshot] loadCodexResumeSessions failed:', e));
     refreshProviderHealth();
     syncShortcutActiveState();
     renderToolConsole();
@@ -14741,7 +14781,7 @@ async function loadState({ preserveForm = true } = {}) {
   syncCodexAuthView();
   renderCurrentConfig();
 
-  loadCodexResumeSessions({ silent: true }).catch(() => {});
+  loadCodexResumeSessions({ silent: true }).catch((e) => console.warn('[restoreFromSnapshot] loadCodexResumeSessions failed:', e));
 
   // Auto-trigger provider health check so the card doesn't stay "待检测"
   refreshProviderHealth();
@@ -14893,9 +14933,12 @@ async function runCodexAction(buttonId, endpoint, busyText, successText) {
   return true;
 }
 
-/** Get base URL and API Key from the current form, works for both Codex and OpenClaw. */
+/** Get base URL and API Key from the current form, works for supported quick modes. */
 function _getDetectParams() {
-  const baseUrl = normalizeBaseUrl(el('baseUrlInput')?.value?.trim() || '');
+  const rawBaseUrl = el('baseUrlInput')?.value?.trim() || '';
+  const baseUrl = state.activeTool === 'claudecode'
+    ? normalizeClaudeBaseUrl(rawBaseUrl)
+    : normalizeBaseUrl(rawBaseUrl);
   const apiKey = el('apiKeyInput')?.value?.trim() || '';
   if (state.activeTool === 'codex') {
     const payload = currentPayload();
@@ -15265,35 +15308,17 @@ async function launchCodexLogin(buttonId = '', terminalProfile = '') {
   return true;
 }
 
-async function launchCodexOnly(terminalProfile = '') {
-  if (state.activeTool === 'claudecode') {
-    return launchClaudeCodeOnly();
-  }
-  if (state.activeTool === 'opencode') {
-    return launchOpenCodeOnly();
-  }
-  if (state.activeTool === 'openclaw') {
-    // If already running, just open the dashboard
-    if (el('launchBtn')?.classList.contains('running') && state._ocGatewayUrl) {
-      await repairOpenClawDashboard({ silent: true });
-      flash('OpenClaw Dashboard 已打开', 'success');
-      return;
-    }
-    return launchOpenClawOnly();
-  }
-  await launchCodex('launchBtn', 'Codex 已启动', terminalProfile);
-}
-
 async function launchOpenClawOnly() {
   const launchBtn = el('launchBtn');
   const orig = launchBtn?.textContent || '启动 OpenClaw';
   if (!isOpenClawInstalled(state.openclawState || {})) {
     await openClawInstallMethodDialog(launchBtn);
     await loadTools();
-    await loadOpenClawQuickState().catch(() => {});
+    await loadOpenClawQuickState().catch((e) => console.warn('[launchOpenClawOnly] loadOpenClawQuickState failed:', e));
     return false;
   }
   if (launchBtn) launchBtn.textContent = '启动中...';
+
 
   // --- build launch tracker state ---
   const startedAt = Date.now();
@@ -15717,8 +15742,7 @@ async function launchClaudeCodeOnly() {
       return false;
     }
     await loadTools();
-    await loadClaudeCodeQuickState({ force: false, cacheOnly: false }).catch(() => {});
-    flash('Claude Code 安装完成', 'success');
+await loadClaudeCodeQuickState({ force: false, cacheOnly: false }).catch((e) => console.warn('[launchClaudeCodeOnly] loadClaudeCodeQuickState failed:', e));
     return true;
   }
   if (launchBtn) launchBtn.textContent = '启动中...';
@@ -16468,7 +16492,9 @@ function wizardUpdateConfigBtn() {
 }
 
 async function wizardDetectModels() {
-  const baseUrl = normalizeBaseUrl(el('wizardBaseUrl').value);
+  const baseUrl = state.wizardSelectedTool === 'claudecode'
+    ? normalizeClaudeBaseUrl(el('wizardBaseUrl').value)
+    : normalizeBaseUrl(el('wizardBaseUrl').value);
   const apiKey = el('wizardApiKey').value.trim();
   if (!baseUrl || !apiKey) {
     el('wizardDetectStatus').textContent = '请先填写 URL 和 Key';
@@ -16523,7 +16549,9 @@ async function wizardDetectModels() {
 async function wizardSaveAndComplete() {
   const tool = state.wizardSelectedTool;
   const meta = WIZARD_TOOL_META[tool];
-  const baseUrl = normalizeBaseUrl(el('wizardBaseUrl').value);
+  const baseUrl = tool === 'claudecode'
+    ? normalizeClaudeBaseUrl(el('wizardBaseUrl').value)
+    : normalizeBaseUrl(el('wizardBaseUrl').value);
   const apiKey = el('wizardApiKey').value.trim();
   const model = el('wizardModelSelect').value || (state.wizardDetected?.recommendedModel || '');
   const providerKey = inferProviderKey(baseUrl);
@@ -16617,15 +16645,22 @@ async function wizardSaveAndComplete() {
 }
 
 function bindEvents() {
-  el('baseUrlInput').addEventListener('input', () => applyDerivedMeta(false));
+  el('baseUrlInput').addEventListener('input', () => {
+    _markCurrentToolFieldDirty('baseUrl', el('baseUrlInput').value);
+    applyDerivedMeta(false);
+  });
   el('baseUrlInput').addEventListener('blur', () => {
     const rawValue = el('baseUrlInput').value;
     const value = state.activeTool === 'openclaw'
       ? normalizeOpenClawBaseUrl(rawValue, el('modelSelect')?.value || '', el('openClawProtocolSelect')?.value || '')
-      : normalizeBaseUrl(rawValue);
-    if (value) el('baseUrlInput').value = value;
+      : state.activeTool === 'claudecode'
+        ? normalizeClaudeBaseUrl(rawValue)
+        : normalizeBaseUrl(rawValue);
+    if (value) {
+      el('baseUrlInput').value = value;
+      _markCurrentToolFieldDirty('baseUrl', value);
+    }
     applyDerivedMeta(false);
-    // Auto-fetch models from URL for Codex / OpenCode / OpenClaw
     if ((state.activeTool === 'codex' || state.activeTool === 'opencode' || state.activeTool === 'openclaw') && value) {
       tryAutoFetchModels();
     }
@@ -16633,18 +16668,21 @@ function bindEvents() {
   el('claudeProviderKeyInput')?.addEventListener('input', (event) => {
     if (state.activeTool !== 'claudecode') return;
     const normalized = normalizeProviderKey(event.target.value || '');
+    _markCurrentToolFieldDirty('providerKey', event.target.value || '');
     state.claudeSelectedProviderKey = normalized || state.claudeSelectedProviderKey || '';
     renderCurrentConfig();
   });
   el('claudeProviderKeyInput')?.addEventListener('blur', (event) => {
     const normalized = normalizeProviderKey(event.target.value || '');
     event.target.value = normalized;
+    _markCurrentToolFieldDirty('providerKey', normalized);
     if (state.activeTool === 'claudecode' && normalized) {
       state.claudeSelectedProviderKey = normalized;
       renderCurrentConfig();
     }
   });
   el('apiKeyInput').addEventListener('input', () => {
+    _markCurrentToolFieldDirty('apiKey', el('apiKeyInput').value);
     const raw = el('apiKeyInput').value.trim();
     const currentActual = state.apiKeyField.actualValue.trim();
     state.apiKeyField.dirty = Boolean(raw) && (!state.apiKeyField.hasStored || !currentActual || raw !== currentActual);

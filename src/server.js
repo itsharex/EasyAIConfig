@@ -90,6 +90,28 @@ function fail(res, error) {
   });
 }
 
+const ALLOWED_PATH_ROOTS = [
+  os.homedir(),
+  process.cwd(),
+  '/tmp',
+  '/var/tmp',
+  process.platform === 'win32' ? process.env.TEMP : null,
+  process.platform === 'win32' ? process.env.TMP : null,
+].filter(Boolean);
+
+function isPathAllowed(userPath) {
+  if (!userPath || typeof userPath !== 'string') return false;
+  const normalized = path.resolve(userPath);
+  return ALLOWED_PATH_ROOTS.some((root) => normalized.startsWith(root + path.sep) || normalized === root);
+}
+
+function validatePathOrThrow(userPath, paramName = 'path') {
+  if (userPath && !isPathAllowed(userPath)) {
+    throw new Error(`Invalid ${paramName}: path traversal detected`);
+  }
+  return userPath;
+}
+
 
 const OPENCODE_DESKTOP_TASKS = new Map();
 const OPENCODE_DESKTOP_TASK_TTL_MS = 30 * 60 * 1000;
@@ -854,10 +876,11 @@ export async function startServer() {
     }
   });
 
-  app.get('/api/setup/check', async (req, res) => {
+app.get('/api/setup/check', async (req, res) => {
     try {
+      const codexHome = validatePathOrThrow(req.query.codexHome, 'codexHome');
       const data = await checkSetupEnvironment({
-        codexHome: req.query.codexHome || undefined,
+        codexHome: codexHome || undefined,
       });
       ok(res, { data });
     } catch (error) {
@@ -867,10 +890,12 @@ export async function startServer() {
 
   app.get('/api/state', async (req, res) => {
     try {
+      const projectPath = validatePathOrThrow(req.query.projectPath, 'projectPath');
+      const codexHome = validatePathOrThrow(req.query.codexHome, 'codexHome');
       const data = await loadState({
         scope: req.query.scope || 'global',
-        projectPath: req.query.projectPath || '',
-        codexHome: req.query.codexHome || undefined,
+        projectPath: projectPath || '',
+        codexHome: codexHome || undefined,
       });
       ok(res, { data });
     } catch (error) {
@@ -987,11 +1012,13 @@ export async function startServer() {
     }
   });
 
-  app.get('/api/codex/sessions', async (req, res) => {
+app.get('/api/codex/sessions', async (req, res) => {
     try {
+      const cwd = validatePathOrThrow(req.query.cwd, 'cwd');
+      const codexHome = validatePathOrThrow(req.query.codexHome, 'codexHome');
       ok(res, { data: await listCodexSessions({
-        cwd: req.query.cwd || undefined,
-        codexHome: req.query.codexHome || undefined,
+        cwd: cwd || undefined,
+        codexHome: codexHome || undefined,
         limit: req.query.limit || undefined,
         all: req.query.all === '1' || req.query.all === 'true',
       }) });
@@ -1016,10 +1043,11 @@ export async function startServer() {
     }
   });
 
-  app.get('/api/dashboard/codex-usage', async (req, res) => {
+app.get('/api/dashboard/codex-usage', async (req, res) => {
     try {
+      const codexHome = validatePathOrThrow(req.query.codexHome, 'codexHome');
       ok(res, { data: await getCodexUsageMetrics({
-        codexHome: req.query.codexHome || undefined,
+        codexHome: codexHome || undefined,
         days: req.query.days || undefined,
         force: req.query.force === '1' || req.query.force === 'true',
         cacheOnly: req.query.cacheOnly === '1' || req.query.cacheOnly === 'true',
@@ -1272,9 +1300,10 @@ export async function startServer() {
     }
   });
 
-  app.get('/api/opencode/ecosystem/state', async (req, res) => {
+app.get('/api/opencode/ecosystem/state', async (req, res) => {
     try {
-      ok(res, { data: await getOpenCodeEcosystemState({ cwd: req.query.cwd || '' }) });
+      const cwd = validatePathOrThrow(req.query.cwd, 'cwd');
+      ok(res, { data: await getOpenCodeEcosystemState({ cwd: cwd || '' }) });
     } catch (error) {
       fail(res, error);
     }

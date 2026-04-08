@@ -657,19 +657,23 @@ fn trim_opencode_install_tasks(tasks: &mut BTreeMap<String, OpenCodeInstallTask>
 }
 
 fn insert_opencode_install_task(task: OpenCodeInstallTask) {
-  let mut tasks = opencode_install_tasks().lock().expect("opencode tasks lock poisoned");
-  tasks.insert(task.task_id.clone(), task);
-  trim_opencode_install_tasks(&mut tasks);
+  match opencode_install_tasks().lock() {
+    Ok(mut tasks) => {
+      tasks.insert(task.task_id.clone(), task);
+      trim_opencode_install_tasks(&mut tasks);
+    }
+    Err(e) => eprintln!("opencode tasks lock poisoned: {}", e),
+  }
 }
 
 fn with_opencode_install_task<R>(task_id: &str, mut update: impl FnMut(&mut OpenCodeInstallTask) -> R) -> Option<R> {
-  let mut tasks = opencode_install_tasks().lock().expect("opencode tasks lock poisoned");
+  let mut tasks = opencode_install_tasks().lock().ok()?;
   let task = tasks.get_mut(task_id)?;
   Some(update(task))
 }
 
 fn get_opencode_install_task_snapshot(task_id: &str) -> Option<OpenCodeInstallTask> {
-  let tasks = opencode_install_tasks().lock().expect("opencode tasks lock poisoned");
+  let tasks = opencode_install_tasks().lock().ok()?;
   tasks.get(task_id).cloned()
 }
 
@@ -1224,19 +1228,23 @@ fn trim_openclaw_install_tasks(tasks: &mut BTreeMap<String, OpenClawInstallTask>
 }
 
 fn insert_openclaw_install_task(task: OpenClawInstallTask) {
-  let mut tasks = openclaw_install_tasks().lock().expect("openclaw tasks lock poisoned");
-  tasks.insert(task.task_id.clone(), task);
-  trim_openclaw_install_tasks(&mut tasks);
+  match openclaw_install_tasks().lock() {
+    Ok(mut tasks) => {
+      tasks.insert(task.task_id.clone(), task);
+      trim_openclaw_install_tasks(&mut tasks);
+    }
+    Err(e) => eprintln!("openclaw tasks lock poisoned: {}", e),
+  }
 }
 
 fn with_openclaw_install_task<R>(task_id: &str, mut update: impl FnMut(&mut OpenClawInstallTask) -> R) -> Option<R> {
-  let mut tasks = openclaw_install_tasks().lock().expect("openclaw tasks lock poisoned");
+  let mut tasks = openclaw_install_tasks().lock().ok()?;
   let task = tasks.get_mut(task_id)?;
   Some(update(task))
 }
 
 fn get_openclaw_install_task_snapshot(task_id: &str) -> Option<OpenClawInstallTask> {
-  let tasks = openclaw_install_tasks().lock().expect("openclaw tasks lock poisoned");
+  let tasks = openclaw_install_tasks().lock().ok()?;
   tasks.get(task_id).cloned()
 }
 
@@ -2502,6 +2510,46 @@ fn is_same_or_nested_path(left: &str, right: &str) -> bool {
   left_path == right_path || left_path.starts_with(&right_path) || right_path.starts_with(&left_path)
 }
 
+fn is_uuid_like(text: &str) -> bool {
+  if text.len() != 36 {
+    return false;
+  }
+  text.chars().enumerate().all(|(idx, ch)| match idx {
+    8 | 13 | 18 | 23 => ch == '-',
+    _ => ch.is_ascii_hexdigit(),
+  })
+}
+
+fn extract_codex_session_id_from_stem(stem: &str) -> String {
+  let trimmed = stem.trim();
+  if trimmed.len() >= 36 {
+    if let Some(candidate) = trimmed.get(trimmed.len() - 36..) {
+      if is_uuid_like(candidate) {
+        return candidate.to_string();
+      }
+    }
+  }
+  trimmed.to_string()
+}
+
+fn normalize_codex_session_id(session_id: &str) -> String {
+  let raw = session_id.trim();
+  if raw.is_empty() {
+    return String::new();
+  }
+  if is_uuid_like(raw) {
+    return raw.to_string();
+  }
+  if raw.len() >= 36 {
+    if let Some(candidate) = raw.get(raw.len() - 36..) {
+      if is_uuid_like(candidate) {
+        return candidate.to_string();
+      }
+    }
+  }
+  raw.to_string()
+}
+
 fn read_codex_session_summary(file_path: &Path, modified_ms: u64) -> Option<Value> {
   let file = File::open(file_path).ok()?;
   let reader = BufReader::new(file);
@@ -2532,6 +2580,17 @@ fn read_codex_session_summary(file_path: &Path, modified_ms: u64) -> Option<Valu
       continue;
     }
     if event_type == "turn_context" {
+      if cwd.is_empty() {
+        if let Some(turn_cwd) = event
+          .get("payload")
+          .and_then(Value::as_object)
+          .and_then(|item| item.get("cwd"))
+          .and_then(Value::as_str)
+          .map(str::trim)
+          .filter(|value| !value.is_empty()) {
+          cwd = turn_cwd.to_string();
+        }
+      }
       if let Some(turn_model) = event
         .get("payload")
         .and_then(Value::as_object)
@@ -2549,13 +2608,14 @@ fn read_codex_session_summary(file_path: &Path, modified_ms: u64) -> Option<Valu
   }
 
   let stem = file_path.file_stem().and_then(|name| name.to_str()).unwrap_or("unknown");
+  let fallback_session_id = extract_codex_session_id_from_stem(stem);
   let updated_at_ms = if modified_ms > 0 { modified_ms } else { chrono::Utc::now().timestamp_millis().max(0) as u64 };
   let updated_at = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(updated_at_ms.min(i64::MAX as u64) as i64)
     .map(|time| time.to_rfc3339())
     .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
 
   Some(json!({
-    "sessionId": if session_id.is_empty() { stem.to_string() } else { session_id },
+    "sessionId": if session_id.is_empty() { fallback_session_id } else { session_id },
     "title": if title.is_empty() { normalize_codex_session_preview(stem, "未命名会话") } else { title },
     "cwd": cwd,
     "provider": if provider.is_empty() { "unknown".to_string() } else { provider },
@@ -2763,7 +2823,7 @@ fn launch_codex_session_action(body: &Value, action: &str) -> Result<Value, Stri
     let input = get_string(&object, "cwd");
     if input.is_empty() { home_dir()? } else { PathBuf::from(input) }
   };
-  let session_id = get_string(&object, "sessionId").trim().to_string();
+  let session_id = normalize_codex_session_id(&get_string(&object, "sessionId"));
   let last = object.get("last").and_then(Value::as_bool).unwrap_or(false);
   let terminal_profile = get_string(&object, "terminalProfile");
   let codex_binary = find_codex_binary();

@@ -615,21 +615,31 @@ async function readCodexUsageFromSqlite(codexHome, dayCount) {
       try {
         // Read only first 16KB - turn_context is near the top of the file
         const fd = await fs.open(rolloutPath, 'r');
-        const buf = Buffer.alloc(16384);
-        const { bytesRead } = await fd.read(buf, 0, 16384, 0);
-        await fd.close();
-        const chunk = buf.toString('utf8', 0, bytesRead);
-        for (const line of chunk.split(/\r?\n/)) {
-          if (!line.includes('turn_context')) continue;
-          try {
-            const ev = JSON.parse(line);
-            if (ev.type === 'turn_context') {
-              const m = String(ev.payload?.model || '').trim();
-              if (m) { modelCache.set(rolloutPath, m); break; }
+        try {
+          const buf = Buffer.alloc(16384);
+          const { bytesRead } = await fd.read(buf, 0, 16384, 0);
+          const chunk = buf.toString('utf8', 0, bytesRead);
+          for (const line of chunk.split(/\r?\n/)) {
+            if (!line.includes('turn_context')) continue;
+            try {
+              const ev = JSON.parse(line);
+              if (ev.type === 'turn_context') {
+                const m = String(ev.payload?.model || '').trim();
+                if (m) {
+                  modelCache.set(rolloutPath, m);
+                  break;
+                }
+              }
+            } catch {
+              // skip malformed lines
             }
-          } catch { /* skip */ }
+          }
+        } finally {
+          await fd.close();
         }
-      } catch { /* file not readable, skip */ }
+      } catch {
+        // file not readable, skip
+      }
     }
   }
 
@@ -2000,12 +2010,16 @@ function normalizeBaseUrl(baseUrl) {
   url.pathname = url.pathname.replace(/\/+$/, '');
   if (!url.pathname || url.pathname === '/') {
     url.pathname = '/v1';
-  } else if (!/\/v1$/i.test(url.pathname)) {
+  } else if (/\/v\d+$/i.test(url.pathname)) {
+    // Keep explicit versioned API roots like /v1 or /v4 intact.
+  } else if (/\/(models|chat\/completions|responses|embeddings|completions|audio(?:\/speech|\/transcriptions|\/translations)?|images(?:\/generations|\/edits|\/variations)?|moderations)$/i.test(url.pathname)) {
+    url.pathname = url.pathname.replace(/\/(models|chat\/completions|responses|embeddings|completions|audio(?:\/speech|\/transcriptions|\/translations)?|images(?:\/generations|\/edits|\/variations)?|moderations)$/i, '');
+    if (!url.pathname) url.pathname = '/v1';
+  } else {
     url.pathname = `${url.pathname}/v1`;
   }
   return url.toString().replace(/\/+$/, '');
 }
-
 function slugifyProviderKey(value) {
   const slug = String(value || '')
     .trim()
@@ -2636,7 +2650,8 @@ function launchWindowsBackgroundCommand(cwd, commandText, { toolLabel = 'OpenCla
 
 function buildWindowsCommand(binaryPath, args = []) {
   const program = quoteWindowsCmdArg(normalizeWindowsCmdPath(binaryPath || ''));
-  return [program, ...args].filter(Boolean).join(' ');
+  const safeArgs = args.map((arg) => quoteWindowsCmdArg(arg));
+  return [program, ...safeArgs].filter(Boolean).join(' ');
 }
 
 async function findWindowsListeningPids(port) {
@@ -3274,6 +3289,23 @@ function normalizeCodexSessionPreview(text = '', fallback = '未命名会话') {
   return collapsed.length > 72 ? `${collapsed.slice(0, 72)}…` : collapsed;
 }
 
+function extractCodexSessionIdFromFilename(filePath = '') {
+  const stem = path.basename(String(filePath || ''), '.jsonl');
+  const match = stem.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  if (match?.[1]) return match[1];
+  return stem;
+}
+
+function normalizeCodexSessionId(sessionId = '') {
+  const raw = String(sessionId || '').trim();
+  if (!raw) return '';
+  const direct = raw.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  if (direct?.[0]) return direct[0];
+  const tail = raw.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+  if (tail?.[1]) return tail[1];
+  return raw;
+}
+
 function extractCodexUserMessagePreview(event = {}) {
   if (event.type === 'event_msg' && event.payload?.type === 'user_message') {
     return normalizeCodexSessionPreview(event.payload?.message || '');
@@ -3332,8 +3364,13 @@ async function readCodexSessionSummary(filePath) {
     }
 
     if (event.type === 'turn_context') {
-      const turnModel = String(event.payload?.model || '').trim();
+      const turnPayload = event.payload && typeof event.payload === 'object' ? event.payload : {};
+      const turnModel = String(turnPayload.model || '').trim();
       if (turnModel) model = turnModel;
+      if (!cwd) {
+        const turnCwd = String(turnPayload.cwd || '').trim();
+        if (turnCwd) cwd = turnCwd;
+      }
       continue;
     }
 
@@ -3342,9 +3379,10 @@ async function readCodexSessionSummary(filePath) {
     }
   }
 
+  const fallbackSessionId = extractCodexSessionIdFromFilename(filePath);
   const updatedAtMs = Number(stat?.mtimeMs || Date.now());
   return {
-    sessionId: sessionId || path.basename(filePath, '.jsonl'),
+    sessionId: sessionId || fallbackSessionId,
     title: title || normalizeCodexSessionPreview(path.basename(filePath, '.jsonl')),
     cwd,
     provider: provider || 'unknown',
@@ -3404,10 +3442,11 @@ async function launchCodexSessionAction({ cwd, sessionId = '', action = 'resume'
   if (!codexBinary.installed) {
     throw new Error('Codex 尚未安装，请先点击安装');
   }
+  const normalizedSessionId = normalizeCodexSessionId(sessionId);
   const subcommand = action === 'fork' ? 'fork' : 'resume';
   const args = [subcommand];
   if (last) args.push('--last');
-  else if (String(sessionId || '').trim()) args.push(String(sessionId || '').trim());
+  else if (normalizedSessionId) args.push(normalizedSessionId);
   else throw new Error('缺少会话 ID');
 
   const message = launchTerminalCommand(targetCwd, {
@@ -3417,7 +3456,7 @@ async function launchCodexSessionAction({ cwd, sessionId = '', action = 'resume'
     commandText: buildCodexSessionCommand(codexBinary, args),
     terminalProfile,
   });
-  return { ok: true, cwd: targetCwd, sessionId: String(sessionId || '').trim(), message };
+  return { ok: true, cwd: targetCwd, sessionId: normalizedSessionId, message };
 }
 
 export async function resumeCodexSession({ cwd, sessionId = '', last = false, terminalProfile = 'auto' } = {}) {
@@ -3484,69 +3523,198 @@ async function writeJsonFile(filePath, data) {
 
 async function readClaudeTelemetryUsage({ days = 30 } = {}) {
   const home = claudeCodeHome();
-  const telemetryRoot = path.join(home, 'telemetry');
+  const projectsRoot = path.join(home, 'projects');
   const cutoffMs = Date.now() - Math.max(1, Math.min(90, Number(days) || 30)) * 24 * 60 * 60 * 1000;
   const sessions = new Map();
   const daily = new Map();
   const totals = { input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0, cost: 0 };
+  const modelTotals = new Map(); // model -> { input, output, cacheRead, cacheCreation, total }
+  const dailyModelTokens = new Map(); // date -> { tokensByModel: { model: total } }
 
-  for (const filePath of await listFilesRecursive(telemetryRoot)) {
-    if (!filePath.endsWith('.json')) continue;
-    let content = '';
+  // Pricing per million tokens (Anthropic official)
+  const PRICING = {
+    'claude-opus-4-6':   { input: 15, output: 75, cacheRead: 1.5, cacheCreate: 18.75 },
+    'claude-sonnet-4-6': { input: 3,  output: 15, cacheRead: 0.3, cacheCreate: 3.75 },
+    'claude-haiku-4-5':  { input: 0.8, output: 4, cacheRead: 0.08, cacheCreate: 1 },
+  };
+  function matchPricing(model) {
+    const m = (model || '').toLowerCase();
+    if (m.includes('opus'))   return PRICING['claude-opus-4-6'];
+    if (m.includes('sonnet')) return PRICING['claude-sonnet-4-6'];
+    if (m.includes('haiku'))  return PRICING['claude-haiku-4-5'];
+    return PRICING['claude-opus-4-6']; // default
+  }
+  function calcCost(u, model) {
+    const p = matchPricing(model);
+    return (u.input * p.input + u.output * p.output + u.cacheRead * p.cacheRead + u.cacheCreation * p.cacheCreate) / 1_000_000;
+  }
+
+  // Scan all project directories for session JSONL files
+  let projectDirs = [];
+  try {
+    const entries = await fs.readdir(projectsRoot, { withFileTypes: true });
+    projectDirs = entries.filter(e => e.isDirectory()).map(e => path.join(projectsRoot, e.name));
+  } catch { /* no projects dir */ }
+
+  for (const projDir of projectDirs) {
+    let files = [];
     try {
-      content = await fs.readFile(filePath, 'utf8');
-    } catch {
-      continue;
-    }
-    for (const line of content.split(/\r?\n/)) {
-      if (!line.trim()) continue;
-      let event;
-      try { event = JSON.parse(line); } catch { continue; }
-      const data = event?.event_data;
-      if (!data || data.event_name !== 'tengu_exit') continue;
-      const timestamp = Date.parse(String(data.client_timestamp || ''));
-      if (!Number.isFinite(timestamp) || timestamp < cutoffMs) continue;
-      let meta = {};
-      try { meta = JSON.parse(String(data.additional_metadata || '{}')); } catch { meta = {}; }
-      const sessionId = String(meta.last_session_id || data.session_id || '').trim() || `anon:${timestamp}`;
-      if (sessions.has(sessionId)) continue;
-      const item = {
+      files = (await fs.readdir(projDir)).filter(f => f.endsWith('.jsonl'));
+    } catch { continue; }
+
+    for (const fileName of files) {
+      const filePath = path.join(projDir, fileName);
+      const sessionId = fileName.replace('.jsonl', '');
+      let content = '';
+      try { content = await fs.readFile(filePath, 'utf8'); } catch { continue; }
+
+      const sessionUsage = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0, cost: 0 };
+      const sessionModels = new Map();
+      let lastTimestamp = null;
+      let primaryModel = '';
+
+      for (const line of content.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        let record;
+        try { record = JSON.parse(line); } catch { continue; }
+        if (!record || typeof record !== 'object') continue;
+
+        // Extract timestamp
+        const ts = record.timestamp;
+        let parsedTs = null;
+        if (typeof ts === 'string') {
+          parsedTs = Date.parse(ts);
+        } else if (typeof ts === 'number') {
+          parsedTs = ts > 1e12 ? ts : ts * 1000;
+        }
+        if (Number.isFinite(parsedTs)) lastTimestamp = parsedTs;
+
+        // Extract usage from assistant messages
+        const msg = record.message;
+        if (!msg || typeof msg !== 'object') continue;
+        const usage = msg.usage;
+        if (!usage) continue;
+
+        const model = String(msg.model || '').trim();
+        if (model && !model.startsWith('<')) primaryModel = model;
+
+        const u = {
+          input: Number(usage.input_tokens || 0),
+          output: Number(usage.output_tokens || 0),
+          cacheRead: Number(usage.cache_read_input_tokens || 0),
+          cacheCreation: Number(usage.cache_creation_input_tokens || 0),
+        };
+        sessionUsage.input += u.input;
+        sessionUsage.output += u.output;
+        sessionUsage.cacheRead += u.cacheRead;
+        sessionUsage.cacheCreation += u.cacheCreation;
+
+        // Track per-model usage (skip synthetic/internal model names)
+        if (model && !model.startsWith('<')) {
+          const prev = sessionModels.get(model) || { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
+          prev.input += u.input;
+          prev.output += u.output;
+          prev.cacheRead += u.cacheRead;
+          prev.cacheCreation += u.cacheCreation;
+          sessionModels.set(model, prev);
+        }
+
+        // Aggregate into daily bucket by message timestamp
+        if (Number.isFinite(parsedTs) && parsedTs >= cutoffMs) {
+          const dayKey = new Date(parsedTs).toISOString().slice(0, 10);
+          if (!daily.has(dayKey)) daily.set(dayKey, { date: dayKey, input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0, cost: 0 });
+          const bucket = daily.get(dayKey);
+          bucket.input += u.input;
+          bucket.output += u.output;
+          bucket.cacheRead += u.cacheRead;
+          bucket.cacheCreation += u.cacheCreation;
+          bucket.total += u.input + u.output;
+          bucket.cost += calcCost(u, model);
+
+          // Daily model tokens
+          if (!dailyModelTokens.has(dayKey)) dailyModelTokens.set(dayKey, { date: dayKey, tokensByModel: {} });
+          const dmt = dailyModelTokens.get(dayKey);
+          if (model && !model.startsWith('<')) {
+            dmt.tokensByModel[model] = (dmt.tokensByModel[model] || 0) + u.input + u.output;
+          }
+        }
+      }
+
+      // Skip sessions outside time window or with no data
+      if (!lastTimestamp || lastTimestamp < cutoffMs) continue;
+      if (sessionUsage.input === 0 && sessionUsage.output === 0) continue;
+
+      sessionUsage.total = sessionUsage.input + sessionUsage.output;
+      sessionUsage.cost = 0;
+      for (const [model, mu] of sessionModels) {
+        sessionUsage.cost += calcCost(mu, model);
+        // Aggregate into global model totals
+        const prev = modelTotals.get(model) || { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
+        prev.input += mu.input;
+        prev.output += mu.output;
+        prev.cacheRead += mu.cacheRead;
+        prev.cacheCreation += mu.cacheCreation;
+        prev.total += mu.input + mu.output;
+        modelTotals.set(model, prev);
+      }
+
+      sessions.set(sessionId, {
         sessionId,
-        model: String(data.model || '').trim(),
-        updatedAt: new Date(timestamp).toISOString(),
-        input: Number(meta.last_session_total_input_tokens || 0),
-        output: Number(meta.last_session_total_output_tokens || 0),
-        cacheCreation: Number(meta.last_session_total_cache_creation_input_tokens || 0),
-        cacheRead: Number(meta.last_session_total_cache_read_input_tokens || 0),
-        cost: Number(meta.last_session_cost || 0),
-      };
-      item.total = item.input + item.output;
-      sessions.set(sessionId, item);
-      totals.input += item.input;
-      totals.output += item.output;
-      totals.cacheCreation += item.cacheCreation;
-      totals.cacheRead += item.cacheRead;
-      totals.total += item.total;
-      totals.cost += item.cost;
-      const dayKey = item.updatedAt.slice(0, 10);
-      if (!daily.has(dayKey)) daily.set(dayKey, { date: dayKey, input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0, cost: 0 });
-      const bucket = daily.get(dayKey);
-      bucket.input += item.input;
-      bucket.output += item.output;
-      bucket.cacheCreation += item.cacheCreation;
-      bucket.cacheRead += item.cacheRead;
-      bucket.total += item.total;
-      bucket.cost += item.cost;
+        model: primaryModel,
+        updatedAt: new Date(lastTimestamp).toISOString(),
+        ...sessionUsage,
+      });
+
+      totals.input += sessionUsage.input;
+      totals.output += sessionUsage.output;
+      totals.cacheCreation += sessionUsage.cacheCreation;
+      totals.cacheRead += sessionUsage.cacheRead;
+      totals.total += sessionUsage.total;
+      totals.cost += sessionUsage.cost;
     }
   }
 
+  const models = [...modelTotals.entries()]
+    .map(([model, t]) => ({ model, totals: t }))
+    .sort((a, b) => b.totals.total - a.totals.total);
+
+  // Read official cumulative cost from ~/.claude.json (Claude Code's own tracking)
+  let officialCost = 0;
+  let officialModels = [];
+  try {
+    const claudeJsonPath = path.join(os.homedir(), '.claude.json');
+    const claudeJson = await readJsonFile(claudeJsonPath);
+    if (claudeJson.projects && typeof claudeJson.projects === 'object') {
+      for (const proj of Object.values(claudeJson.projects)) {
+        officialCost += Number(proj.lastCost || 0);
+        if (proj.lastModelUsage && typeof proj.lastModelUsage === 'object') {
+          for (const [model, mu] of Object.entries(proj.lastModelUsage)) {
+            if (model.startsWith('<')) continue;
+            officialModels.push({
+              model,
+              costUSD: Number(mu.costUSD || 0),
+              inputTokens: Number(mu.inputTokens || 0),
+              outputTokens: Number(mu.outputTokens || 0),
+              cacheReadInputTokens: Number(mu.cacheReadInputTokens || 0),
+              cacheCreationInputTokens: Number(mu.cacheCreationInputTokens || 0),
+            });
+          }
+        }
+      }
+    }
+  } catch { /* ignore */ }
+
   return {
     days: Math.max(1, Math.min(90, Number(days) || 30)),
-    source: telemetryRoot,
+    source: projectsRoot,
     generatedAt: new Date().toISOString(),
     totals,
+    officialCost,
+    officialModels,
     daily: [...daily.values()].sort((a, b) => a.date.localeCompare(b.date)),
     sessions: [...sessions.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 12),
+    models,
+    dailyModelTokens: [...dailyModelTokens.values()].sort((a, b) => a.date.localeCompare(b.date)),
   };
 }
 

@@ -61,6 +61,15 @@
                 <path d="M6.5 5v3M5 6.5h3" />
               </svg></span><span>工具安装</span>
           </button>
+          <button class="nav-item" data-page-target="tasks">
+            <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
+                stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="2" width="9" height="9" rx="1.5" />
+                <path d="M4 4.5h5" />
+                <path d="M4 6.5h3.2" />
+                <path d="M4 8.5h4.2" />
+              </svg></span><span>任务管理</span><span class="nav-badge" id="taskNavBadge" style="display:none"></span>
+          </button>
           <button class="nav-item" data-page-target="about">
             <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
                 stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
@@ -83,12 +92,6 @@
               </svg></span><span>初始化向导</span>
           </button>
         </nav>
-
-        <div class="sidebar-status">
-          <div class="sidebar-line">
-            <span class="sidebar-label">桌面应用</span>
-            <div class="sidebar-inline">
-              <span id="appUpdatePill" class="badge">客户端检测中</span>
               <button id="appUpdateBtn" class="secondary ghost-btn" hidden>检查更新</button>
             </div>
           </div>

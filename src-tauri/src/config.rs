@@ -1,3 +1,20 @@
+use serde_json::{json, Value};
+use std::fs;
+use std::path::{Path, PathBuf};
+use toml::Value as TomlValue;
+
+use crate::codex::find_codex_binary;
+use crate::provider::{
+  detect_saved_provider, flatten_auth_json, get_string, infer_env_key, infer_provider_label,
+  infer_provider_seed, normalize_base_url, reveal_provider_api_key, slugify_provider_key,
+  summarize_providers,
+};
+use crate::{
+  app_home, apply_patch, backups_root, default_codex_home, ensure_dir, home_dir,
+  normalize_settings_patch, parse_env, parse_json_object, parse_toml_config, read_text,
+  stringify_env, stringify_toml_config, timestamp, write_text,
+};
+
 struct ScopePaths {
   scope: String,
   root_path: PathBuf,
@@ -509,8 +526,23 @@ pub(crate) fn restore_backup(body: &Value) -> Result<Value, String> {
   let project_path = get_string(&object, "projectPath");
   let paths = scope_paths(if scope.is_empty() { "global" } else { &scope }, &project_path, &codex_home)?;
   let backup_dir = backups_root()?.join(backup_name);
-  write_text(&paths.config_path, &read_text(&backup_dir.join("config.toml.bak"))?)?;
-  write_text(&paths.env_path, &read_text(&backup_dir.join(".env.bak"))?)?;
+  if !backup_dir.is_dir() {
+    return Err("Backup does not exist".to_string());
+  }
+
+  let config_backup = backup_dir.join("config.toml.bak");
+  let env_backup = backup_dir.join(".env.bak");
+  if !config_backup.is_file() {
+    return Err("Backup config.toml.bak is missing".to_string());
+  }
+  if !env_backup.is_file() {
+    return Err("Backup .env.bak is missing".to_string());
+  }
+
+  let config_content = fs::read_to_string(&config_backup).map_err(|error| error.to_string())?;
+  let env_content = fs::read_to_string(&env_backup).map_err(|error| error.to_string())?;
+  write_text(&paths.config_path, &config_content)?;
+  write_text(&paths.env_path, &env_content)?;
   Ok(json!({
     "restored": true,
     "paths": {
@@ -522,19 +554,3 @@ pub(crate) fn restore_backup(body: &Value) -> Result<Value, String> {
   }))
 }
 
-use serde_json::{json, Value};
-use std::fs;
-use std::path::{Path, PathBuf};
-use toml::Value as TomlValue;
-
-use crate::codex::find_codex_binary;
-use crate::provider::{
-  detect_saved_provider, flatten_auth_json, get_string, infer_env_key, infer_provider_label,
-  infer_provider_seed, normalize_base_url, reveal_provider_api_key, slugify_provider_key,
-  summarize_providers,
-};
-use crate::{
-  app_home, apply_patch, backups_root, default_codex_home, ensure_dir, home_dir,
-  normalize_settings_patch, parse_env, parse_json_object, parse_toml_config, read_text,
-  stringify_env, stringify_toml_config, timestamp, write_text,
-};
