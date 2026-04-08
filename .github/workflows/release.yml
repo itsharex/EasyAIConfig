@@ -32,39 +32,53 @@ jobs:
         with:
           script: |
             const tag = '${{ steps.get-tag.outputs.tag }}';
-            const { data } = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: tag,
-              name: `EasyAIConfig ${tag}`,
-              body: [
-                `## EasyAIConfig ${tag}`,
-                '',
-                '### 📦 下载',
-                '| 平台 | 文件 |',
-                '|------|------|',
-                '| macOS (Apple Silicon) | `.dmg` |',
-                '| macOS (Intel) | `.dmg` |',
-                '| Windows | `.msi` / `.exe` |',
-                '| Linux | `.deb` / `.AppImage` |',
-                '',
-                '### 🍎 macOS 安装说明',
-                '下载 `.dmg` 后拖入 Applications，首次打开前运行：',
-                '```bash',
-                'sudo xattr -rd com.apple.quarantine /Applications/EasyAIConfig.app',
-                '```',
-                '然后正常双击打开即可。',
-                '',
-                '### 更新日志',
-                '- 修复 Windows 下部分启动命令的路径/引号兼容问题（Codex / Claude Code / OpenClaw）。',
-                '- README 增加三平台下载指引与已支持功能/Roadmap 展示，信息更直观。',
-                '- OpenClaw Dashboard 的 Provider 列表改为真实配置展示，移除占位假数据。',
-                '- 文档视觉更新为简约风格（含新的扁平化 Logo）。',
-              ].join('\n'),
-              draft: true,
-              prerelease: false
-            });
-            return data.id;
+            let release;
+            try {
+              const { data } = await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                name: `EasyAIConfig ${tag}`,
+                body: [
+                  `## EasyAIConfig ${tag}`,
+                  '',
+                  '### 📦 下载',
+                  '| 平台 | 文件 |',
+                  '|------|------|',
+                  '| macOS (Apple Silicon) | `.dmg` |',
+                  '| macOS (Intel) | `.dmg` |',
+                  '| Windows | `.msi` / `.exe` |',
+                  '| Linux | `.deb` / `.AppImage` |',
+                  '',
+                  '### 🍎 macOS 安装说明',
+                  '下载 `.dmg` 后拖入 Applications，首次打开前运行：',
+                  '```bash',
+                  'sudo xattr -rd com.apple.quarantine /Applications/EasyAIConfig.app',
+                  '```',
+                  '然后正常双击打开即可。',
+                  '',
+                  '### 更新日志',
+                  '- 修复 Windows 下部分启动命令的路径/引号兼容问题（Codex / Claude Code / OpenClaw）。',
+                  '- README 增加三平台下载指引与已支持功能/Roadmap 展示，信息更直观。',
+                  '- OpenClaw Dashboard 的 Provider 列表改为真实配置展示，移除占位假数据。',
+                  '- 文档视觉更新为简约风格（含新的扁平化 Logo）。',
+                ].join('\n'),
+                draft: true,
+                prerelease: false
+              });
+              release = data;
+            } catch (error) {
+              if (error.status !== 422) {
+                throw error;
+              }
+              const { data } = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag
+              });
+              release = data;
+            }
+            return release.id;
 
   build-tauri:
     needs: create-release
