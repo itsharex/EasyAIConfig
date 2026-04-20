@@ -12830,8 +12830,6 @@ function normalizeBaseUrl(baseUrl) {
       : (/^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?(\/|$)/i.test(raw) ? `http://${raw}` : `https://${raw}`);
     const url = new URL(withScheme);
     url.pathname = url.pathname.replace(/\/+$/, '');
-    if (!url.pathname || url.pathname === '/') url.pathname = '/v1';
-    else if (!/\/v1$/i.test(url.pathname)) url.pathname = `${url.pathname}/v1`;
     return url.toString().replace(/\/+$/, '');
   } catch {
     return raw;
@@ -13908,10 +13906,14 @@ function renderProviders() {
   el('savedProviders').innerHTML = providers.length ? providers.map((provider) => `
     <div class="provider-card ${provider.isActive ? 'active' : ''}">
       <div class="provider-main">
-        <strong>${escapeHtml(provider.name || provider.key)}</strong>
-        ${provider.historyOnly ? '<span class="provider-pill muted">历史</span>' : ''}
-        ${provider.inferred && !provider.historyOnly ? '<span class="provider-pill ok">自动识别</span>' : ''}
-        <div class="provider-meta">${escapeHtml(provider.baseUrl || '-')}</div>
+        <div class="provider-title-row">
+          <strong>${escapeHtml(provider.name || provider.key)}</strong>
+          <div class="provider-tag-row">
+            ${provider.historyOnly ? '<span class="provider-pill muted">历史</span>' : ''}
+            ${provider.inferred && !provider.historyOnly ? '<span class="provider-pill ok">自动识别</span>' : ''}
+          </div>
+        </div>
+        <div class="provider-meta provider-url">${escapeHtml(provider.baseUrl || '-')}</div>
       </div>
       <div class="provider-actions-row">
         <button class="secondary tiny-btn" data-load-provider="${escapeHtml(provider.key)}">切换</button>
@@ -14909,6 +14911,7 @@ function inferOpenClawProviderFromModel(modelId) {
   return '';
 }
 
+
 async function saveConfigOnly() {
   if (state.activeTool === 'claudecode') {
     return saveClaudeCodeConfigOnly();
@@ -14920,7 +14923,6 @@ async function saveConfigOnly() {
     return saveOpenClawConfigOnly();
   }
   const payload = currentPayload();
-  if (payload.baseUrl && payload.baseUrl !== el('baseUrlInput').value.trim()) el('baseUrlInput').value = payload.baseUrl;
   const canReuseStoredKey = canUseStoredApiKey({ baseUrl: payload.baseUrl, providerKey: payload.providerKey });
   if (!(state.activeTool === 'codex' && state.codexAuthView === 'official' && state.current?.login?.loggedIn)) {
     if (!payload.baseUrl || (!payload.apiKey && !canReuseStoredKey)) return flash('先填 URL 和 API Key', 'error');
@@ -14935,7 +14937,7 @@ async function saveConfigOnly() {
   setBusy('saveBtn', false);
   if (!saved.ok) return flash(saved.error || '保存失败', 'error');
   flash('配置已保存', 'success');
-  await loadState({ preserveForm: false });
+  await loadState({ preserveForm: true });
   await loadBackups();
   loadAppUpdateState();
 }

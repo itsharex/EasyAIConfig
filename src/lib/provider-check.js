@@ -10,18 +10,9 @@ function normalizeBaseUrl(baseUrl) {
 
   const url = new URL(withScheme);
   url.pathname = url.pathname.replace(/\/+$/, '');
-  if (!url.pathname || url.pathname === '/') {
-    url.pathname = '/v1';
-  } else if (/\/v\d+$/i.test(url.pathname)) {
-    // Keep explicit versioned API roots like /v1 or /v4 intact.
-  } else if (/\/(models|chat\/completions|responses|embeddings|completions|audio(?:\/speech|\/transcriptions|\/translations)?|images(?:\/generations|\/edits|\/variations)?|moderations)$/i.test(url.pathname)) {
-    url.pathname = url.pathname.replace(/\/(models|chat\/completions|responses|embeddings|completions|audio(?:\/speech|\/transcriptions|\/translations)?|images(?:\/generations|\/edits|\/variations)?|moderations)$/i, '');
-    if (!url.pathname) url.pathname = '/v1';
-  } else {
-    url.pathname = `${url.pathname}/v1`;
-  }
   return url.toString().replace(/\/+$/, '');
 }
+
 
 
 function parseModelVersion(modelId) {
