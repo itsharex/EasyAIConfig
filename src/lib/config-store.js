@@ -122,6 +122,36 @@ function safeResolveDir(dirPath) {
   }
 }
 
+function assertAllowedPath(inputPath, paramName) {
+  const normalized = safeResolveDir(inputPath);
+  if (!normalized) {
+    throw new Error(`${paramName} is required`);
+  }
+  const allowed = [os.homedir(), process.cwd(), '/tmp', '/var/tmp']
+    .concat(process.platform === 'win32' ? [process.env.TEMP, process.env.TMP] : [])
+    .filter(Boolean)
+    .map((item) => path.resolve(item));
+  const valid = allowed.some((root) => normalized === root || normalized.startsWith(root + path.sep));
+  if (!valid) {
+    throw new Error(`Invalid ${paramName}: path traversal detected`);
+  }
+  return normalized;
+}
+
+function resolveBackupDir(backupName) {
+  const safeName = String(backupName || '').trim();
+  if (!safeName) throw new Error('Backup name is required');
+  if (path.basename(safeName) !== safeName) {
+    throw new Error('Invalid backup name');
+  }
+  const root = backupsRoot();
+  const resolved = path.resolve(root, safeName);
+  if (resolved !== path.join(root, safeName)) {
+    throw new Error('Invalid backup name');
+  }
+  return resolved;
+}
+
 function managerGlobalBinDirs() {
   const home = os.homedir();
   const dirs = new Set();
@@ -1689,24 +1719,25 @@ function findCodexBinary() {
 }
 
 function scopePaths({ scope, projectPath, codexHome }) {
+  const normalizedCodexHome = assertAllowedPath(codexHome, 'codexHome');
   if (scope === 'project') {
     if (!projectPath || !projectPath.trim()) {
       throw new Error('Project path is required for project scope');
     }
-    const normalizedProjectPath = path.resolve(projectPath.trim());
+    const normalizedProjectPath = assertAllowedPath(projectPath.trim(), 'projectPath');
     return {
       scope,
       rootPath: normalizedProjectPath,
       configPath: path.join(normalizedProjectPath, '.codex', 'config.toml'),
-      envPath: path.join(codexHome, '.env'),
+      envPath: path.join(normalizedCodexHome, '.env'),
     };
   }
 
   return {
     scope: 'global',
-    rootPath: codexHome,
-    configPath: path.join(codexHome, 'config.toml'),
-    envPath: path.join(codexHome, '.env'),
+    rootPath: normalizedCodexHome,
+    configPath: path.join(normalizedCodexHome, 'config.toml'),
+    envPath: path.join(normalizedCodexHome, '.env'),
   };
 }
 
@@ -1990,7 +2021,7 @@ function parseEnv(content) {
 
 function stringifyEnv(entries) {
   const rows = Object.entries(entries)
-    .filter(([key]) => key && !key.toUpperCase().startsWith('CODEX_'))
+    .filter(([key]) => key)
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, value]) => `${key}=${String(value ?? '')}`);
   return rows.length ? `${rows.join('\n')}\n` : '';
@@ -2032,7 +2063,12 @@ function slugifyProviderKey(value) {
   return /^\d/.test(slug) ? `provider-${slug}` : slug;
 }
 
-function inferProviderSeed(baseUrl) {
+const COMMON_HOST_SUFFIXES = new Set([
+  'ac', 'ai', 'app', 'cc', 'cloud', 'cn', 'co', 'com', 'dev', 'fm', 'gg', 'hk', 'in', 'io', 'jp',
+  'me', 'net', 'org', 'pro', 'ru', 'sg', 'sh', 'site', 'tech', 'top', 'tv', 'tw', 'uk', 'us', 'xyz',
+]);
+
+function legacyInferProviderSeed(baseUrl) {
   try {
     const hostname = new URL(baseUrl).hostname.toLowerCase().replace(/^www\./, '');
     const parts = hostname.split('.').filter(Boolean);
@@ -2042,6 +2078,39 @@ function inferProviderSeed(baseUrl) {
   } catch {
     return 'custom';
   }
+}
+
+function inferProviderSeed(baseUrl) {
+  try {
+    const hostname = new URL(baseUrl).hostname.toLowerCase();
+    const parts = hostname.split('.').filter(Boolean);
+    if (!parts.length) return 'custom';
+
+    while (parts.length > 1) {
+      const last = parts[parts.length - 1];
+      if (COMMON_HOST_SUFFIXES.has(last)) {
+        parts.pop();
+        continue;
+      }
+      break;
+    }
+
+    if (parts.length > 1 && ['www', 'api'].includes(parts[0])) {
+      parts.shift();
+    }
+
+    const seed = parts.join('-').replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+    return seed || 'custom';
+  } catch {
+    return 'custom';
+  }
+}
+
+function findProviderEntryByBaseUrl(config, baseUrl) {
+  const normalizedBaseUrl = String(baseUrl || '').trim();
+  return Object.entries(config?.model_providers || {}).find(([, provider]) => {
+    return String(provider?.base_url || '').trim() === normalizedBaseUrl;
+  }) || null;
 }
 
 function inferProviderLabel(baseUrl, providerKey) {
@@ -3065,7 +3134,7 @@ export async function testSavedProvider({
 }
 
 export async function saveConfig(payload) {
-  const codexHome = path.resolve(payload.codexHome || defaultCodexHome());
+  const codexHome = assertAllowedPath(payload.codexHome || defaultCodexHome(), 'codexHome');
   const paths = scopePaths({
     scope: payload.scope || 'global',
     projectPath: payload.projectPath || '',
@@ -3083,8 +3152,18 @@ export async function saveConfig(payload) {
   const originalEnv = { ...env };
   const baseUrl = normalizeBaseUrl(payload.baseUrl);
   const apiKey = String(payload.apiKey || '').trim();
-  const providerKey = slugifyProviderKey(payload.providerKey || inferProviderSeed(baseUrl));
-  const currentProvider = config.model_providers?.[providerKey] || {};
+  const inferredProviderKey = slugifyProviderKey(inferProviderSeed(baseUrl));
+  const requestedProviderKey = slugifyProviderKey(payload.providerKey || inferredProviderKey);
+  const legacyProviderKey = slugifyProviderKey(legacyInferProviderSeed(baseUrl));
+  const providerKey = requestedProviderKey === legacyProviderKey && requestedProviderKey !== inferredProviderKey
+    ? inferredProviderKey
+    : requestedProviderKey;
+  const matchedProviderEntry = findProviderEntryByBaseUrl(config, baseUrl);
+  const matchedProviderKey = matchedProviderEntry?.[0] || '';
+  const matchedProvider = matchedProviderEntry?.[1] || {};
+  const currentProvider = config.model_providers?.[providerKey]
+    || (matchedProviderKey && matchedProviderKey !== providerKey ? matchedProvider : {})
+    || {};
   const providerLabel = String(payload.providerLabel || currentProvider.name || inferProviderLabel(baseUrl, providerKey)).trim() || providerKey;
   const envKey = String(payload.envKey || currentProvider.env_key || inferEnvKey(providerKey)).trim();
   const model = String(payload.model || '').trim();
@@ -3111,6 +3190,9 @@ export async function saveConfig(payload) {
     nextProvider.wire_api = 'responses';
   }
   config.model_providers[providerKey] = nextProvider;
+  if (matchedProviderKey && matchedProviderKey !== providerKey) {
+    delete config.model_providers[matchedProviderKey];
+  }
 
   if (apiKey && envKey) {
     env[envKey] = apiKey;
@@ -3141,7 +3223,7 @@ export async function saveConfig(payload) {
 }
 
 export async function saveSettings(payload) {
-  const codexHome = path.resolve(payload.codexHome || defaultCodexHome());
+  const codexHome = assertAllowedPath(payload.codexHome || defaultCodexHome(), 'codexHome');
   const paths = scopePaths({
     scope: payload.scope || 'global',
     projectPath: payload.projectPath || '',
@@ -3168,7 +3250,7 @@ export async function saveSettings(payload) {
 }
 
 export async function saveRawConfig(payload) {
-  const codexHome = path.resolve(payload.codexHome || defaultCodexHome());
+  const codexHome = assertAllowedPath(payload.codexHome || defaultCodexHome(), 'codexHome');
   const paths = scopePaths({
     scope: payload.scope || 'global',
     projectPath: payload.projectPath || '',
@@ -3214,13 +3296,9 @@ export async function listBackups() {
 }
 
 export async function restoreBackup({ backupName, scope = 'global', projectPath = '', codexHome = defaultCodexHome() }) {
-  if (!backupName) {
-    throw new Error('Backup name is required');
-  }
-
-  const normalizedCodexHome = path.resolve(codexHome);
+  const normalizedCodexHome = assertAllowedPath(codexHome, 'codexHome');
   const paths = scopePaths({ scope, projectPath, codexHome: normalizedCodexHome });
-  const backupDir = path.join(backupsRoot(), backupName);
+  const backupDir = resolveBackupDir(backupName);
   const [configContent, envContent] = await Promise.all([
     readText(path.join(backupDir, 'config.toml.bak')),
     readText(path.join(backupDir, '.env.bak')),
@@ -3531,6 +3609,7 @@ async function readClaudeTelemetryUsage({ days = 30 } = {}) {
   const modelTotals = new Map(); // model -> { input, output, cacheRead, cacheCreation, total }
   const dailyModelTokens = new Map(); // date -> { tokensByModel: { model: total } }
 
+
   // Pricing per million tokens (Anthropic official)
   const PRICING = {
     'claude-opus-4-6':   { input: 15, output: 75, cacheRead: 1.5, cacheCreate: 18.75 },
@@ -3568,9 +3647,7 @@ async function readClaudeTelemetryUsage({ days = 30 } = {}) {
       let content = '';
       try { content = await fs.readFile(filePath, 'utf8'); } catch { continue; }
 
-      const sessionUsage = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0, cost: 0 };
-      const sessionModels = new Map();
-      let lastTimestamp = null;
+      const usageEntries = new Map();
       let primaryModel = '';
 
       for (const line of content.split(/\r?\n/)) {
@@ -3579,7 +3656,6 @@ async function readClaudeTelemetryUsage({ days = 30 } = {}) {
         try { record = JSON.parse(line); } catch { continue; }
         if (!record || typeof record !== 'object') continue;
 
-        // Extract timestamp
         const ts = record.timestamp;
         let parsedTs = null;
         if (typeof ts === 'string') {
@@ -3587,9 +3663,8 @@ async function readClaudeTelemetryUsage({ days = 30 } = {}) {
         } else if (typeof ts === 'number') {
           parsedTs = ts > 1e12 ? ts : ts * 1000;
         }
-        if (Number.isFinite(parsedTs)) lastTimestamp = parsedTs;
+        if (!Number.isFinite(parsedTs) || parsedTs < cutoffMs) continue;
 
-        // Extract usage from assistant messages
         const msg = record.message;
         if (!msg || typeof msg !== 'object') continue;
         const usage = msg.usage;
@@ -3604,12 +3679,28 @@ async function readClaudeTelemetryUsage({ days = 30 } = {}) {
           cacheRead: Number(usage.cache_read_input_tokens || 0),
           cacheCreation: Number(usage.cache_creation_input_tokens || 0),
         };
+        const total = u.input + u.output + u.cacheRead + u.cacheCreation;
+        const usageKey = String(msg.id || record.requestId || record.uuid || `${sessionId}:${parsedTs}:${model}:${total}`).trim();
+        const prev = usageEntries.get(usageKey);
+        if (!prev || total >= prev.total) {
+          usageEntries.set(usageKey, { timestamp: parsedTs, model, usage: u, total });
+        }
+      }
+
+      if (!usageEntries.size) continue;
+
+      const sessionUsage = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0, cost: 0 };
+      const sessionModels = new Map();
+      let lastWindowTimestamp = null;
+
+      for (const entry of usageEntries.values()) {
+        const { timestamp, model, usage: u } = entry;
+        lastWindowTimestamp = Math.max(lastWindowTimestamp || 0, timestamp);
         sessionUsage.input += u.input;
         sessionUsage.output += u.output;
         sessionUsage.cacheRead += u.cacheRead;
         sessionUsage.cacheCreation += u.cacheCreation;
 
-        // Track per-model usage (skip synthetic/internal model names)
         if (model && !model.startsWith('<')) {
           const prev = sessionModels.get(model) || { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
           prev.input += u.input;
@@ -3619,36 +3710,29 @@ async function readClaudeTelemetryUsage({ days = 30 } = {}) {
           sessionModels.set(model, prev);
         }
 
-        // Aggregate into daily bucket by message timestamp
-        if (Number.isFinite(parsedTs) && parsedTs >= cutoffMs) {
-          const dayKey = new Date(parsedTs).toISOString().slice(0, 10);
-          if (!daily.has(dayKey)) daily.set(dayKey, { date: dayKey, input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0, cost: 0 });
-          const bucket = daily.get(dayKey);
-          bucket.input += u.input;
-          bucket.output += u.output;
-          bucket.cacheRead += u.cacheRead;
-          bucket.cacheCreation += u.cacheCreation;
-          bucket.total += u.input + u.output + u.cacheRead + u.cacheCreation;
-          bucket.cost += calcCost(u, model);
+        const dayKey = new Date(timestamp).toISOString().slice(0, 10);
+        if (!daily.has(dayKey)) daily.set(dayKey, { date: dayKey, input: 0, output: 0, cacheCreation: 0, cacheRead: 0, total: 0, cost: 0 });
+        const bucket = daily.get(dayKey);
+        bucket.input += u.input;
+        bucket.output += u.output;
+        bucket.cacheRead += u.cacheRead;
+        bucket.cacheCreation += u.cacheCreation;
+        bucket.total += u.input + u.output + u.cacheRead + u.cacheCreation;
+        bucket.cost += calcCost(u, model);
 
-          // Daily model tokens
-          if (!dailyModelTokens.has(dayKey)) dailyModelTokens.set(dayKey, { date: dayKey, tokensByModel: {} });
-          const dmt = dailyModelTokens.get(dayKey);
-          if (model && !model.startsWith('<')) {
-            dmt.tokensByModel[model] = (dmt.tokensByModel[model] || 0) + u.input + u.output + u.cacheRead + u.cacheCreation;
-          }
+        if (!dailyModelTokens.has(dayKey)) dailyModelTokens.set(dayKey, { date: dayKey, tokensByModel: {} });
+        const dmt = dailyModelTokens.get(dayKey);
+        if (model && !model.startsWith('<')) {
+          dmt.tokensByModel[model] = (dmt.tokensByModel[model] || 0) + u.input + u.output + u.cacheRead + u.cacheCreation;
         }
       }
 
-      // Skip sessions outside time window or with no data
-      if (!lastTimestamp || lastTimestamp < cutoffMs) continue;
+      if (!lastWindowTimestamp) continue;
       if (sessionUsage.input === 0 && sessionUsage.output === 0 && sessionUsage.cacheRead === 0 && sessionUsage.cacheCreation === 0) continue;
 
       sessionUsage.total = sessionUsage.input + sessionUsage.output + sessionUsage.cacheRead + sessionUsage.cacheCreation;
-      sessionUsage.cost = 0;
       for (const [model, mu] of sessionModels) {
         sessionUsage.cost += calcCost(mu, model);
-        // Aggregate into global model totals
         const prev = modelTotals.get(model) || { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
         prev.input += mu.input;
         prev.output += mu.output;
@@ -3661,7 +3745,7 @@ async function readClaudeTelemetryUsage({ days = 30 } = {}) {
       sessions.set(sessionId, {
         sessionId,
         model: primaryModel,
-        updatedAt: new Date(lastTimestamp).toISOString(),
+        updatedAt: new Date(lastWindowTimestamp).toISOString(),
         ...sessionUsage,
       });
 

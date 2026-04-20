@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import express from 'express';
 import open from 'open';
 import fs from 'node:fs/promises';
@@ -78,6 +79,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, '../public');
+const LOCAL_API_TOKEN_HEADER = 'x-local-token';
 
 function ok(res, data) {
   res.json({ ok: true, ...data });
@@ -88,6 +90,14 @@ function fail(res, error) {
     ok: false,
     error: error instanceof Error ? error.message : String(error),
   });
+}
+
+function forbidden(res, message = 'Forbidden') {
+  res.status(403).json({ ok: false, error: message });
+}
+
+function createLocalApiToken() {
+  return crypto.randomBytes(32).toString('hex');
 }
 
 const ALLOWED_PATH_ROOTS = [
@@ -865,8 +875,28 @@ async function installOpenCodeEcosystemTarget({ target = '', cwd = '' } = {}) {
 
 export async function startServer() {
   const app = express();
+  const localApiToken = createLocalApiToken();
   app.use(express.json({ limit: '1mb' }));
+  app.use((req, res, next) => {
+    if (!req.path.startsWith('/api/')) return next();
+    if (req.path === '/api/bootstrap') return next();
+    const token = String(req.get(LOCAL_API_TOKEN_HEADER) || '');
+    if (token !== localApiToken) {
+      forbidden(res, 'Invalid local API token');
+      return;
+    }
+    next();
+  });
   app.use(express.static(publicDir));
+
+  app.get('/api/bootstrap', (_req, res) => {
+    ok(res, {
+      data: {
+        token: localApiToken,
+        header: LOCAL_API_TOKEN_HEADER,
+      },
+    });
+  });
 
   app.get('/api/tools', async (_req, res) => {
     try {
@@ -876,7 +906,7 @@ export async function startServer() {
     }
   });
 
-app.get('/api/setup/check', async (req, res) => {
+  app.get('/api/setup/check', async (req, res) => {
     try {
       const codexHome = validatePathOrThrow(req.query.codexHome, 'codexHome');
       const data = await checkSetupEnvironment({
@@ -1474,8 +1504,12 @@ app.get('/api/opencode/ecosystem/state', async (req, res) => {
     try {
       const url = String(req.body?.url || '').trim();
       if (!url) throw new Error('url is required');
-      await open(url);
-      ok(res, { data: { opened: true, url } });
+      const parsed = new URL(url);
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error('Only http/https URLs are allowed');
+      }
+      await open(parsed.toString());
+      ok(res, { data: { opened: true, url: parsed.toString() } });
     } catch (error) {
       fail(res, error);
     }
@@ -1513,5 +1547,6 @@ app.get('/api/opencode/ecosystem/state', async (req, res) => {
   console.log(`[easyaiconfig] running at ${url}`);
   open(url).catch(() => { });
 
-  return { app, server, url };
+  return { app, server, url, localApiToken };
 }
+

@@ -226,59 +226,11 @@
                   </button>
                 </div>
 
-                <div class="hero-strip">
-                  <div class="hero-head-row">
-                    <div class="hero-title">最快路径</div>
-                    <div class="hero-indicators">
-                      <span class="hero-pill">自动补全协议</span>
-                      <span class="hero-pill">自动检测模型</span>
-                      <span class="hero-pill">一键保存并启动</span>
-                    </div>
-                  </div>
-                  <div class="hero-subtitle">用户通常只需要 `URL` 和 `API Key`，这里一步完成。</div>
-                  <div id="ocDashboardQuickRow" class="oc-dashboard-row hide">
-                    <span class="oc-dashboard-status">
-                      <span class="running-dot"></span>OpenClaw 正在运行
-                    </span>
-                    <div style="display:flex;gap:6px;margin-left:auto">
-                      <button id="ocOpenDashboardBtn" class="secondary"
-                        style="font-size:0.76rem;padding:0 10px;height:26px">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px">
-                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                          <polyline points="15 3 21 3 21 9" />
-                          <line x1="10" y1="14" x2="21" y2="3" />
-                        </svg>
-                        打开 Dashboard
-                      </button>
-                      <button id="ocStopBtn" class="secondary"
-                        style="font-size:0.76rem;padding:0 10px;height:26px;color:#f87171">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px">
-                          <rect x="6" y="6" width="12" height="12" rx="2" />
-                        </svg>
-                        停止
-                      </button>
-                      <button id="ocDaemonBtn" class="secondary"
-                        style="font-size:0.76rem;padding:0 10px;height:26px">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                          stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px">
-                          <path d="M12 2v6" />
-                          <path d="M8 4h8" />
-                          <path d="M6.2 8.2a8 8 0 1 0 11.6 0" />
-                        </svg>
-                        开启常驻
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
                 <section class="view-section flow-section">
                   <div class="section-head compact-head">
                     <div>
                       <div class="section-title-row">
                         <div class="section-title">连接配置</div>
-                        <span class="section-badge success">保持极简</span>
                         <span class="section-sync-actions" id="sectionSyncActions" style="display:none">
                           <button id="syncFromCodexBtn" type="button" class="sync-env-btn" title="从 Codex 环境同步 URL、Key、模型">
                             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 5v10l-9 5-9-5V7l9-5z" opacity="0.5"/><path d="M12 12l9-5M12 12v10M12 12L3 7"/></svg>
@@ -289,6 +241,42 @@
                             <span>Claude</span>
                           </button>
                         </span>
+                      </div>
+                      <div id="detectionMeta" class="inline-meta">默认只需要 URL 和 API Key；缺少 http/https 会自动补全。</div>
+                      <div id="ocDashboardQuickRow" class="oc-dashboard-row hide">
+                        <span class="oc-dashboard-status">
+                          <span class="running-dot"></span>OpenClaw 正在运行
+                        </span>
+                        <div style="display:flex;gap:6px;margin-left:auto">
+                          <button id="ocOpenDashboardBtn" class="secondary"
+                            style="font-size:0.76rem;padding:0 10px;height:26px">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                              stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px">
+                              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                              <polyline points="15 3 21 3 21 9" />
+                              <line x1="10" y1="14" x2="21" y2="3" />
+                            </svg>
+                            打开 Dashboard
+                          </button>
+                          <button id="ocStopBtn" class="secondary"
+                            style="font-size:0.76rem;padding:0 10px;height:26px;color:#f87171">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                              stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px">
+                              <rect x="6" y="6" width="12" height="12" rx="2" />
+                            </svg>
+                            停止
+                          </button>
+                          <button id="ocDaemonBtn" class="secondary"
+                            style="font-size:0.76rem;padding:0 10px;height:26px">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                              stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:3px">
+                              <path d="M12 2v6" />
+                              <path d="M8 4h8" />
+                              <path d="M6.2 8.2a8 8 0 1 0 11.6 0" />
+                            </svg>
+                            开启常驻
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -367,9 +355,7 @@
                     </label>
                   </div>
 
-                  <div id="detectionMeta" class="inline-meta">默认只需要 URL 和 API Key；缺少 http/https 会自动补全。</div>
                   <div id="modelChips" class="chips hide"></div>
-
 
                   <div class="primary-actions">
                     <button id="editConfigQuickBtn" class="secondary">编辑配置</button>

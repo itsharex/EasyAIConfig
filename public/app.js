@@ -133,39 +133,10 @@ function renderQuickRailSupportPanel() {
   const bodyEl = el('configTipsList');
   if (!titleEl || !bodyEl) return;
 
-  const compact = window.innerWidth <= 980;
-  if (!compact) {
-    const tips = Array.isArray(state.quickTips) ? state.quickTips : [];
-    titleEl.textContent = '配置提示';
-    bodyEl.className = 'feature-list';
-    bodyEl.innerHTML = tips.map((text, index) => `<div class="feature-row"><span>${index + 1}</span><strong>${escapeHtml(text)}</strong></div>`).join('');
-    return;
-  }
-
-  const heroTitle = document.querySelector('.hero-title');
-  const heroSubtitle = document.querySelector('.hero-subtitle');
-  const heroIndicators = document.querySelector('.hero-indicators');
-  const hasStatusRows = Boolean(heroSubtitle?.querySelector('.oc-status-row'));
-
-  titleEl.textContent = heroTitle?.textContent || '摘要';
-  bodyEl.className = 'quick-summary-list';
-
-  const compactCopy = state.activeTool === 'codex'
-    ? '填 URL 和 API Key 即可。'
-    : state.activeTool === 'claudecode'
-      ? ''
-      : (heroSubtitle?.textContent || '');
-
-  const compactClaudeRows = state.activeTool === 'claudecode' && heroSubtitle?.innerHTML
-    ? heroSubtitle.innerHTML.split('<br>').map((row) => row.trim()).filter(Boolean)
-    : [];
-
-  bodyEl.innerHTML = [
-    heroIndicators?.innerHTML ? `<div class="quick-summary-pills">${heroIndicators.innerHTML}</div>` : '',
-    !hasStatusRows && compactCopy ? `<div class="quick-summary-copy">${escapeHtml(compactCopy)}</div>` : '',
-    compactClaudeRows.length ? `<div class="quick-summary-plain">${compactClaudeRows.map((row) => `<div class="quick-summary-line">${row}</div>`).join('')}</div>` : '',
-    hasStatusRows && heroSubtitle?.innerHTML ? `<div class="quick-summary-body">${heroSubtitle.innerHTML}</div>` : '',
-  ].join('');
+  const tips = Array.isArray(state.quickTips) ? state.quickTips : [];
+  titleEl.textContent = '配置提示';
+  bodyEl.className = 'feature-list';
+  bodyEl.innerHTML = tips.map((text, index) => `<div class="feature-row"><span>${index + 1}</span><strong>${escapeHtml(text)}</strong></div>`).join('');
 }
 
 function buildOpenClawDashboardFallbackUrl(baseUrl) {
@@ -2078,7 +2049,6 @@ function setActiveTool(toolId) {
   state.activeTool = toolId;
   updateToolSelector();
 
-  // Restore last active page for this tool (tab memory)
   const rememberedPage = state.toolLastPage[toolId] || 'quick';
   if (rememberedPage !== state.activePage) {
     setPage(rememberedPage);
@@ -2094,42 +2064,29 @@ function setActiveTool(toolId) {
   const apiKeyInput = el('apiKeyInput');
   const modelSelect = el('modelSelect');
   const detectBtn = el('detectBtn');
-  const protocolSelect = el('openClawProtocolSelect');
   const baseUrlField = baseUrlInput?.closest('.field');
-  const apiKeyField = apiKeyInput?.closest('.field');
   const detectField = detectBtn?.closest('.field');
   const protocolField = el('openClawProtocolField');
   const modelField = modelSelect?.closest('.field');
   const baseUrlLabel = baseUrlField?.querySelector('span');
-  const apiKeyLabel = apiKeyField?.querySelector('span');
+  const apiKeyLabel = apiKeyInput?.closest('.field')?.querySelector('span');
   const detectLabel = detectField?.querySelector('span');
   const modelLabel = modelField?.querySelector('span');
   const detectionMeta = el('detectionMeta');
-  const heroTitle = document.querySelector('.hero-title');
-  const heroSubtitle = document.querySelector('.hero-subtitle');
   const sectionTitle = document.querySelector('.flow-section .section-title');
   const modelChips = el('modelChips');
   const codexAuthBlock = el('codexAuthBlock');
-
-  if (baseUrlLabel) baseUrlLabel.textContent = 'Base URL';
-  if (apiKeyLabel) apiKeyLabel.textContent = 'API Key';
+  const modelRefreshBtn = el('modelRefreshBtn');
+  const ocDashRow = el('ocDashboardQuickRow');
+  const syncActions = el('sectionSyncActions');
   if (detectLabel) detectLabel.textContent = '连接检测';
   if (modelLabel) modelLabel.textContent = '可用模型';
   if (protocolField) protocolField.classList.add('hide');
   if (claudeProviderKeyField) claudeProviderKeyField.classList.add('hide');
   if (modelChips) modelChips.classList.add('hide');
   if (codexAuthBlock) codexAuthBlock.style.display = 'none';
-
-  // Show/hide model refresh button based on tool
-  const modelRefreshBtn = el('modelRefreshBtn');
   if (modelRefreshBtn) modelRefreshBtn.classList.remove('visible');
-
-  // Hide OpenClaw running status bar when not on OpenClaw
-  const ocDashRow = el('ocDashboardQuickRow');
   if (ocDashRow) ocDashRow.classList.add('hide');
-
-  // Hide sync-env buttons (only shown for OpenClaw)
-  const syncActions = el('sectionSyncActions');
   if (syncActions) syncActions.style.display = 'none';
 
   if (toolId === 'claudecode') {
@@ -2148,42 +2105,25 @@ function setActiveTool(toolId) {
     }
     syncApiKeyToggle();
     if (detectField) detectField.style.display = 'none';
-    if (protocolField) protocolField.classList.add('hide');
-    if (heroTitle) heroTitle.textContent = 'Claude Code 配置';
-    if (heroSubtitle) heroSubtitle.textContent = '配置模型与认证方式，支持 OAuth 授权和 API Key。';
     if (sectionTitle) sectionTitle.textContent = 'Claude Code 设置';
     if (modelLabel) modelLabel.textContent = '默认模型';
-    if (detectionMeta) detectionMeta.textContent = '如果已经完成 OAuth 授权，API Key 可以留空。';
-
-    if (modelSelect) {
-      modelSelect.innerHTML = '<option value="">加载中...</option>';
-    }
-
+    if (detectionMeta) detectionMeta.textContent = '支持 OAuth 与 API Key；已完成 OAuth 时 API Key 可以留空。';
+    if (modelSelect) modelSelect.innerHTML = '<option value="">加载中...</option>';
     applyClaudeCodeQuickInstallState(state.claudeCodeState || {});
-    if (!_restoreToolForm('claudecode')) {
-      loadClaudeCodeQuickState();
-    } else {
-      loadClaudeCodeQuickState();
-    }
-    // Show placeholder right-panel while async load runs
+    loadClaudeCodeQuickState();
     renderCurrentConfig();
     return;
   }
 
   if (toolId === 'opencode') {
     if (baseUrlField) baseUrlField.style.display = '';
-    if (claudeOauthLoginBtn) claudeOauthLoginBtn.classList.add('hide');
-    if (claudeProviderKeyField) claudeProviderKeyField.classList.add('hide');
     if (detectField) detectField.style.display = '';
-    if (protocolField) protocolField.classList.add('hide');
     if (modelField) modelField.style.display = '';
-    if (heroTitle) heroTitle.textContent = 'OpenCode';
-    if (heroSubtitle) heroSubtitle.textContent = '按源码约定写入 `opencode.json`，模型格式使用 provider/model。';
     if (sectionTitle) sectionTitle.textContent = 'OpenCode 快速配置';
     if (baseUrlLabel) baseUrlLabel.textContent = 'Provider Base URL';
     if (apiKeyLabel) apiKeyLabel.textContent = 'Provider API Key';
     if (modelLabel) modelLabel.textContent = '默认模型';
-    if (detectionMeta) detectionMeta.textContent = '建议先填 OpenAI 兼容 URL / Key，再检测模型列表。';
+    if (detectionMeta) detectionMeta.textContent = '填写 OpenAI 兼容 URL / Key，再检测模型并写入 opencode.json。';
     if (baseUrlInput) {
       baseUrlInput.value = '';
       baseUrlInput.placeholder = 'https://your-provider.com/v1';
@@ -2195,29 +2135,20 @@ function setActiveTool(toolId) {
     }
     syncApiKeyToggle();
     applyOpenCodeQuickInstallState(state.opencodeState || {});
-    if (!_restoreToolForm('opencode')) {
-      loadOpenCodeQuickState();
-    } else {
-      loadOpenCodeQuickState();
-    }
+    loadOpenCodeQuickState();
     renderCurrentConfig();
     return;
   }
 
   if (toolId !== 'openclaw') {
-    if (claudeOauthLoginBtn) claudeOauthLoginBtn.classList.add('hide');
     if (state.current?.login?.loggedIn && state.codexAuthView !== 'api_key') {
       state.codexAuthView = 'official';
     }
     if (baseUrlField) baseUrlField.style.display = '';
-    if (claudeProviderKeyField) claudeProviderKeyField.classList.add('hide');
     if (detectField) detectField.style.display = '';
     if (modelField) modelField.style.display = '';
-    if (heroTitle) heroTitle.textContent = '最快路径';
-    if (protocolField) protocolField.classList.add('hide');
-    if (heroSubtitle) heroSubtitle.textContent = '用户通常只需要 `URL` 和 `API Key`，这里一步完成。';
     if (sectionTitle) sectionTitle.textContent = '连接配置';
-    if (detectionMeta) detectionMeta.textContent = '默认只需要 URL 和 API Key；缺少 http/https 会自动补全。';
+    if (detectionMeta) detectionMeta.textContent = '只需要 URL 和 API Key；缺少 http/https 会自动补全。';
     if (baseUrlInput) baseUrlInput.placeholder = 'https://your-provider.com/v1';
     if (apiKeyInput) {
       apiKeyInput.type = 'password';
@@ -2227,16 +2158,9 @@ function setActiveTool(toolId) {
     applyCodexQuickInstallState();
 
     if (!_restoreToolForm('codex')) {
-      if (baseUrlInput && state.current?.config?.base_url) {
-        baseUrlInput.value = state.current.config.base_url;
-      }
-      if (apiKeyInput) {
-        apiKeyInput.value = '';
-      }
-
-      if (modelSelect) {
-        renderDefaultCodexModels(modelSelect, state.current?.summary?.model || '');
-      }
+      if (baseUrlInput && state.current?.config?.base_url) baseUrlInput.value = state.current.config.base_url;
+      if (apiKeyInput) apiKeyInput.value = '';
+      if (modelSelect) renderDefaultCodexModels(modelSelect, state.current?.summary?.model || '');
     }
     syncCodexAuthView();
     renderCurrentConfig();
@@ -2244,48 +2168,16 @@ function setActiveTool(toolId) {
   }
 
   if (baseUrlField) baseUrlField.style.display = '';
-  if (claudeOauthLoginBtn) claudeOauthLoginBtn.classList.add('hide');
-  if (claudeProviderKeyField) claudeProviderKeyField.classList.add('hide');
   if (detectField) detectField.style.display = 'none';
   if (protocolField) protocolField.classList.remove('hide');
   if (modelField) modelField.style.display = '';
-  if (heroTitle) heroTitle.textContent = 'OpenClaw';
-  if (heroSubtitle) heroSubtitle.textContent = '支持 Claude / OpenAI / OpenAI Responses 三种常用协议，先填 URL 和 Token 就能跑。';
   if (sectionTitle) sectionTitle.textContent = 'OpenClaw 模型配置';
-  // Show sync-env buttons for OpenClaw
-  const syncActionsOc = el('sectionSyncActions');
-  if (syncActionsOc) syncActionsOc.style.display = '';
+  if (syncActions) syncActions.style.display = '';
   if (baseUrlLabel) baseUrlLabel.textContent = 'Base URL（可选，留空自动走官方）';
   if (apiKeyLabel) apiKeyLabel.textContent = '模型 API Key';
   if (modelLabel) modelLabel.textContent = '默认模型';
-  // Show refresh button next to model select for OpenClaw
-  const modelRefreshBtnOc = el('modelRefreshBtn');
-  if (modelRefreshBtnOc) modelRefreshBtnOc.classList.add('visible');
-  if (protocolSelect) {
-    protocolSelect.innerHTML = renderOpenClawProtocolOptions();
-    protocolSelect.value = 'openai-completions';
-  }
-  if (baseUrlInput) {
-    baseUrlInput.value = '';
-  }
-  if (apiKeyInput) {
-    apiKeyInput.type = 'password';
-    apiKeyInput.value = '';
-  }
-  syncApiKeyToggle();
-  applyOpenClawQuickInstallState(state.openclawState || {});
-  if (modelSelect) {
-    const synced = syncOpenClawQuickProtocol(protocolSelect?.value || 'openai-completions');
-    modelSelect.value = synced.model;
-    syncOpenClawQuickHints(synced.api);
-  }
-
-  if (!_restoreToolForm('openclaw')) {
-    loadOpenClawQuickState();
-  } else {
-    loadOpenClawQuickState();
-  }
-  // Show right-panel immediately while async load runs
+  if (detectionMeta) detectionMeta.textContent = '选择协议后会自动适配默认 URL、环境变量名和推荐模型。';
+  loadOpenClawQuickState();
   renderCurrentConfig();
 }
 
@@ -2522,43 +2414,9 @@ async function loadClaudeCodeQuickState({ force = false, cacheOnly = false } = {
       }
     }
 
-    // ── Show auth & env status in hero subtitle ──
-    const heroSubtitle = document.querySelector('.hero-subtitle');
-    if (heroSubtitle) {
-      const loginInfo = data.login || {};
-      const ev = data.envVars || {};
-      const parts = [];
-      if (activeClaudeProvider) {
-        const oauthReady = isClaudeOfficialProvider(activeClaudeProvider) && isClaudeOauthLoggedIn(data) && !activeClaudeProvider.hasApiKey;
-        if (oauthReady) parts.push('当前 Provider：OAuth');
-        else if (activeClaudeProvider.hasApiKey) parts.push('当前 Provider：API Key');
-      }
-
-      // Auth method
-      if (loginInfo.loggedIn) {
-        if (loginInfo.method === 'oauth') {
-          parts.push(`\u2713 OAuth：${loginInfo.email || ''}${loginInfo.orgName ? ` (${loginInfo.orgName})` : ''}`);
-        } else if (loginInfo.method === 'keychain') {
-          parts.push('\u2713 API Key（Keychain）');
-        } else if (loginInfo.method === 'api') {
-          parts.push('\u2713 API Key（环境变量）');
-        }
-      } else if (data.hasKeychainAuth) {
-        parts.push('\u2713 已检测到 Keychain 凭据');
-      } else {
-        parts.push('未登录');
-      }
-
-      if (ev.ANTHROPIC_BASE_URL?.set) {
-        parts.push(`Base URL：${escapeHtml(ev.ANTHROPIC_BASE_URL.value || '')}`);
-      }
-      if (data.model) {
-        parts.push(`模型：${escapeHtml(data.model)}`);
-      }
-      heroSubtitle.innerHTML = parts.map((part) => `<span class="status-chip">${part}</span>`).join('');
-    }
-
     renderCurrentConfig();
+    renderToolConsole();
+    return { ok: true, data };
     renderToolConsole();
     return { ok: true, data };
   } catch (error) {
@@ -3291,12 +3149,12 @@ function isOpenClawInstalled(data = state.openclawState || {}) {
   return Boolean(data.binary?.installed || state.tools.find((tool) => tool.id === 'openclaw')?.binary?.installed);
 }
 
+
 function applyQuickInstallState({
   toolId,
   installed,
   installLabel,
   sectionTitleText,
-  heroSubtitleText,
   detectionMetaText,
   showBaseUrl = true,
   showApiKey = true,
@@ -3324,7 +3182,6 @@ function applyQuickInstallState({
   const launchBtn = el('launchBtn');
   const detectionMeta = el('detectionMeta');
   const sectionTitle = document.querySelector('.flow-section .section-title');
-  const heroSubtitle = document.querySelector('.hero-subtitle');
   const providerSwitchBtn = el('providerSwitchBtn');
   const configEditorBtn = el('configEditorBtn');
   const modelRefreshBtn = el('modelRefreshBtn');
@@ -3345,7 +3202,6 @@ function applyQuickInstallState({
     if (launchBtn) launchBtn.textContent = installLabel;
     if (detectionMeta) detectionMeta.textContent = detectionMetaText;
     if (sectionTitle) sectionTitle.textContent = sectionTitleText;
-    if (heroSubtitle) heroSubtitle.textContent = heroSubtitleText;
     if (providerSwitchBtn) providerSwitchBtn.style.display = 'none';
     if (configEditorBtn) configEditorBtn.style.display = 'none';
     if (modelRefreshBtn) modelRefreshBtn.classList.remove('visible');
@@ -3367,7 +3223,6 @@ function applyQuickInstallState({
   if (launchBtn) launchBtn.textContent = `启动 ${toolId === 'claudecode' ? 'Claude Code' : toolId === 'openclaw' ? 'OpenClaw' : toolId === 'opencode' ? 'OpenCode' : 'Codex'}`;
   if (detectionMeta) detectionMeta.textContent = detectionMetaText;
   if (sectionTitle) sectionTitle.textContent = sectionTitleText;
-  if (heroSubtitle) heroSubtitle.textContent = heroSubtitleText;
   if (providerSwitchBtn) providerSwitchBtn.style.display = showProviderSwitch ? '' : 'none';
   if (configEditorBtn) configEditorBtn.style.display = showConfigEditorBtn ? '' : 'none';
   if (modelRefreshBtn) modelRefreshBtn.classList.toggle('visible', showModelRefreshBtn);
@@ -3384,8 +3239,7 @@ function applyCodexQuickInstallState() {
     installed: isCodexInstalled(),
     installLabel: '安装 Codex',
     sectionTitleText: isCodexInstalled() ? '连接配置' : 'Codex 未安装',
-    heroSubtitleText: isCodexInstalled() ? '用户通常只需要 `URL` 和 `API Key`，这里一步完成。' : '当前设备还没有安装 Codex，先一键安装，安装完成后再配置登录和 Provider。',
-    detectionMetaText: isCodexInstalled() ? '默认只需要 URL 和 API Key；缺少 http/https 会自动补全。' : '当前未检测到 codex，请先安装；安装完成后这里才会显示登录和配置项。',
+    detectionMetaText: isCodexInstalled() ? '只需要 URL 和 API Key；缺少 http/https 会自动补全。' : '当前未检测到 codex，请先安装；安装完成后这里才会显示登录和配置项。',
     showBaseUrl: showManualInputs,
     showApiKey: showManualInputs,
     showDetect: showManualInputs,
@@ -3400,8 +3254,7 @@ function applyClaudeCodeQuickInstallState(data = state.claudeCodeState || {}) {
     installed: isClaudeCodeInstalled(data),
     installLabel: '安装 Claude Code',
     sectionTitleText: isClaudeCodeInstalled(data) ? 'Claude Code 设置' : 'Claude Code 未安装',
-    heroSubtitleText: isClaudeCodeInstalled(data) ? '配置模型与认证方式，支持 OAuth 授权和 API Key。' : '当前设备还没有安装 Claude Code，先一键安装，安装完成后再配置 OAuth 或 API Key。',
-    detectionMetaText: isClaudeCodeInstalled(data) ? '如果已经完成 OAuth 授权，API Key 可以留空。' : '当前未检测到 claude，请先安装；安装完成后这里才会显示认证和模型配置。',
+    detectionMetaText: isClaudeCodeInstalled(data) ? '支持 OAuth 与 API Key；已完成 OAuth 时 API Key 可以留空。' : '当前未检测到 claude，请先安装；安装完成后这里才会显示认证和模型配置。',
     showBaseUrl: true,
     showApiKey: true,
     showDetect: false,
@@ -3417,8 +3270,7 @@ function applyOpenCodeQuickInstallState(data = state.opencodeState || {}) {
     installed: isOpenCodeInstalled(data),
     installLabel: '安装 OpenCode',
     sectionTitleText: isOpenCodeInstalled(data) ? 'OpenCode 快速配置' : 'OpenCode 未安装',
-    heroSubtitleText: isOpenCodeInstalled(data) ? '按源码约定写入 `opencode.json`，模型格式使用 provider/model。' : '当前设备还没有安装 OpenCode，先一键安装，再填写 URL、Key 和模型。',
-    detectionMetaText: isOpenCodeInstalled(data) ? '建议先填 OpenAI 兼容 URL / Key，再检测模型列表。' : '当前未检测到 opencode，请先安装；安装完成后这里才会显示配置项。',
+    detectionMetaText: isOpenCodeInstalled(data) ? '填写 OpenAI 兼容 URL / Key，再检测模型并写入 opencode.json。' : '当前未检测到 opencode，请先安装；安装完成后这里才会显示配置项。',
     showBaseUrl: true,
     showApiKey: true,
     showDetect: true,
@@ -3433,7 +3285,6 @@ function applyOpenClawQuickInstallState(data = state.openclawState || {}) {
     installed: isOpenClawInstalled(data),
     installLabel: '安装 OpenClaw',
     sectionTitleText: isOpenClawInstalled(data) ? 'OpenClaw 模型配置' : 'OpenClaw 未安装',
-    heroSubtitleText: isOpenClawInstalled(data) ? '支持 Claude / OpenAI / OpenAI Responses 三种常用协议，先填 URL 和 Token 就能跑。' : '当前设备还没有安装 OpenClaw，先一键安装，安装完成后再配置协议、模型和 Token。',
     detectionMetaText: isOpenClawInstalled(data) ? '选择协议后会自动适配默认 URL、环境变量名和推荐模型。' : '当前未检测到 openclaw，请先安装；安装完成后这里才会显示协议和模型配置。',
     showBaseUrl: true,
     showApiKey: true,
@@ -3444,7 +3295,6 @@ function applyOpenClawQuickInstallState(data = state.openclawState || {}) {
     showModelRefreshBtn: true,
   });
 }
-
 async function loadOpenCodeQuickState() {
   try {
     const params = new URLSearchParams({
@@ -3459,13 +3309,9 @@ async function loadOpenCodeQuickState() {
       renderToolConsole();
       return { ok: true, data };
     }
-    const heroTitle = document.querySelector('.hero-title');
-    const heroSubtitle = document.querySelector('.hero-subtitle');
     const baseUrlInput = el('baseUrlInput');
     const apiKeyInput = el('apiKeyInput');
     const cache = _getToolFormCache('opencode', true);
-    if (heroTitle) heroTitle.textContent = data.binary?.version ? `OpenCode · ${data.binary.version}` : 'OpenCode';
-    if (heroSubtitle) heroSubtitle.textContent = '填写 OpenAI 兼容 Provider、API Key 与默认模型，保存后写入 opencode.json。';
     if (baseUrlInput && !_shouldPreserveToolField('opencode', 'baseUrl')) {
       const nextBaseUrl = data.activeProvider?.baseUrl || '';
       baseUrlInput.value = nextBaseUrl;
@@ -3547,7 +3393,6 @@ function buildOpenCodeConfigFromFields() {
   };
   const _timeoutValue = (id, label, { allowFalse = false } = {}) => {
     const raw = _sv(id);
-    if (!raw) return undefined;
     if (allowFalse && raw === 'false') return false;
     const value = Number(raw);
     if (!Number.isInteger(value) || value <= 0) throw new Error(`${label} 必须是正整数，或 false`);
@@ -3807,7 +3652,7 @@ async function launchOpenCodeOnly() {
   return true;
 }
 
-/* ── OpenClaw Quick State ── */
+
 async function loadOpenClawQuickState() {
   try {
     const data = await fetchOpenClawStateData();
@@ -3815,15 +3660,11 @@ async function loadOpenClawQuickState() {
     state.openClawQuickConfig = quick;
     applyOpenClawQuickInstallState(data);
 
-    // Only update quick-page UI if OpenClaw is the active tool
     if (state.activeTool !== 'openclaw') {
-      // Still update console and side panel
       renderToolConsole();
       return;
     }
 
-    const heroTitle = document.querySelector('.hero-title');
-    const heroSubtitle = document.querySelector('.hero-subtitle');
     const baseUrlInput = el('baseUrlInput');
     const apiKeyInput = el('apiKeyInput');
     const modelSelect = el('modelSelect');
@@ -3831,65 +3672,37 @@ async function loadOpenClawQuickState() {
     const detectionMeta = el('detectionMeta');
     const cache = _getToolFormCache('openclaw', true);
 
-    if (heroTitle && data.binary?.version) {
-      heroTitle.textContent = `OpenClaw · ${data.binary.version}`;
-    } else if (heroTitle) {
-      heroTitle.textContent = 'OpenClaw';
-    }
-
-    var _si = function (d, color) { return '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="' + color + '" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;flex-shrink:0">' + d + '</svg>'; };
-    var iOk = _si('<path d="M3.5 8.5 6.5 11.5 12.5 4.5"/>', '#4ade80');
-    var iNo = _si('<circle cx="8" cy="8" r="3" stroke-width="1.4"/>', 'rgba(255,255,255,0.3)');
-    var iUrl = _si('<path d="M4 12 12 4M12 4H6M12 4v6"/>', '#60a5fa');
-    var iKey = _si('<circle cx="10" cy="6" r="3"/><path d="M7.8 8.2 3 13M5.5 10.5 7 12"/>', '#f59e0b');
-    var iPlug = _si('<path d="M6 2v4M10 2v4M4 6h8v3a4 4 0 0 1-8 0V6zM8 13v2"/>', '#a78bfa');
-
-    var rows = [];
-    rows.push((data.binary?.installed ? iOk : iNo) + '<span>' + (data.binary?.installed ? ('已安装：' + escapeHtml(data.binary.version || '已检测到')) : '未安装，可先配置') + '</span>');
-    rows.push((data.configExists ? iOk : iNo) + '<span>' + (data.configExists ? 'openclaw.json 就绪' : '保存后自动创建') + '</span>');
-    rows.push(iOk + '<span>协议：' + escapeHtml(getOpenClawProtocolMeta(quick.api || 'openai-completions').label) + '</span>');
-    rows.push((quick.model ? iOk : iNo) + '<span>' + (quick.model ? ('模型：' + escapeHtml(quick.model)) : '先选默认模型') + '</span>');
-    rows.push(iUrl + '<span>' + (quick.baseUrl ? ('URL：' + escapeHtml(quick.baseUrl)) : '官方直连') + '</span>');
-    rows.push(iPlug + '<span>Token：' + escapeHtml(quick.envKey || getOpenClawDefaultEnvKey(quick.api || 'openai-completions')) + '</span>');
-    rows.push((quick.hasApiKey ? iKey : iNo) + '<span>' + (quick.hasApiKey ? ('Key：' + escapeHtml(quick.maskedApiKey)) : '未保存 API Key') + '</span>');
-    rows.push((data.gatewayToken ? iOk : iNo) + '<span>' + (data.gatewayToken ? 'Gateway Token 就绪' : 'Token 待生成') + '</span>');
-    rows.push((data.daemonRunning ? iOk : iNo) + '<span>常驻服务：' + escapeHtml(getOpenClawDaemonStatusLabel(data)) + '</span>');
-
-    var _lb = el('launchBtn');
-    var _dqr = el('ocDashboardQuickRow');
+    const launchBtn = el('launchBtn');
+    const dashboardRow = el('ocDashboardQuickRow');
     state._ocGatewayUrl = data.gatewayUrl || '';
     const gatewayStatus = getOpenClawGatewayStatus(data);
-    const _ocStatus = document.querySelector('#ocDashboardQuickRow .oc-dashboard-status');
-    const _ocDaemonBtn = el('ocDaemonBtn');
+    const dashboardStatus = document.querySelector('#ocDashboardQuickRow .oc-dashboard-status');
+    const daemonBtn = el('ocDaemonBtn');
     if (gatewayStatus === 'online') {
-      if (_lb) {
-        _lb.innerHTML = '<span class="running-dot"></span>打开 Dashboard';
-        _lb.classList.add('running');
+      if (launchBtn) {
+        launchBtn.innerHTML = '<span class="running-dot"></span>打开 Dashboard';
+        launchBtn.classList.add('running');
       }
-      if (_dqr) _dqr.classList.remove('hide');
-      if (_ocStatus) _ocStatus.innerHTML = '<span class="running-dot"></span>OpenClaw 正在运行';
+      if (dashboardRow) dashboardRow.classList.remove('hide');
+      if (dashboardStatus) dashboardStatus.innerHTML = '<span class="running-dot"></span>OpenClaw 正在运行';
     } else if (gatewayStatus === 'warming') {
-      if (_lb) {
-        _lb.textContent = 'Gateway 启动中…';
-        _lb.classList.remove('running');
+      if (launchBtn) {
+        launchBtn.textContent = 'Gateway 启动中…';
+        launchBtn.classList.remove('running');
       }
-      if (_dqr) _dqr.classList.remove('hide');
-      if (_ocStatus) _ocStatus.innerHTML = '<span class="running-dot"></span>OpenClaw 启动中';
+      if (dashboardRow) dashboardRow.classList.remove('hide');
+      if (dashboardStatus) dashboardStatus.innerHTML = '<span class="running-dot"></span>OpenClaw 启动中';
     } else {
-      if (_lb) {
-        _lb.textContent = '启动 OpenClaw';
-        _lb.classList.remove('running');
+      if (launchBtn) {
+        launchBtn.textContent = '启动 OpenClaw';
+        launchBtn.classList.remove('running');
       }
-      if (_dqr) _dqr.classList.toggle('hide', !data.binary?.installed);
-      if (_ocStatus) _ocStatus.innerHTML = `<span class="running-dot" style="opacity:${data.daemonRunning ? '1' : '.35'}"></span>常驻服务：${escapeHtml(getOpenClawDaemonStatusLabel(data))}`;
+      if (dashboardRow) dashboardRow.classList.toggle('hide', !data.binary?.installed);
+      if (dashboardStatus) dashboardStatus.innerHTML = `<span class="running-dot" style="opacity:${data.daemonRunning ? '1' : '.35'}"></span>常驻服务：${escapeHtml(getOpenClawDaemonStatusLabel(data))}`;
     }
-    if (_ocDaemonBtn) {
-      _ocDaemonBtn.textContent = data.daemonInstalled ? '关闭常驻' : '开启常驻';
-      _ocDaemonBtn.style.color = data.daemonInstalled ? '#fbbf24' : '';
-    }
-
-    if (heroSubtitle) {
-      heroSubtitle.innerHTML = rows.map(function (r) { return '<div class="oc-status-row">' + r + '</div>'; }).join('');
+    if (daemonBtn) {
+      daemonBtn.textContent = data.daemonInstalled ? '关闭常驻' : '开启常驻';
+      daemonBtn.style.color = data.daemonInstalled ? '#fbbf24' : '';
     }
 
     if (protocolSelect) {
@@ -3915,7 +3728,10 @@ async function loadOpenClawQuickState() {
     }
     syncApiKeyToggle();
 
-    const synced = syncOpenClawQuickProtocol((cache.protocolValue && _shouldPreserveToolField('openclaw', 'protocolValue')) ? cache.protocolValue : (quick.api || 'openai-completions'), quick.model || getOpenClawDefaultModel(quick.api || 'openai-completions'));
+    const synced = syncOpenClawQuickProtocol(
+      (cache.protocolValue && _shouldPreserveToolField('openclaw', 'protocolValue')) ? cache.protocolValue : (quick.api || 'openai-completions'),
+      quick.model || getOpenClawDefaultModel(quick.api || 'openai-completions')
+    );
     if (modelSelect && !_shouldPreserveToolField('openclaw', 'modelValue')) {
       modelSelect.value = quick.model || synced.model;
       cache.modelValue = modelSelect.value || '';
@@ -3935,9 +3751,10 @@ async function loadOpenClawQuickState() {
     if (quick.baseUrl && quick.hasApiKey && !_shouldPreserveToolField('openclaw', 'baseUrl') && !_shouldPreserveToolField('openclaw', 'apiKey')) {
       tryAutoFetchModels();
     }
-  } catch { /* silent */ }
+  } catch {
+    /* silent */
+  }
 }
-
 
 async function fetchOpenClawStateData() {
   const json = await api('/api/openclaw/state');
@@ -4009,7 +3826,7 @@ function syncCodexAuthView() {
       </div>
     ` : `
       <div class="codex-auth-title">尚未检测到 Codex 官方登录</div>
-      <div class="codex-auth-desc">当前你的 <code>~/.codex/auth.json</code> 里只有 API Key，没有官方登录产生的 <code>tokens.access_token</code> / <code>id_token</code>，所以之前这里被前端直接禁用了。现在可以直接点下面按钮拉起 <code>codex login</code>。</div>
+      <div class="codex-auth-desc">当前你的 <code>~/.codex/auth.json</code> 里只有 API Key，没有官方登录产生的 <code>tokens.access_token</code> / <code>id_token</code>，现在可以直接点下面按钮拉起 <code>codex login</code>。</div>
       <div class="codex-auth-actions">
         <button type="button" class="tiny-btn" data-codex-start-login>立即官方登录</button>
         <button type="button" class="secondary tiny-btn" data-codex-switch-api>改用 API Key</button>
@@ -4025,50 +3842,6 @@ function syncCodexAuthView() {
   }
 }
 
-function renderOpenClawPortOccupants(data = {}) {
-  const items = Array.isArray(data.gatewayPortOccupants) ? data.gatewayPortOccupants : [];
-  if (!items.length) return '无';
-  return items.map((item) => {
-    const label = item.label || `${item.name || '未知进程'} (PID ${item.pid || '-'})`;
-    const cmd = item.commandLine ? `<div class="tool-console-stat-sub"><span class="tool-console-code">${escapeHtml(item.commandLine)}</span></div>` : '';
-    return `<div>${escapeHtml(label)}${cmd}</div>`;
-  }).join('');
-}
-
-/* ── Provider Quick Import (Env Paste / Local Read) ── */
-
-/**
- * Parse export statements like:
- *   export ANTHROPIC_BASE_URL=https://your-proxy.example.com
- *   export ANTHROPIC_AUTH_TOKEN=sk-ant-oat01-...
- *   export OPENAI_API_KEY=sk-...
- *   CODEX_API_KEY=sk-...
- * Returns an object mapping env var names to their values.
- */
-function parseExportStatements(text) {
-  const result = {};
-  const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
-  for (const line of lines) {
-    // Match: [export] VAR_NAME=VALUE  (with or without quotes)
-    const match = line.match(/^(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.+)$/i);
-    if (match) {
-      const key = match[1].toUpperCase();
-      let val = match[2].trim();
-      // Remove surrounding quotes
-      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-        val = val.slice(1, -1);
-      }
-      result[key] = val;
-    }
-  }
-  return result;
-}
-
-/**
- * Apply parsed env vars to the OpenClaw config editor form.
- * Detects provider type (anthropic/openai/codex) and fills fields automatically.
- * Returns { applied: string[], providerType: string } for feedback.
- */
 function applyEnvImportToOcForm(envVars) {
   const applied = [];
   let providerType = '';
@@ -4076,19 +3849,11 @@ function applyEnvImportToOcForm(envVars) {
   let apiKey = '';
   let envKeyName = '';
 
-  // Detect provider type from env var names
-  const keys = Object.keys(envVars);
-
-  // Anthropic / Claude
   const anthropicBaseUrl = envVars.ANTHROPIC_BASE_URL || '';
   const anthropicAuthToken = envVars.ANTHROPIC_AUTH_TOKEN || '';
   const anthropicApiKey = envVars.ANTHROPIC_API_KEY || '';
-
-  // OpenAI
   const openaiBaseUrl = envVars.OPENAI_BASE_URL || '';
   const openaiApiKey = envVars.OPENAI_API_KEY || '';
-
-  // Codex
   const codexApiKey = envVars.CODEX_API_KEY || envVars.CODEX_CLI_API_KEY || '';
 
   if (anthropicBaseUrl || anthropicAuthToken || anthropicApiKey) {
@@ -4110,11 +3875,9 @@ function applyEnvImportToOcForm(envVars) {
 
   if (!providerType) return { applied: [], providerType: '' };
 
-  // Select correct API protocol
   const apiProtocol = providerType === 'anthropic' ? 'anthropic-messages' : 'openai-completions';
   const protocolMeta = OPENCLAW_PROTOCOL_META[apiProtocol];
 
-  // Fill form fields
   if (el('ocCfgProviderApi')) {
     el('ocCfgProviderApi').value = apiProtocol;
     if (el('ocCfgProviderApi')._customSelect) el('ocCfgProviderApi')._customSelect.renderOptions();
@@ -4125,7 +3888,6 @@ function applyEnvImportToOcForm(envVars) {
     el('ocCfgProviderBaseUrl').value = baseUrl;
     applied.push(`Base URL → ${baseUrl}`);
   }
-
   if (apiKey && el('ocCfgProviderApiKey')) {
     el('ocCfgProviderApiKey').value = apiKey;
     applied.push(`API Key → ${apiKey.slice(0, 12)}...`);
@@ -6549,7 +6311,7 @@ function renderDashboardPage() {
         { label: '输出', value: formatDashboardMetric(ct.output), sub: ct.total ? Math.round(ct.output / ct.total * 100) + '%' : '–' },
         { label: '缓存读', value: formatDashboardMetric(ct.cacheRead), sub: ct.total ? Math.round(ct.cacheRead / ct.total * 100) + '%' : '–' },
         { label: '缓存写', value: formatDashboardMetric(ct.cacheCreate), sub: ct.total ? Math.round(ct.cacheCreate / ct.total * 100) + '%' : '上下文填充' },
-        { label: '费用估算', value: claudeAllCost ? '$' + claudeAllCost.toFixed(2) : '$0.00', sub: '按 Anthropic 官方定价', isCost: true },
+        { label: '费用估算', value: ct.cost ? '$' + ct.cost.toFixed(2) : '$0.00', sub: ct.cost ? '近' + daysWindow + '天 · 按 Anthropic 官方定价' : '该时段无费用', isCost: true },
       ])}
 
 
@@ -8025,10 +7787,26 @@ function parseApiRequest(url, options = {}) {
   };
 }
 
+let localApiAuth = { token: '', header: 'x-local-token' };
+
+async function ensureLocalApiAuth() {
+  if (tauriInvoke || localApiAuth.token) return localApiAuth;
+  const response = await fetch('/api/bootstrap', { cache: 'no-store' });
+  const json = await response.json();
+  if (!json?.ok || !json?.data?.token) {
+    throw new Error(json?.error || '本地服务鉴权初始化失败');
+  }
+  localApiAuth = {
+    token: String(json.data.token),
+    header: String(json.data.header || 'x-local-token'),
+  };
+  return localApiAuth;
+}
+
 async function api(url, options = {}) {
   const timeoutMs = options.timeoutMs || 20000;
 
-if (tauriInvoke) {
+  if (tauriInvoke) {
     let timeoutId;
     try {
       const result = await Promise.race([
@@ -8045,10 +7823,13 @@ if (tauriInvoke) {
     }
   }
 
+  const auth = await ensureLocalApiAuth();
+  const headers = new Headers(options.headers || {});
+  headers.set(auth.header, auth.token);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, { ...options, headers, signal: controller.signal });
     return await response.json();
   } catch (error) {
     if (error?.name === 'AbortError') return { ok: false, error: '请求超时，请稍后再试' };
@@ -9483,16 +9264,17 @@ function setPage(page = 'quick') {
   }
   if (page === 'dashboard') {
     const hasCachedMetrics = Boolean(state.dashboardMetrics.codex);
-    if (!hasCachedMetrics) state.dashboardLoading = true;
+    const isClaudeDashboard = state.dashboardTool === 'claudecode';
+    if (!hasCachedMetrics && !isClaudeDashboard) state.dashboardLoading = true;
     renderDashboardPage();
     startDashboardAutoRefresh();
-    // Fetch side states and Claude data in parallel, then do ONE re-render
     const sideP = loadDashboardSideStates();
-    const claudeP = state.dashboardTool === 'claudecode' ? ensureClaudeDashboardData() : Promise.resolve();
-    Promise.all([sideP, claudeP]).then(() => {
+    sideP.then(() => {
       if (state.activePage === 'dashboard') renderDashboardPage();
     });
-    void refreshDashboardData({ silent: hasCachedMetrics });
+    if (!isClaudeDashboard) {
+      void refreshDashboardData({ silent: hasCachedMetrics });
+    }
   }
   if (page === 'configEditor') {
     applyConfigEditorSearch();
@@ -13056,11 +12838,31 @@ function normalizeBaseUrl(baseUrl) {
   }
 }
 
+const COMMON_PROVIDER_HOST_SUFFIXES = new Set([
+  'ac', 'ai', 'app', 'cc', 'cloud', 'cn', 'co', 'com', 'dev', 'fm', 'gg', 'hk', 'in', 'io', 'jp',
+  'me', 'net', 'org', 'pro', 'ru', 'sg', 'sh', 'site', 'tech', 'top', 'tv', 'tw', 'uk', 'us', 'xyz',
+]);
+
 function inferSeed(baseUrl) {
   try {
-    const parts = new URL(normalizeBaseUrl(baseUrl)).hostname.toLowerCase().replace(/^www\./, '').split('.');
-    const ignored = new Set(['api', 'openai', 'codex', 'gateway', 'chat', 'www', 'dapi']);
-    return parts.find((part) => !ignored.has(part) && /[a-z]/.test(part)) || 'custom';
+    const parts = new URL(normalizeBaseUrl(baseUrl)).hostname.toLowerCase().split('.').filter(Boolean);
+    if (!parts.length) return 'custom';
+
+    while (parts.length > 1) {
+      const last = parts[parts.length - 1];
+      if (COMMON_PROVIDER_HOST_SUFFIXES.has(last)) {
+        parts.pop();
+        continue;
+      }
+      break;
+    }
+
+    if (parts.length > 1 && ['www', 'api'].includes(parts[0])) {
+      parts.shift();
+    }
+
+    const seed = parts.join('-').replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+    return seed || 'custom';
   } catch {
     return 'custom';
   }
@@ -17563,21 +17365,14 @@ function bindEvents() {
     if (tab) {
       state.dashboardTool = tab.dataset.dashboardTool || 'codex';
       if (state.dashboardTool === 'claudecode') {
-        // If no cached data yet, fetch first to avoid empty flash
         const hasCachedData = state.claudeCodeState?.usage?.daily?.length > 0;
         if (!hasCachedData) {
-          renderDashboardPage(); // show loading state
+          state.dashboardLoading = true;
+          renderDashboardPage();
           await ensureClaudeDashboardData();
+          state.dashboardLoading = false;
         }
         renderDashboardPage();
-        // Refresh in background if we used cached data
-        if (hasCachedData) {
-          ensureClaudeDashboardData().then(() => {
-            if (state.activePage === 'dashboard' && state.dashboardTool === 'claudecode') {
-              renderDashboardPage();
-            }
-          });
-        }
       } else {
         renderDashboardPage();
       }

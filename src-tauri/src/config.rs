@@ -57,12 +57,51 @@ fn summarize_codex_login(auth_json: &Value) -> Value {
   })
 }
 
+fn allowed_path_roots() -> Vec<PathBuf> {
+  let mut roots = vec![home_dir().unwrap_or_else(|_| PathBuf::from(".")), std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")), PathBuf::from("/tmp"), PathBuf::from("/var/tmp")];
+  if cfg!(target_os = "windows") {
+    if let Ok(value) = std::env::var("TEMP") {
+      if !value.trim().is_empty() {
+        roots.push(PathBuf::from(value));
+      }
+    }
+    if let Ok(value) = std::env::var("TMP") {
+      if !value.trim().is_empty() {
+        roots.push(PathBuf::from(value));
+      }
+    }
+  }
+  roots
+}
+
+fn assert_allowed_path(input: &Path, param_name: &str) -> Result<PathBuf, String> {
+  let normalized = input.to_path_buf();
+  let allowed = allowed_path_roots();
+  if allowed.iter().any(|root| normalized == *root || normalized.starts_with(root)) {
+    return Ok(normalized);
+  }
+  Err(format!("Invalid {}: path traversal detected", param_name))
+}
+
+fn resolve_backup_dir(backup_name: &str) -> Result<PathBuf, String> {
+  let trimmed = backup_name.trim();
+  if trimmed.is_empty() {
+    return Err("Backup name is required".to_string());
+  }
+  let candidate = Path::new(trimmed);
+  if candidate.components().count() != 1 {
+    return Err("Invalid backup name".to_string());
+  }
+  Ok(backups_root()?.join(trimmed))
+}
+
 fn scope_paths(scope: &str, project_path: &str, codex_home: &Path) -> Result<ScopePaths, String> {
+  let codex_home = assert_allowed_path(codex_home, "codexHome")?;
   if scope == "project" {
     if project_path.trim().is_empty() {
       return Err("Project path is required for project scope".to_string());
     }
-    let root_path = PathBuf::from(project_path.trim());
+    let root_path = assert_allowed_path(Path::new(project_path.trim()), "projectPath")?;
     return Ok(ScopePaths {
       scope: "project".to_string(),
       root_path: root_path.clone(),
@@ -73,12 +112,11 @@ fn scope_paths(scope: &str, project_path: &str, codex_home: &Path) -> Result<Sco
 
   Ok(ScopePaths {
     scope: "global".to_string(),
-    root_path: codex_home.to_path_buf(),
+    root_path: codex_home.clone(),
     config_path: codex_home.join("config.toml"),
     env_path: codex_home.join(".env"),
   })
 }
-
 
 fn create_backup(paths: &ScopePaths) -> Result<String, String> {
   let target_dir = backups_root()?.join(format!("{}-{}", timestamp(), paths.scope));
@@ -462,13 +500,11 @@ pub(crate) fn save_raw_config(body: &Value) -> Result<Value, String> {
     write_text(&paths.config_path, &config_toml)?;
   }
 
-  // Also save auth.json if provided
   let auth_json_raw = get_string(&object, "authJson");
   let mut auth_changed = false;
   if !auth_json_raw.trim().is_empty() {
-    // Validate JSON
     serde_json::from_str::<Value>(&auth_json_raw).map_err(|e| format!("auth.json 解析失败：{e}"))?;
-    let auth_path = codex_home.join("auth.json");
+    let auth_path = assert_allowed_path(&codex_home.join("auth.json"), "authJsonPath")?;
     let current_auth = read_text(&auth_path)?;
     if current_auth != auth_json_raw {
       write_text(&auth_path, &auth_json_raw)?;
@@ -515,9 +551,6 @@ pub(crate) fn list_backups() -> Result<Value, String> {
 pub(crate) fn restore_backup(body: &Value) -> Result<Value, String> {
   let object = parse_json_object(body);
   let backup_name = get_string(&object, "backupName");
-  if backup_name.trim().is_empty() {
-    return Err("Backup name is required".to_string());
-  }
   let codex_home = {
     let input = get_string(&object, "codexHome");
     if input.is_empty() { default_codex_home()? } else { PathBuf::from(input) }
@@ -525,7 +558,7 @@ pub(crate) fn restore_backup(body: &Value) -> Result<Value, String> {
   let scope = get_string(&object, "scope");
   let project_path = get_string(&object, "projectPath");
   let paths = scope_paths(if scope.is_empty() { "global" } else { &scope }, &project_path, &codex_home)?;
-  let backup_dir = backups_root()?.join(backup_name);
+  let backup_dir = resolve_backup_dir(&backup_name)?;
   if !backup_dir.is_dir() {
     return Err("Backup does not exist".to_string());
   }

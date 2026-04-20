@@ -4075,12 +4075,7 @@ fn read_claude_telemetry_usage(days: i64, force_refresh: bool, cache_only: bool)
     let Ok(file) = File::open(&file_path) else { continue; };
     let reader = BufReader::new(file);
     let session_id = file_path.file_stem().and_then(|value| value.to_str()).unwrap_or("").to_string();
-    let mut session_input = 0_u64;
-    let mut session_output = 0_u64;
-    let mut session_cache_creation = 0_u64;
-    let mut session_cache_read = 0_u64;
-    let mut session_models: BTreeMap<String, (u64, u64, u64, u64)> = BTreeMap::new();
-    let mut last_ts: Option<chrono::DateTime<chrono::Utc>> = None;
+    let mut usage_entries: BTreeMap<String, (chrono::DateTime<chrono::Utc>, String, u64, u64, u64, u64, u64)> = BTreeMap::new();
     let mut primary_model = String::new();
 
     for line in reader.lines().map_while(Result::ok) {
@@ -4093,21 +4088,48 @@ fn read_claude_telemetry_usage(days: i64, force_refresh: bool, cache_only: bool)
         .and_then(Value::as_str)
         .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
         .map(|value| value.with_timezone(&chrono::Utc));
-      if let Some(ts_utc) = parsed_ts { last_ts = Some(ts_utc); }
+      let Some(ts_utc) = parsed_ts else { continue; };
+      if ts_utc < cutoff { continue; }
 
       let input = usage.get("input_tokens").and_then(Value::as_u64).unwrap_or(0);
       let output = usage.get("output_tokens").and_then(Value::as_u64).unwrap_or(0);
       let cache_read = usage.get("cache_read_input_tokens").and_then(Value::as_u64).unwrap_or(0);
       let cache_creation = usage.get("cache_creation_input_tokens").and_then(Value::as_u64).unwrap_or(0);
+      let total = input + output + cache_read + cache_creation;
       let model = msg.get("model").and_then(Value::as_str).unwrap_or("").trim().to_string();
+      if !model.is_empty() && !model.starts_with('<') {
+        primary_model = model.clone();
+      }
 
+      let usage_key = msg.get("id").and_then(Value::as_str)
+        .or_else(|| record.get("requestId").and_then(Value::as_str))
+        .or_else(|| record.get("uuid").and_then(Value::as_str))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("{}:{}:{}:{}", session_id, ts_utc.timestamp_millis(), model, total));
+      let replace = usage_entries.get(&usage_key).map(|entry| total >= entry.6).unwrap_or(true);
+      if replace {
+        usage_entries.insert(usage_key, (ts_utc, model, input, output, cache_read, cache_creation, total));
+      }
+    }
+
+    if usage_entries.is_empty() { continue; }
+
+    let mut session_input = 0_u64;
+    let mut session_output = 0_u64;
+    let mut session_cache_creation = 0_u64;
+    let mut session_cache_read = 0_u64;
+    let mut session_models: BTreeMap<String, (u64, u64, u64, u64)> = BTreeMap::new();
+    let mut last_window_ts: Option<chrono::DateTime<chrono::Utc>> = None;
+
+    for (_key, (ts_utc, model, input, output, cache_read, cache_creation, _total)) in usage_entries {
+      last_window_ts = Some(last_window_ts.map(|prev| prev.max(ts_utc)).unwrap_or(ts_utc));
       session_input += input;
       session_output += output;
       session_cache_read += cache_read;
       session_cache_creation += cache_creation;
 
       if !model.is_empty() && !model.starts_with('<') {
-        primary_model = model.clone();
         let entry = session_models.entry(model.clone()).or_insert((0, 0, 0, 0));
         entry.0 += input;
         entry.1 += output;
@@ -4115,25 +4137,22 @@ fn read_claude_telemetry_usage(days: i64, force_refresh: bool, cache_only: bool)
         entry.3 += cache_creation;
       }
 
-      if let Some(ts_utc) = parsed_ts {
-        if ts_utc < cutoff { continue; }
-        let date = ts_utc.format("%Y-%m-%d").to_string();
-        let bucket = daily.entry(date.clone()).or_insert_with(|| json!({"date": date, "input": 0, "output": 0, "cacheCreation": 0, "cacheRead": 0, "total": 0, "cost": 0.0}));
-        bucket["input"] = json!(bucket.get("input").and_then(Value::as_u64).unwrap_or(0) + input);
-        bucket["output"] = json!(bucket.get("output").and_then(Value::as_u64).unwrap_or(0) + output);
-        bucket["cacheCreation"] = json!(bucket.get("cacheCreation").and_then(Value::as_u64).unwrap_or(0) + cache_creation);
-        bucket["cacheRead"] = json!(bucket.get("cacheRead").and_then(Value::as_u64).unwrap_or(0) + cache_read);
-        bucket["total"] = json!(bucket.get("total").and_then(Value::as_u64).unwrap_or(0) + input + output + cache_read + cache_creation);
-        bucket["cost"] = json!(bucket.get("cost").and_then(Value::as_f64).unwrap_or(0.0) + calc_cost(&model, input, output, cache_read, cache_creation));
-        if !model.is_empty() && !model.starts_with('<') {
-          let day_models = daily_model_tokens_map.entry(date).or_default();
-          *day_models.entry(model).or_insert(0) += input + output + cache_read + cache_creation;
-        }
+      let date = ts_utc.format("%Y-%m-%d").to_string();
+      let bucket = daily.entry(date.clone()).or_insert_with(|| json!({"date": date, "input": 0, "output": 0, "cacheCreation": 0, "cacheRead": 0, "total": 0, "cost": 0.0}));
+      bucket["input"] = json!(bucket.get("input").and_then(Value::as_u64).unwrap_or(0) + input);
+      bucket["output"] = json!(bucket.get("output").and_then(Value::as_u64).unwrap_or(0) + output);
+      bucket["cacheCreation"] = json!(bucket.get("cacheCreation").and_then(Value::as_u64).unwrap_or(0) + cache_creation);
+      bucket["cacheRead"] = json!(bucket.get("cacheRead").and_then(Value::as_u64).unwrap_or(0) + cache_read);
+      bucket["total"] = json!(bucket.get("total").and_then(Value::as_u64).unwrap_or(0) + input + output + cache_read + cache_creation);
+      bucket["cost"] = json!(bucket.get("cost").and_then(Value::as_f64).unwrap_or(0.0) + calc_cost(&model, input, output, cache_read, cache_creation));
+      if !model.is_empty() && !model.starts_with('<') {
+        let day_models = daily_model_tokens_map.entry(date).or_default();
+        *day_models.entry(model).or_insert(0) += input + output + cache_read + cache_creation;
       }
     }
 
-    let Some(last_ts) = last_ts else { continue; };
-    if last_ts < cutoff || (session_input == 0 && session_output == 0 && session_cache_read == 0 && session_cache_creation == 0) { continue; }
+    let Some(last_window_ts) = last_window_ts else { continue; };
+    if session_input == 0 && session_output == 0 && session_cache_read == 0 && session_cache_creation == 0 { continue; }
     let mut session_cost = 0.0;
     for (model, (input, output, cache_read, cache_creation)) in &session_models {
       let cost = calc_cost(model, *input, *output, *cache_read, *cache_creation);
@@ -4152,7 +4171,7 @@ fn read_claude_telemetry_usage(days: i64, force_refresh: bool, cache_only: bool)
     total_cache_creation += session_cache_creation;
     total_cache_read += session_cache_read;
     total_cost += session_cost;
-    sessions.push(json!({"sessionId": session_id, "model": primary_model, "updatedAt": last_ts.to_rfc3339(), "input": session_input, "output": session_output, "cacheCreation": session_cache_creation, "cacheRead": session_cache_read, "total": session_input + session_output + session_cache_read + session_cache_creation, "cost": session_cost}));
+    sessions.push(json!({"sessionId": session_id, "model": primary_model, "updatedAt": last_window_ts.to_rfc3339(), "input": session_input, "output": session_output, "cacheCreation": session_cache_creation, "cacheRead": session_cache_read, "total": session_input + session_output + session_cache_read + session_cache_creation, "cost": session_cost}));
   }
 
   sessions.sort_by(|left, right| {
