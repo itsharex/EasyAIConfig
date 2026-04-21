@@ -80,6 +80,110 @@ fn get_str_obj(obj: &Map<String, Value>, key: &str) -> String {
   obj.get(key).and_then(Value::as_str).unwrap_or("").trim().to_string()
 }
 
+// Decode a hex string (Claude Code stores the Keychain JSON blob as hex).
+// Returns None on any malformed input so callers can silently fall through.
+fn hex_decode(hex: &str) -> Option<Vec<u8>> {
+  let trimmed = hex.trim();
+  if trimmed.len() % 2 != 0 { return None; }
+  let mut out = Vec::with_capacity(trimmed.len() / 2);
+  let bytes = trimmed.as_bytes();
+  let mut i = 0;
+  while i < bytes.len() {
+    let hi = match bytes[i] { b'0'..=b'9' => bytes[i] - b'0', b'a'..=b'f' => bytes[i] - b'a' + 10, b'A'..=b'F' => bytes[i] - b'A' + 10, _ => return None };
+    let lo = match bytes[i + 1] { b'0'..=b'9' => bytes[i + 1] - b'0', b'a'..=b'f' => bytes[i + 1] - b'a' + 10, b'A'..=b'F' => bytes[i + 1] - b'A' + 10, _ => return None };
+    out.push((hi << 4) | lo);
+    i += 2;
+  }
+  Some(out)
+}
+
+// Compute the Keychain service suffix the way Claude Code does it:
+//   sha256(configDir_utf8_NFC).hex()[0..8]
+// Returns the 8-char lowercase hex prefix.
+fn keychain_hash_suffix(dir: &std::path::Path) -> String {
+  use sha2::{Digest, Sha256};
+  let text = dir.to_string_lossy();
+  let mut hasher = Sha256::new();
+  hasher.update(text.as_bytes());
+  let digest = hasher.finalize();
+  let mut hex = String::with_capacity(16);
+  for b in digest.iter().take(4) {
+    hex.push_str(&format!("{:02x}", b));
+  }
+  hex
+}
+
+// Pull the stored OAuth blob for a given profile dir. Tries Keychain first on
+// macOS (for default-dir profiles the suffix is empty, matching Claude Code's
+// behavior), then falls back to <dir>/.credentials.json (the Linux/Windows
+// plaintext fallback that Claude Code also uses on macOS when Keychain is
+// unavailable).
+//
+// Returns `(subscriptionType, rateLimitTier)`. Both are empty strings when the
+// blob can't be read or parsed.
+fn read_profile_plan_tier(dir: &std::path::Path) -> (String, String) {
+  // Step 1: macOS Keychain
+  #[cfg(target_os = "macos")]
+  {
+    use std::process::Command;
+    let suffix = keychain_hash_suffix(dir);
+    let service = format!("Claude Code-credentials-{}", suffix);
+    let user = std::env::var("USER").unwrap_or_default();
+    if !user.is_empty() {
+      let out = Command::new("security")
+        .args(["find-generic-password", "-a", &user, "-s", &service, "-w"])
+        .output();
+      if let Ok(out) = out {
+        if out.status.success() {
+          let hex_str = String::from_utf8_lossy(&out.stdout);
+          if let Some(bytes) = hex_decode(hex_str.trim()) {
+            if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
+              let (s, t) = extract_plan_tier(&v);
+              if !s.is_empty() || !t.is_empty() { return (s, t); }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Step 2: plaintext fallback
+  let plain = dir.join(".credentials.json");
+  if let Ok(text) = std::fs::read_to_string(&plain) {
+    if let Ok(v) = serde_json::from_str::<Value>(&text) {
+      return extract_plan_tier(&v);
+    }
+  }
+
+  (String::new(), String::new())
+}
+
+fn extract_plan_tier(blob: &Value) -> (String, String) {
+  let oauth = match blob.get("claudeAiOauth").and_then(Value::as_object) {
+    Some(o) => o,
+    None => return (String::new(), String::new()),
+  };
+  let sub = get_str_obj(oauth, "subscriptionType");
+  let tier = get_str_obj(oauth, "rateLimitTier");
+  (sub, tier)
+}
+
+// Given (subscriptionType, rateLimitTier), produce the display label the UI
+// shows as a plan pill. Mirrors Claude Code's own planModeV2.ts logic.
+fn plan_label(subscription_type: &str, rate_limit_tier: &str) -> String {
+  match (subscription_type, rate_limit_tier) {
+    ("max", "default_claude_max_20x") => "Max 20x".to_string(),
+    ("max", "default_claude_max_5x") => "Max 5x".to_string(),
+    ("max", _) => "Max".to_string(),
+    ("pro", _) => "Pro".to_string(),
+    ("team", _) => "Team".to_string(),
+    ("enterprise", _) => "Enterprise".to_string(),
+    ("free", _) => "Free".to_string(),
+    ("", _) => String::new(),
+    (s, _) => s.to_string(),
+  }
+}
+
 // Pull oauthAccount metadata out of a profile's .claude.json. Returns empty
 // strings when the file is missing / not yet populated (i.e. user hasn't
 // finished the login flow yet).
@@ -114,14 +218,14 @@ fn read_profile_metadata(dir: &std::path::Path) -> Value {
   let org_uuid = get_str_obj(account, "organizationUuid");
   let org_role = get_str_obj(account, "organizationRole");
   let display_name = get_str_obj(account, "displayName");
-  // Subscription tier — claude.json stores this under different possible keys.
-  let plan = if !get_str_obj(account, "billingType").is_empty() {
-    // billingType values observed: "stripe_subscription", etc. — not the plan tier
-    // itself. Fall back to subscriptionType if Claude stored one; otherwise blank.
-    get_str_obj(account, "subscriptionType")
-  } else {
-    get_str_obj(account, "subscriptionType")
-  };
+  let billing_type = get_str_obj(account, "billingType");
+
+  // `.claude.json` does not carry the actual plan tier (pro / max / max-20x).
+  // Those live in the Keychain blob (or plaintext .credentials.json fallback).
+  // Read them best-effort; first macOS Keychain access pops a one-time
+  // "Always Allow" dialog, subsequent reads are silent.
+  let (subscription_type, rate_limit_tier) = read_profile_plan_tier(dir);
+  let plan = plan_label(&subscription_type, &rate_limit_tier);
 
   if let Some(obj) = out.as_object_mut() {
     obj.insert("accountUuid".to_string(), json!(account_uuid));
@@ -130,6 +234,9 @@ fn read_profile_metadata(dir: &std::path::Path) -> Value {
     obj.insert("organizationUuid".to_string(), json!(org_uuid));
     obj.insert("organizationRole".to_string(), json!(org_role));
     obj.insert("displayName".to_string(), json!(display_name));
+    obj.insert("billingType".to_string(), json!(billing_type));
+    obj.insert("subscriptionType".to_string(), json!(subscription_type));
+    obj.insert("rateLimitTier".to_string(), json!(rate_limit_tier));
     obj.insert("plan".to_string(), json!(plan));
     obj.insert("hasTokens".to_string(), json!(!account_uuid.is_empty()));
   }
@@ -191,16 +298,72 @@ pub(crate) fn list_claudecode_oauth_profiles(_query: &Value) -> Result<Value, St
       "organizationName": meta.get("organizationName").cloned().unwrap_or(json!("")),
       "organizationRole": meta.get("organizationRole").cloned().unwrap_or(json!("")),
       "displayName": meta.get("displayName").cloned().unwrap_or(json!("")),
+      "billingType": meta.get("billingType").cloned().unwrap_or(json!("")),
+      "subscriptionType": meta.get("subscriptionType").cloned().unwrap_or(json!("")),
+      "rateLimitTier": meta.get("rateLimitTier").cloned().unwrap_or(json!("")),
       "plan": meta.get("plan").cloned().unwrap_or(json!("")),
       "hasTokens": meta.get("hasTokens").cloned().unwrap_or(json!(false)),
     }));
   }
 
+  // Default ~/.claude/ profile — probe its Keychain entry too so the "默认"
+  // row in the hub shows a plan pill matching the managed-profile rows. For
+  // the default dir Claude Code uses `Claude Code-credentials` with no hash
+  // suffix, so we short-circuit: read directly by service name (or plaintext
+  // fallback).
+  let default_plan = read_default_claude_plan();
+
   Ok(json!({
     "active": active,
     "lastSwitchAt": last_switch_at,
     "profiles": enriched,
+    "defaultPlan": default_plan,
   }))
+}
+
+fn read_default_claude_plan() -> Value {
+  let (sub, tier) = read_default_plan_tier();
+  json!({
+    "subscriptionType": sub,
+    "rateLimitTier": tier,
+    "plan": plan_label(&sub, &tier),
+  })
+}
+
+fn read_default_plan_tier() -> (String, String) {
+  #[cfg(target_os = "macos")]
+  {
+    use std::process::Command;
+    let user = std::env::var("USER").unwrap_or_default();
+    if !user.is_empty() {
+      let out = Command::new("security")
+        .args(["find-generic-password", "-a", &user, "-s", "Claude Code-credentials", "-w"])
+        .output();
+      if let Ok(out) = out {
+        if out.status.success() {
+          let hex_str = String::from_utf8_lossy(&out.stdout);
+          if let Some(bytes) = hex_decode(hex_str.trim()) {
+            if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
+              let (s, t) = extract_plan_tier(&v);
+              if !s.is_empty() || !t.is_empty() { return (s, t); }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Plaintext fallback — ~/.claude/.credentials.json (non-mac default) or the
+  // mac fallback path when Keychain is unavailable.
+  if let Ok(home) = crate::home_dir() {
+    let plain = home.join(".claude").join(".credentials.json");
+    if let Ok(text) = std::fs::read_to_string(&plain) {
+      if let Ok(v) = serde_json::from_str::<Value>(&text) {
+        return extract_plan_tier(&v);
+      }
+    }
+  }
+  (String::new(), String::new())
 }
 
 // Create a new profile *slot*. Doesn't run codex login — caller is expected to

@@ -18262,19 +18262,24 @@ loadTools();
       // Only rendered when the user has logged in at least once there; otherwise
       // there's nothing to show and we want to avoid implying that launching
       // without a profile is a viable path for an un-logged-in user.
+      //
+      // Plan label comes from ccData.defaultPlan (backend reads the default
+      // Keychain entry), not cc.login.plan which just mirrors .claude.json's
+      // oauthAccount.accountPlan (a legacy field that's usually empty).
+      const defaultPlan = (ccData.defaultPlan && ccData.defaultPlan.plan) || '';
       if (hasLogin) {
         rows.push({
           key: '__claudecode_oauth_default__',
           name: ccLogin.email || ccLogin.orgName || '默认账号',
           baseUrl: '~/.claude/ · Claude Code 默认',
-          model: activeId === '' ? (ccLogin.plan || '') : '',
+          model: activeId === '' ? defaultPlan : '',
           mode: 'oauth',
           kind: 'claudecode-oauth-default',
           isActive: activeId === '',
           hasCredential: true,
           health: { ok: true, checked: true },
           ref: null,
-          plan: ccLogin.plan || '',
+          plan: defaultPlan,
           email: ccLogin.email || '',
           tool,
         });

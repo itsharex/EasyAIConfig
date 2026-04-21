@@ -19465,6 +19465,18 @@ body {
   background: rgba(169, 242, 199, 0.12);
   box-shadow: inset 0 0 0 1px rgba(169, 242, 199, 0.28);
 }
+/* Claude subscription tiers — Max is the top consumer tier, render with warm
+   amber; Max-20x gets a slightly hotter variant to stand out from plain Max. */
+.shell-v2 .ch-row-plan[data-plan^="max"] {
+  color: #ffb84a;
+  background: rgba(255, 184, 74, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 184, 74, 0.34);
+}
+.shell-v2 .ch-row-plan[data-plan="max 20x"] {
+  color: #ff8e3c;
+  background: rgba(255, 142, 60, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(255, 142, 60, 0.4);
+}
 .shell-v2 .ch-row-plan[data-plan="enterprise"] {
   color: #e3a9ff;
   background: rgba(227, 169, 255, 0.14);
