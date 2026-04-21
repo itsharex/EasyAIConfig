@@ -18221,26 +18221,33 @@ loadTools();
       if (typeof isClaudeCodeInstalled === 'function' && !isClaudeCodeInstalled(cc)) return [];
       const profiles = typeof getClaudeProviderProfiles === 'function' ? (getClaudeProviderProfiles(cc) || []) : [];
       const selectedKey = s.claudeSelectedProviderKey;
-      // Render all Claude providers as API-KEY rows; the OAuth group is driven
-      // by our own multi-account profile store (see below).
-      const rows = profiles.map((p) => {
-        const isOfficial = typeof isClaudeOfficialProvider === 'function' ? isClaudeOfficialProvider(p) : false;
-        const oauthReady = isOfficial && typeof isClaudeOauthLoggedIn === 'function' && isClaudeOauthLoggedIn(cc);
-        const hasCredential = Boolean(p.hasApiKey) || oauthReady;
-        return {
-          key: p.key,
-          name: p.name || p.key,
-          baseUrl: p.baseUrl || 'https://api.anthropic.com',
-          model: (p.key === selectedKey) ? (cc.model || '') : '',
-          mode: 'apikey',
-          kind: 'claudecode-apikey',
-          isActive: p.key === selectedKey,
-          hasCredential,
-          health: hasCredential ? { ok: true, checked: true } : null,
-          ref: p,
-          tool,
-        };
-      });
+      const oauthAuthInUse = typeof isClaudeOauthLoggedIn === 'function' && isClaudeOauthLoggedIn(cc);
+      // Render Claude providers as API-KEY rows. When the user's auth for the
+      // official Anthropic provider is OAuth, hide its API-KEY row — the
+      // OAuth profile rows (below) already represent that identity, and
+      // showing both would dual-highlight "当前" and confuse the user.
+      const rows = profiles
+        .filter((p) => {
+          const isOfficial = typeof isClaudeOfficialProvider === 'function' ? isClaudeOfficialProvider(p) : false;
+          if (isOfficial && oauthAuthInUse) return false;
+          return true;
+        })
+        .map((p) => {
+          const hasCredential = Boolean(p.hasApiKey);
+          return {
+            key: p.key,
+            name: p.name || p.key,
+            baseUrl: p.baseUrl || 'https://api.anthropic.com',
+            model: (p.key === selectedKey) ? (cc.model || '') : '',
+            mode: 'apikey',
+            kind: 'claudecode-apikey',
+            isActive: p.key === selectedKey,
+            hasCredential,
+            health: hasCredential ? { ok: true, checked: true } : null,
+            ref: p,
+            tool,
+          };
+        });
 
       // Our OAuth profile store → one row per saved profile + one "default"
       // row representing the un-managed ~/.claude/ login.
