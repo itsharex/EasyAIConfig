@@ -17930,105 +17930,63 @@ body {
   letter-spacing: -0.005em;
 }
 
-/* ── Flow section (connection config) — settings-list panel ── */
+/* ── Flow section (connection config) — flat, no card ── */
 .shell-v2 .view-section.flow-section {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0.006)) !important;
-  box-shadow: inset 0 0 0 1px var(--s2-line-soft) !important;
+  background: transparent !important;
+  box-shadow: none !important;
   border: 0 !important;
-  border-radius: 16px !important;
-  padding: 4px 22px !important;
-  overflow: hidden;
-}
-
-[data-theme="light"] .shell-v2 .view-section.flow-section {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.32)) !important;
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.055), 0 1px 2px rgba(15, 23, 42, 0.015) !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  overflow: visible;
 }
 
 .shell-v2 .section-head.compact-head {
-  padding: 18px 0 16px !important;
-  margin-bottom: 0 !important;
+  padding: 0 0 18px !important;
+  margin-bottom: 22px !important;
   border-bottom: 1px solid var(--s2-line-soft) !important;
 }
 
 .shell-v2 .section-title {
-  font-size: 0.98rem !important;
+  font-size: 1.24rem !important;
   font-weight: 720 !important;
-  letter-spacing: -0.018em !important;
-  line-height: 1.2 !important;
+  letter-spacing: -0.024em !important;
+  line-height: 1.12 !important;
   margin: 0 !important;
   color: var(--s2-text) !important;
 }
 
 .shell-v2 .section-head .inline-meta,
 .shell-v2 #detectionMeta {
-  font-size: 0.72rem !important;
-  line-height: 1.45 !important;
+  font-size: 0.78rem !important;
+  line-height: 1.5 !important;
   color: var(--s2-muted) !important;
-  margin-top: 4px !important;
+  margin-top: 6px !important;
 }
 
-/* Flow grid becomes a definition-list layout: label-left, control-right */
+/* Stacked fields — label above input, full width */
 .shell-v2 .flow-grid {
   display: flex !important;
   flex-direction: column !important;
   grid-template-columns: unset !important;
-  gap: 0 !important;
-  row-gap: 0 !important;
+  gap: 18px !important;
+  row-gap: 18px !important;
   margin-top: 0 !important;
 }
 
 .shell-v2 .flow-grid > * {
-  border-bottom: 1px solid var(--s2-line-soft) !important;
+  border: 0 !important;
 }
 
-.shell-v2 .flow-grid > *:last-child {
-  border-bottom: 0 !important;
-}
-
-/* Auth block row: CSS-injected label */
-.shell-v2 .flow-grid > .codex-auth-block:not([style*="display:none"]):not([style*="display: none"]) {
-  display: grid;
-  grid-template-columns: 100px minmax(0, 1fr) !important;
-  grid-auto-flow: row;
-  align-items: center !important;
-  gap: 10px 18px !important;
-  padding: 14px 0 !important;
-}
-
-.shell-v2 .flow-grid > .codex-auth-block::before {
-  content: "认证方式";
-  grid-column: 1;
-  grid-row: 1;
-  text-align: right;
-  font-size: 0.76rem;
-  font-weight: 560;
-  color: var(--s2-muted);
-  letter-spacing: -0.005em;
-}
-
-.shell-v2 .flow-grid > .codex-auth-block > .codex-auth-tabs {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: start;
-}
-
-.shell-v2 .flow-grid > .codex-auth-block > .codex-auth-panel {
-  grid-column: 2;
-  grid-row: 2;
-  justify-self: stretch;
-}
-
-/* Each field row: label-left, control-right */
 .shell-v2 .flow-grid .field:not(.hide),
 .shell-v2 .flow-grid .field-wide:not(.hide),
 .shell-v2 .flow-grid .action-field:not(.hide) {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  gap: 8px !important;
   grid-column: auto !important;
-  grid-template-columns: 100px minmax(0, 1fr) !important;
-  align-items: center !important;
-  gap: 18px !important;
-  padding: 14px 0 !important;
+  grid-template-columns: unset !important;
+  align-items: stretch !important;
+  padding: 0 !important;
   max-width: none !important;
 }
 
@@ -18037,46 +17995,60 @@ body {
   display: block !important;
   margin: 0 !important;
   padding: 0 !important;
-  text-align: right !important;
+  text-align: left !important;
   text-transform: none !important;
   letter-spacing: -0.005em !important;
-  font-size: 0.76rem !important;
-  font-weight: 560 !important;
-  color: var(--s2-muted) !important;
-  line-height: 1.3 !important;
+  font-size: 0.8rem !important;
+  font-weight: 600 !important;
+  color: var(--s2-text) !important;
+  line-height: 1.2 !important;
 }
 
-.shell-v2 .flow-grid .field > input,
-.shell-v2 .flow-grid .field > .password-field,
-.shell-v2 .flow-grid .field > .select-wrap,
-.shell-v2 .flow-grid .field > .model-select-row,
-.shell-v2 .flow-grid .action-field > button {
-  justify-self: stretch;
+.shell-v2 .flow-grid input:not([type=radio]):not([type=checkbox]),
+.shell-v2 .flow-grid .password-field,
+.shell-v2 .flow-grid .select-wrap,
+.shell-v2 .flow-grid .model-select-row {
+  width: 100% !important;
 }
 
-.shell-v2 .flow-grid .action-field > button {
-  justify-self: start !important;
+/* Auth block — no synthetic label, tabs sit directly as first row */
+.shell-v2 .flow-grid > .codex-auth-block:not([style*="display:none"]):not([style*="display: none"]) {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch !important;
+  padding: 0 !important;
+  margin: 0 0 4px !important;
 }
 
-/* Inputs & selects — thin borders, soft fill, subtle focus */
+.shell-v2 .flow-grid > .codex-auth-block > .codex-auth-tabs {
+  align-self: flex-start;
+}
+
+.shell-v2 .flow-grid > .codex-auth-block > .codex-auth-panel {
+  width: 100%;
+}
+
+/* Inputs & selects — flat, airy, confident focus */
 .shell-v2 input:not([type=radio]):not([type=checkbox]),
 .shell-v2 select,
 .shell-v2 .flow-grid select {
-  height: 36px !important;
-  padding: 0 12px !important;
-  border-radius: 9px !important;
-  font-size: 0.82rem !important;
+  height: 42px !important;
+  padding: 0 14px !important;
+  border-radius: 10px !important;
+  font-size: 0.88rem !important;
   color: var(--s2-text) !important;
-  background: var(--s2-panel) !important;
+  background: rgba(255, 255, 255, 0.018) !important;
   box-shadow: inset 0 0 0 1px var(--s2-line-soft) !important;
   border: 0 !important;
-  transition: box-shadow 140ms ease, background 140ms ease;
+  transition: box-shadow 150ms ease, background 150ms ease;
+  width: 100%;
 }
 
 [data-theme="light"] .shell-v2 input:not([type=radio]):not([type=checkbox]),
 [data-theme="light"] .shell-v2 select {
-  background: rgba(255, 255, 255, 0.8) !important;
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08) !important;
+  background: rgba(255, 255, 255, 0.82) !important;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08), 0 1px 0 rgba(15, 23, 42, 0.02) !important;
 }
 
 .shell-v2 input:hover:not(:focus):not([disabled]),
@@ -18101,15 +18073,19 @@ body {
 }
 
 /* Password field + eye toggle */
+.shell-v2 .password-field {
+  width: 100%;
+}
+
 .shell-v2 .password-field input {
-  padding-right: 42px !important;
+  padding-right: 46px !important;
 }
 
 .shell-v2 .password-toggle-btn {
-  width: 26px !important;
-  height: 26px !important;
+  width: 30px !important;
+  height: 30px !important;
   right: 6px !important;
-  border-radius: 6px !important;
+  border-radius: 7px !important;
   color: var(--s2-faint) !important;
   background: transparent !important;
   box-shadow: none !important;
@@ -18181,14 +18157,14 @@ body {
 }
 
 .shell-v2 .codex-auth-tab {
-  height: 28px !important;
-  padding: 0 14px !important;
-  font-size: 0.74rem !important;
+  height: 34px !important;
+  padding: 0 18px !important;
+  font-size: 0.8rem !important;
   font-weight: 600 !important;
   color: var(--s2-muted) !important;
   background: transparent !important;
   border: 0 !important;
-  border-radius: 7px !important;
+  border-radius: 8px !important;
   box-shadow: none !important;
   letter-spacing: -0.005em;
   transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease;
@@ -18211,21 +18187,27 @@ body {
   box-shadow: 0 2px 8px -2px rgba(59, 130, 246, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 }
 
-/* Detect button + model refresh button — ghost pills */
+/* Detect button — ghost pill aligned with input height */
 .shell-v2 #detectBtn,
 .shell-v2 .secondary.fit-btn {
   width: auto !important;
-  min-width: 120px !important;
+  min-width: 132px !important;
   align-self: flex-start !important;
-  height: 36px !important;
-  padding: 0 14px !important;
-  border-radius: 9px !important;
-  font-size: 0.78rem !important;
+  height: 42px !important;
+  padding: 0 18px !important;
+  border-radius: 10px !important;
+  font-size: 0.82rem !important;
   font-weight: 580 !important;
-  background: var(--s2-panel-strong) !important;
+  background: rgba(255, 255, 255, 0.018) !important;
   color: var(--s2-text) !important;
   box-shadow: inset 0 0 0 1px var(--s2-line-soft) !important;
   border: 0 !important;
+}
+
+[data-theme="light"] .shell-v2 #detectBtn,
+[data-theme="light"] .shell-v2 .secondary.fit-btn {
+  background: rgba(255, 255, 255, 0.82) !important;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08), 0 1px 0 rgba(15, 23, 42, 0.02) !important;
 }
 
 .shell-v2 #detectBtn:hover,
@@ -18239,21 +18221,32 @@ body {
   display: flex !important;
   gap: 8px !important;
   align-items: stretch !important;
+  width: 100%;
+}
+
+.shell-v2 .model-select-row > .select-wrap {
+  flex: 1 1 auto !important;
+  min-width: 0;
 }
 
 .shell-v2 .model-refresh-btn {
   flex: 0 0 auto !important;
-  width: 36px !important;
-  height: 36px !important;
-  min-width: 36px !important;
+  width: 42px !important;
+  height: 42px !important;
+  min-width: 42px !important;
   padding: 0 !important;
-  border-radius: 9px !important;
-  background: var(--s2-panel-strong) !important;
+  border-radius: 10px !important;
+  background: rgba(255, 255, 255, 0.018) !important;
   color: var(--s2-muted) !important;
   box-shadow: inset 0 0 0 1px var(--s2-line-soft) !important;
   border: 0 !important;
   display: grid !important;
   place-items: center;
+}
+
+[data-theme="light"] .shell-v2 .model-refresh-btn {
+  background: rgba(255, 255, 255, 0.82) !important;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08) !important;
 }
 
 .shell-v2 .model-refresh-btn:hover {
@@ -18263,8 +18256,8 @@ body {
 }
 
 .shell-v2 .model-refresh-btn svg {
-  width: 13px !important;
-  height: 13px !important;
+  width: 14px !important;
+  height: 14px !important;
 }
 
 /* Primary action row — right-aligned, clean hierarchy */
@@ -18273,21 +18266,21 @@ body {
   justify-content: flex-end !important;
   align-items: center !important;
   gap: 8px !important;
-  margin: 0 -22px -4px !important;
-  padding: 14px 22px !important;
+  margin: 24px 0 0 !important;
+  padding: 18px 0 0 !important;
   border-top: 1px solid var(--s2-line-soft) !important;
-  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.04)) !important;
+  background: transparent !important;
 }
 
 [data-theme="light"] .shell-v2 .primary-actions {
-  background: linear-gradient(180deg, transparent, rgba(15, 23, 42, 0.018)) !important;
+  background: transparent !important;
 }
 
 .shell-v2 .primary-actions button {
-  height: 36px !important;
-  padding: 0 18px !important;
-  border-radius: 9px !important;
-  font-size: 0.8rem !important;
+  height: 40px !important;
+  padding: 0 20px !important;
+  border-radius: 10px !important;
+  font-size: 0.84rem !important;
   font-weight: 620 !important;
   letter-spacing: -0.005em;
   transition: background 140ms ease, box-shadow 140ms ease, transform 140ms ease;
