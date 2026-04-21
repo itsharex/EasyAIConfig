@@ -20220,6 +20220,8 @@ body {
   gap: 4px;
   font-size: 0.68rem;
   color: var(--s2-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .shell-v2 .cv3-ipstrip-proxy.dim { opacity: 0.55; }
 .shell-v2 .cv3-ipstrip-actions { margin-left: auto; display: inline-flex; gap: 3px; align-items: center; flex-shrink: 0; }
@@ -20265,7 +20267,8 @@ body {
   /* 4 columns on normal widths so all vantages fit a single row; collapses
      to auto-fit on narrow layouts only. */
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 14px;
+  padding: 4px 2px 2px;
 }
 @media (max-width: 900px) {
   .shell-v2 .cv3-vantage-grid {
@@ -20275,7 +20278,7 @@ body {
 /* Flat, borderless — each vantage is just 3 lines of data. The outer
    glass section wrapper already defines the visual boundary. */
 .shell-v2 .cv3-vantage {
-  padding: 6px 10px;
+  padding: 8px 12px;
   border-radius: 6px;
   background: transparent;
   box-shadow: none;
