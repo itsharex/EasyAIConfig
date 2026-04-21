@@ -18129,23 +18129,28 @@ loadTools();
       const providers = Array.isArray(s.current?.providers) ? s.current.providers : [];
       const login = s.current?.login || {};
       const health = s.providerHealth || {};
-      const rows = providers.map((p) => {
-        const h = health[p.key];
-        return {
-          key: p.key,
-          name: p.name || p.key,
-          baseUrl: p.baseUrl || '',
-          model: p.isActive ? (s.current?.summary?.model || '') : '',
-          mode: 'apikey',
-          kind: 'codex-apikey',
-          isActive: Boolean(p.isActive),
-          hasCredential: Boolean(p.hasApiKey),
-          historyOnly: Boolean(p.historyOnly),
-          health: h || null,
-          ref: p,
-          tool,
-        };
-      });
+      // Hide template / placeholder providers that don't have a real key set
+      // — they clutter the list as "缺 KEY" ghost rows. Keep if active, keep
+      // if marked history (old key got deleted, still useful to see).
+      const rows = providers
+        .filter((p) => p.isActive || p.hasApiKey || p.historyOnly)
+        .map((p) => {
+          const h = health[p.key];
+          return {
+            key: p.key,
+            name: p.name || p.key,
+            baseUrl: p.baseUrl || '',
+            model: p.isActive ? (s.current?.summary?.model || '') : '',
+            mode: 'apikey',
+            kind: 'codex-apikey',
+            isActive: Boolean(p.isActive),
+            hasCredential: Boolean(p.hasApiKey),
+            historyOnly: Boolean(p.historyOnly),
+            health: h || null,
+            ref: p,
+            tool,
+          };
+        });
 
       const oauthCache = window.__chOauthProfiles || { loaded: false, data: null };
       const oauthData = oauthCache.data || { profiles: [], active: '', live: {}, liveHasUnsavedTokens: false };
@@ -18222,14 +18227,17 @@ loadTools();
       const profiles = typeof getClaudeProviderProfiles === 'function' ? (getClaudeProviderProfiles(cc) || []) : [];
       const selectedKey = s.claudeSelectedProviderKey;
       const oauthAuthInUse = typeof isClaudeOauthLoggedIn === 'function' && isClaudeOauthLoggedIn(cc);
-      // Render Claude providers as API-KEY rows. When the user's auth for the
-      // official Anthropic provider is OAuth, hide its API-KEY row — the
-      // OAuth profile rows (below) already represent that identity, and
-      // showing both would dual-highlight "当前" and confuse the user.
+      // Render Claude providers as API-KEY rows. Two filters:
+      //   1. When the user's official-Anthropic auth is OAuth, hide the
+      //      official API-KEY row (OAuth profile rows represent it).
+      //   2. Hide template / placeholder providers with no API key set
+      //      (they appear as "缺 KEY" ghosts otherwise).
       const rows = profiles
         .filter((p) => {
           const isOfficial = typeof isClaudeOfficialProvider === 'function' ? isClaudeOfficialProvider(p) : false;
           if (isOfficial && oauthAuthInUse) return false;
+          if (p.key === selectedKey) return true; // always keep whatever's active
+          if (!p.hasApiKey) return false;
           return true;
         })
         .map((p) => {
