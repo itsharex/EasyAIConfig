@@ -8248,6 +8248,9 @@ function renderConsoleV2(tool) {
   // render — each loader guards itself against re-entry.
   primeConsoleV3(tool);
 
+  const titleToolEl = document.getElementById('consoleV2TitleTool');
+  if (titleToolEl) titleToolEl.textContent = model.toolLabel;
+
   // v3 sections (vantage matrix replaces the old standalone firewall card).
   renderConsoleV3Procs(tool, model.toolLabel);
   renderConsoleV3Usage(tool);

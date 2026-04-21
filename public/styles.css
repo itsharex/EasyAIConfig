@@ -20134,25 +20134,54 @@ body {
      to still appear before it, matching the old ::before decorator. */
   letter-spacing: 0.14em;
 }
-.shell-v2 .cv3-ipstrip.safe {
-  background: rgba(74, 222, 128, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.22);
+/* Verdict tint lives only on the shield icon now (see .cv3-ipstrip.safe
+   .cv3-ico rule above). Strip container stays fully transparent so it
+   reads as a continuation of the hero card, not a separate pill. */
+
+/* Glass-morphism wrapper for the sections below the hero. They get the
+   same translucent treatment as the hero card so the whole page reads as
+   one visual vocabulary, not "hero + plain lists below". */
+.shell-v2 .console-v2-vantages,
+.shell-v2 .console-v2-procs,
+.shell-v2 .console-v2-usage,
+.shell-v2 .console-v2-meta,
+.shell-v2 .console-v2-issues {
+  padding: 14px 18px 16px;
+  border-radius: 16px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(107, 158, 255, 0.07) 0%, transparent 55%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.008));
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 8px 20px rgba(0, 0, 0, 0.14);
 }
-.shell-v2 .cv3-ipstrip.warn,
-.shell-v2 .cv3-ipstrip.loading {
-  background: rgba(234, 167, 51, 0.08);
-  box-shadow: inset 0 0 0 1px rgba(234, 167, 51, 0.24);
+[data-theme="light"] .shell-v2 .console-v2-vantages,
+[data-theme="light"] .shell-v2 .console-v2-procs,
+[data-theme="light"] .shell-v2 .console-v2-usage,
+[data-theme="light"] .shell-v2 .console-v2-meta,
+[data-theme="light"] .shell-v2 .console-v2-issues {
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(59, 130, 246, 0.06) 0%, transparent 55%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.6));
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 23, 42, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 4px 14px rgba(15, 23, 42, 0.05);
 }
-.shell-v2 .cv3-ipstrip.block,
-.shell-v2 .cv3-ipstrip.bad {
-  background: rgba(239, 82, 82, 0.1);
-  box-shadow: inset 0 0 0 1px rgba(239, 82, 82, 0.3);
+/* Section head padding inside a glass card — the outer card already pads
+   itself, so the head just needs a touch above for breathing room, and
+   none of the horizontal 6px it used to have. */
+.shell-v2 .console-v2-vantages .console-v2-section-head,
+.shell-v2 .console-v2-procs .console-v2-section-head,
+.shell-v2 .console-v2-usage .console-v2-section-head,
+.shell-v2 .console-v2-issues .console-v2-section-head,
+.shell-v2 .console-v2-meta .console-v2-section-head,
+.shell-v2 .console-v2-meta .console-v2-meta-head {
+  padding: 0 0 10px;
 }
-[data-theme="light"] .shell-v2 .cv3-ipstrip.safe { background: rgba(34, 197, 94, 0.12); box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.3); }
-[data-theme="light"] .shell-v2 .cv3-ipstrip.warn,
-[data-theme="light"] .shell-v2 .cv3-ipstrip.loading { background: rgba(234, 167, 51, 0.16); box-shadow: inset 0 0 0 1px rgba(234, 167, 51, 0.38); }
-[data-theme="light"] .shell-v2 .cv3-ipstrip.block,
-[data-theme="light"] .shell-v2 .cv3-ipstrip.bad { background: rgba(239, 68, 68, 0.13); box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.38); }
 
 .shell-v2 .cv3-ipstrip-ip code {
   font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
