@@ -14,96 +14,161 @@
       <div class="window-dragbar-fill" data-tauri-drag-region></div>
     </div>
 
-    <div class="desktop-layout">
-      <aside class="sidebar">
-        <div class="sidebar-drag-region" data-tauri-drag-region></div>
-        <div class="sidebar-head">
-          <div class="brand-row">
-            <img class="brand-logo" src="icon.png" width="52" height="52" alt="logo" style="border-radius:12px">
-            <span class="brand-name">EasyAIConfig</span>
-          </div>
+    <div class="desktop-layout shell-v2">
+      <aside class="shell-rail">
+        <div class="rail-drag" data-tauri-drag-region></div>
+        <div class="rail-logo" title="EasyAIConfig">
+          <img src="icon.png" width="26" height="26" alt="logo">
         </div>
-
-        <nav class="sidebar-nav">
-          <button class="nav-item active" data-page-target="quick">
-            <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
-                stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M7.5 1L4.5 6.5h4L5.5 12" />
-              </svg></span><span>快速配置</span>
+        <nav class="rail-nav" aria-label="主导航">
+          <button type="button" class="rail-btn active" data-page-target="quick" data-tip="快速配置" aria-label="快速配置">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z" />
+            </svg>
           </button>
-          <button class="nav-item" data-page-target="console">
-            <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
-                stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="2" width="9" height="9" rx="1.5" />
-                <path d="M4 4.5h5M4 6.5h5M4 8.5h3" />
-              </svg></span><span>控制台</span>
+          <button type="button" class="rail-btn" data-page-target="console" data-tip="控制台" aria-label="控制台">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M7 9l3 3-3 3M13 15h4" />
+            </svg>
           </button>
-          <button class="nav-item" data-page-target="dashboard">
-            <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
-                stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M2 10.5h9" />
-                <path d="M3 10.5V6.5" />
-                <path d="M6.5 10.5V3.5" />
-                <path d="M10 10.5V5" />
-              </svg></span><span>数据看板</span>
+          <button type="button" class="rail-btn" data-page-target="dashboard" data-tip="数据看板" aria-label="数据看板">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 20h18" />
+              <rect x="5" y="12" width="3" height="8" rx="0.6" />
+              <rect x="10.5" y="7" width="3" height="13" rx="0.6" />
+              <rect x="16" y="14" width="3" height="6" rx="0.6" />
+            </svg>
           </button>
-          <button class="nav-item" data-page-target="configEditor">
-            <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
-                stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
-                <rect x="2" y="2" width="9" height="9" rx="1.5" />
-                <circle cx="6.5" cy="6.5" r="1.8" />
-              </svg></span><span>配置编辑</span>
+          <button type="button" class="rail-btn" data-page-target="configEditor" data-tip="配置编辑" aria-label="配置编辑">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.5 3.5l6 6-11 11H3.5v-6l11-11z" />
+              <path d="M13 5l6 6" />
+            </svg>
           </button>
-          <button class="nav-item" data-page-target="tools">
-            <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
-                stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 3h7v7H3z" rx="1" />
-                <path d="M6.5 5v3M5 6.5h3" />
-              </svg></span><span>工具安装</span>
+          <button type="button" class="rail-btn" data-page-target="tools" data-tip="工具安装" aria-label="工具安装">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="8" height="8" rx="1.5" />
+              <rect x="13" y="3" width="8" height="8" rx="1.5" />
+              <rect x="3" y="13" width="8" height="8" rx="1.5" />
+              <path d="M17 13v8M13 17h8" />
+            </svg>
           </button>
-          <button class="nav-item" data-page-target="tasks">
-            <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
-                stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="2" y="2" width="9" height="9" rx="1.5" />
-                <path d="M4 4.5h5" />
-                <path d="M4 6.5h3.2" />
-                <path d="M4 8.5h4.2" />
-              </svg></span><span>任务管理</span><span class="nav-badge" id="taskNavBadge" style="display:none"></span>
+          <button type="button" class="rail-btn" data-page-target="tasks" data-tip="任务管理" aria-label="任务管理">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 6.5l2 2 3.5-4" />
+              <path d="M4 13.5l2 2 3.5-4" />
+              <path d="M12.5 7h8M12.5 14h8" />
+            </svg>
+            <span class="rail-badge" id="taskNavBadge" style="display:none"></span>
           </button>
-          <button class="nav-item" data-page-target="about">
-            <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
-                stroke="currentColor" stroke-width="1.2" stroke-linecap="round">
-                <circle cx="6.5" cy="6.5" r="4.5" />
-                <circle cx="6.5" cy="4.8" r="0.6" fill="currentColor" stroke="none" />
-                <line x1="6.5" y1="6.5" x2="6.5" y2="9" />
-              </svg></span><span>关于与更新</span>
-          </button>
-          <button class="nav-item" data-page-target="systemSettings">
-            <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
-                stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="6.5" cy="6.5" r="1.5" />
-                <path d="M6.5 1.8v1.1M6.5 10.1v1.1M2 6.5h1.1M9.9 6.5H11M3.3 3.3l.8.8M8.9 8.9l.8.8M3.3 9.7l.8-.8M8.9 4.1l.8-.8"/>
-              </svg></span><span>系统设置</span>
-          </button>
-          <button class="nav-item" id="setupWizardNavBtn" data-page-target="__wizard__">
-            <span class="nav-icon" aria-hidden="true"><svg width="13" height="13" viewBox="0 0 13 13" fill="none"
-                stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M2 6.5h9M8 3.5l3 3-3 3" />
-              </svg></span><span>初始化向导</span>
+          <button type="button" class="rail-btn" id="setupWizardNavBtn" data-page-target="__wizard__" data-tip="初始化向导" aria-label="初始化向导">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2l2.2 5.1L20 8l-4 3.9.9 5.7L12 15l-4.9 2.6L8 11.9 4 8l5.8-.9z" />
+            </svg>
           </button>
         </nav>
-        <div class="sidebar-status">
-          <div class="sidebar-line">
-            <span class="sidebar-label">客户端</span>
-            <div class="sidebar-inline">
-              <span id="appUpdatePill" class="badge">客户端检测中</span>
-              <button id="appUpdateBtn" class="secondary ghost-btn" hidden>检查更新</button>
+        <div class="rail-foot">
+          <button type="button" class="rail-btn" data-page-target="about" data-tip="关于与更新" aria-label="关于与更新">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 8.5h.01M11 12h1v5h1" />
+            </svg>
+          </button>
+          <button type="button" class="rail-btn" data-page-target="systemSettings" data-tip="系统设置" aria-label="系统设置">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="2.5" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09c0 .65.39 1.24 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+          </button>
+        </div>
+      </aside>
+
+      <aside class="shell-secondary">
+        <div class="sec-drag" data-tauri-drag-region></div>
+        <div class="sec-head">
+          <div class="sec-eyebrow" id="secondaryEyebrow">QUICK SETUP</div>
+          <div class="sec-title" id="secondaryTitle">一键配置</div>
+          <div class="sec-sub" id="secondarySub">选择要配置的工具，或为同一工具保存多份预设。</div>
+        </div>
+        <div class="sec-body" id="secondaryBody">
+          <div class="sec-group" data-sec-for="quick">
+            <div class="sec-group-head">
+              <span class="sec-group-label">工具</span>
+              <span class="sec-group-meta" id="secondaryToolCount">4 款</span>
             </div>
+            <div class="sec-list" id="secondaryToolList">
+              <button type="button" class="sec-item active" data-sec-tool="codex" style="--accent-a:#ffd0a8;--accent-b:#ff8c5a">
+                <span class="sec-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 2l9 5v10l-9 5-9-5V7l9-5z" opacity="0.5" />
+                    <path d="M12 12l9-5M12 12v10M12 12L3 7" />
+                  </svg>
+                </span>
+                <span class="sec-text">
+                  <span class="sec-name">Codex</span>
+                  <span class="sec-subtitle">OpenAI Codex CLI</span>
+                </span>
+                <span class="sec-chev" aria-hidden="true">›</span>
+              </button>
+              <button type="button" class="sec-item" data-sec-tool="claudecode" style="--accent-a:#ffc69a;--accent-b:#e07a3f">
+                <span class="sec-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="9" opacity="0.5" />
+                    <path d="M8 12h8M12 8v8" />
+                  </svg>
+                </span>
+                <span class="sec-text">
+                  <span class="sec-name">Claude Code</span>
+                  <span class="sec-subtitle">Anthropic Claude CLI</span>
+                </span>
+                <span class="sec-chev" aria-hidden="true">›</span>
+              </button>
+              <button type="button" class="sec-item" data-sec-tool="opencode" style="--accent-a:#cbd7ff;--accent-b:#6b86ff">
+                <span class="sec-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="5" opacity="0.5" />
+                    <path d="M9 8l-3 4 3 4M15 8l3 4-3 4M13 6l-2 12" />
+                  </svg>
+                </span>
+                <span class="sec-text">
+                  <span class="sec-name">OpenCode</span>
+                  <span class="sec-subtitle">开源编程代理</span>
+                </span>
+                <span class="sec-chev" aria-hidden="true">›</span>
+              </button>
+              <button type="button" class="sec-item" data-sec-tool="openclaw" style="--accent-a:#d5c5ff;--accent-b:#8162d6">
+                <span class="sec-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="9" opacity="0.5" />
+                    <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                    <circle cx="9" cy="10" r="1" fill="currentColor" stroke="none" />
+                    <circle cx="15" cy="10" r="1" fill="currentColor" stroke="none" />
+                  </svg>
+                </span>
+                <span class="sec-text">
+                  <span class="sec-name">OpenClaw</span>
+                  <span class="sec-subtitle">协议网关与中转</span>
+                </span>
+                <span class="sec-chev" aria-hidden="true">›</span>
+              </button>
+            </div>
+            <div class="sec-group-head sec-group-head-divider">
+              <span class="sec-group-label">已保存预设</span>
+              <button type="button" class="sec-add-btn" title="即将支持" disabled>+</button>
+            </div>
+            <div class="sec-empty">预设管理即将上线<br><span>每条预设即一个可快速切换的 URL + Key 组合</span></div>
           </div>
-          <div class="sidebar-line">
-            <span class="sidebar-label">Codex</span>
-            <div class="sidebar-inline">
-              <span id="codexPill" class="badge">检测中</span>
+          <div class="sec-group" data-sec-for="__fallback">
+            <div class="sec-fallback">
+              <div class="sec-fallback-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="9" opacity="0.4" />
+                  <path d="M12 8v4M12 16h.01" />
+                </svg>
+              </div>
+              <div class="sec-fallback-title" id="secondaryFallbackTitle">当前页面</div>
+              <div class="sec-fallback-sub" id="secondaryFallbackSub">左侧 Rail 切换页面，中间栏会显示该页面的上下文。</div>
             </div>
           </div>
         </div>
@@ -2708,6 +2773,24 @@
           </section>
 
         </div>
+        <footer class="ws-statusbar">
+          <div class="stat-group">
+            <span class="stat-dot" id="statDotApp" aria-hidden="true"></span>
+            <span class="stat-label">客户端</span>
+            <span id="appUpdatePill" class="badge">客户端检测中</span>
+            <button id="appUpdateBtn" class="secondary ghost-btn" hidden>检查更新</button>
+          </div>
+          <div class="stat-sep" aria-hidden="true"></div>
+          <div class="stat-group">
+            <span class="stat-dot" id="statDotCodex" aria-hidden="true"></span>
+            <span class="stat-label">Codex</span>
+            <span id="codexPill" class="badge">检测中</span>
+          </div>
+          <div class="stat-spacer" aria-hidden="true"></div>
+          <div class="stat-group stat-right">
+            <span class="stat-brand">EasyAIConfig</span>
+          </div>
+        </footer>
       </section>
     </div>
 

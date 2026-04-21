@@ -1986,6 +1986,12 @@ function updateToolSelector() {
       tab.disabled = !tool.supported;
     }
   });
+  document.querySelectorAll('.sec-item[data-sec-tool]').forEach(item => {
+    const tid = item.dataset.secTool;
+    item.classList.toggle('active', tid === state.activeTool);
+    const tool = state.tools.find(t => t.id === tid);
+    if (tool) item.disabled = !tool.supported;
+  });
 }
 
 // Per-tool form state cache
@@ -9237,6 +9243,39 @@ function updateLines(items = []) {
   return items.filter(Boolean).map((item) => `<div class="update-line">${escapeHtml(item)}</div>`).join('');
 }
 
+const SECONDARY_META = {
+  quick:          { sub: '选择要配置的工具，或为同一工具保存多份预设。' },
+  console:        { sub: '集中监控各 CLI 工具的运行状态与异常检测结果。' },
+  dashboard:      { sub: '查看各工具的模型用量、会话趋势与耗时分布。' },
+  configEditor:   { sub: '搜索配置项，直接编辑底层配置文件。' },
+  tools:          { sub: '安装、更新、重装或卸载已接入的 AI 编程工具。' },
+  tasks:          { sub: '查看当前进行中和历史的安装/更新任务。' },
+  about:          { sub: '客户端版本、更新源与当前运行信息。' },
+  systemSettings: { sub: '界面主题、存储占用与缓存清理。' },
+};
+
+function syncSecondaryPanel(page, meta) {
+  const eyebrow = el('secondaryEyebrow');
+  const title = el('secondaryTitle');
+  const sub = el('secondarySub');
+  if (eyebrow) eyebrow.textContent = meta.eyebrow || '';
+  if (title) title.textContent = meta.title || '';
+  if (sub) sub.textContent = (SECONDARY_META[page] && SECONDARY_META[page].sub) || meta.subtitle || '';
+  let matched = false;
+  document.querySelectorAll('.sec-group[data-sec-for]').forEach((grp) => {
+    const target = grp.dataset.secFor;
+    const hit = target === page;
+    if (hit) matched = true;
+    if (target !== '__fallback') grp.style.display = hit ? '' : 'none';
+  });
+  const fallback = document.querySelector('.sec-group[data-sec-for="__fallback"]');
+  if (fallback) fallback.style.display = matched ? 'none' : '';
+  const fbTitle = el('secondaryFallbackTitle');
+  const fbSub = el('secondaryFallbackSub');
+  if (fbTitle) fbTitle.textContent = meta.title || '当前页面';
+  if (fbSub) fbSub.textContent = (SECONDARY_META[page] && SECONDARY_META[page].sub) || meta.subtitle || '';
+}
+
 function setPage(page = 'quick') {
   const meta = PAGE_META[page] || PAGE_META.quick;
   state.activePage = page;
@@ -9251,6 +9290,7 @@ function setPage(page = 'quick') {
   if (el('pageEyebrow')) el('pageEyebrow').textContent = meta.eyebrow;
   if (el('pageTitle')) el('pageTitle').textContent = meta.title;
   if (el('pageSubtitle')) el('pageSubtitle').textContent = meta.subtitle;
+  syncSecondaryPanel(page, meta);
 
   // Toggle action buttons
   const defaultActions = el('defaultActions');
@@ -16649,6 +16689,14 @@ function bindEvents() {
   el('toolSelector')?.addEventListener('click', (e) => {
     const tab = e.target.closest('.tool-tab');
     if (tab && !tab.disabled) setActiveTool(tab.dataset.tool);
+  });
+  // Secondary-panel tool list (new shell)
+  el('secondaryToolList')?.addEventListener('click', (e) => {
+    const item = e.target.closest('.sec-item[data-sec-tool]');
+    if (!item || item.disabled) return;
+    const targetTool = item.dataset.secTool;
+    if (state.activePage !== 'quick') setPage('quick');
+    setActiveTool(targetTool);
   });
   el('appUpdateBtn').addEventListener('click', async () => {
     const info = await loadAppUpdateState({ manual: true });
