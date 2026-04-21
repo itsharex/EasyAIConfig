@@ -313,6 +313,137 @@ pub(crate) fn pick_directory(app: tauri::AppHandle, body: &Value) -> Result<Valu
   }))
 }
 
+// Delete a Codex provider (model_providers entry + any matching api-key env
+// var + auth.json secret). If the deleted provider was active, re-point
+// model_provider at whichever one remains; if none, clear it. All writes go
+// through the same TOML / .env / auth.json paths as save_config so file
+// formatting stays consistent.
+pub(crate) fn delete_codex_provider(body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let provider_key = get_string(&object, "providerKey");
+  if provider_key.trim().is_empty() {
+    return Err("providerKey is required".to_string());
+  }
+
+  let codex_home = {
+    let input = get_string(&object, "codexHome");
+    if input.is_empty() { default_codex_home()? } else { PathBuf::from(input) }
+  };
+  let scope = get_string(&object, "scope");
+  let project_path = get_string(&object, "projectPath");
+  let paths = scope_paths(if scope.is_empty() { "global" } else { &scope }, &project_path, &codex_home)?;
+
+  let config_content = read_text(&paths.config_path)?;
+  let env_content = read_text(&paths.env_path)?;
+  let auth_path = codex_home.join("auth.json");
+  let auth_content = read_text(&auth_path)?;
+
+  let mut config = parse_toml_config(&config_content)?;
+  let mut env = parse_env(&env_content);
+  let mut auth_json: Value = if auth_content.trim().is_empty() {
+    json!({})
+  } else {
+    serde_json::from_str(&auth_content).unwrap_or_else(|_| json!({}))
+  };
+
+  // Capture env_key for this provider before we delete it so we know which
+  // .env var and which auth.json entry to strip.
+  let env_key = config
+    .get("model_providers")
+    .and_then(Value::as_object)
+    .and_then(|providers| providers.get(&provider_key))
+    .and_then(Value::as_object)
+    .and_then(|item| item.get("env_key"))
+    .and_then(Value::as_str)
+    .map(|s| s.trim().to_string())
+    .unwrap_or_default();
+
+  // Remove provider from model_providers.
+  let mut removed = false;
+  if let Some(obj) = config.as_object_mut() {
+    if let Some(providers) = obj.get_mut("model_providers").and_then(Value::as_object_mut) {
+      removed = providers.remove(&provider_key).is_some();
+      if providers.is_empty() {
+        obj.remove("model_providers");
+      }
+    }
+    // Strip matching model_profiles entries too.
+    if let Some(profiles) = obj.get_mut("model_profiles").and_then(Value::as_object_mut) {
+      profiles.retain(|_, v| {
+        v.get("model_provider").and_then(Value::as_str) != Some(provider_key.as_str())
+      });
+      let empty = profiles.is_empty();
+      if empty {
+        obj.remove("model_profiles");
+      }
+    }
+    // If this was the active provider, pick the first remaining one or clear.
+    let was_active = obj.get("model_provider").and_then(Value::as_str) == Some(provider_key.as_str());
+    if was_active {
+      let next_key = obj
+        .get("model_providers")
+        .and_then(Value::as_object)
+        .and_then(|providers| providers.keys().next().cloned())
+        .unwrap_or_default();
+      if next_key.is_empty() {
+        obj.remove("model_provider");
+      } else {
+        obj.insert("model_provider".to_string(), json!(next_key));
+      }
+    }
+  }
+
+  if !removed {
+    // Provider wasn't in config.toml — still sweep auth.json / .env below in
+    // case stale secrets linger, then report what we found.
+  }
+
+  // Strip the env-var version of the key (legacy storage path).
+  if !env_key.is_empty() {
+    env.remove(&env_key);
+  }
+
+  // Strip the auth.json entry — Codex stores per-provider keys at the top
+  // level of auth.json keyed by env_key (not by provider_key).
+  if let Some(auth_obj) = auth_json.as_object_mut() {
+    if !env_key.is_empty() {
+      auth_obj.remove(&env_key);
+    }
+  }
+
+  // Persist.
+  let new_toml = stringify_toml_config(&config)?;
+  let new_env = stringify_env(&env);
+  let new_auth = if auth_json
+    .as_object()
+    .map(|obj| obj.is_empty())
+    .unwrap_or(false)
+  {
+    String::new()
+  } else {
+    serde_json::to_string_pretty(&auth_json).unwrap_or_default()
+  };
+
+  write_text(&paths.config_path, &new_toml)?;
+  write_text(&paths.env_path, &new_env)?;
+  if new_auth.is_empty() {
+    // leave auth.json alone when it'd be literally empty — Codex's login
+    // status flow reads this file and treats "missing" and "{}" differently
+    // on some branches. Only rewrite when we actually had content.
+    if !auth_content.trim().is_empty() {
+      write_text(&auth_path, "{}")?;
+    }
+  } else {
+    write_text(&auth_path, &new_auth)?;
+  }
+
+  Ok(json!({
+    "ok": true,
+    "removed": removed,
+    "providerKey": provider_key,
+  }))
+}
+
 pub(crate) fn save_config(body: &Value) -> Result<Value, String> {
   let object = parse_json_object(body);
   let codex_home = {

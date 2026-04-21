@@ -18464,13 +18464,19 @@ loadTools();
     } else if (r.kind === 'claudecode-oauth-default') {
       actions = '';
     } else {
+      // API-key provider rows — edit / detect / delete. Delete for Codex
+      // and Claude Code only (OpenCode uses a different flow).
+      const canDelete = r.kind === 'codex-apikey' || r.kind === 'claudecode-apikey';
       actions = `
           <button type="button" class="ch-row-icon-btn" data-ch-row-edit="${safeEscape(r.key)}" title="编辑" aria-label="编辑 ${safeEscape(r.name)}">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 3.5l6 6-11 11H3.5v-6l11-11z"/></svg>
           </button>
           <button type="button" class="ch-row-icon-btn" data-ch-row-detect="${safeEscape(r.key)}" title="重检" aria-label="重检 ${safeEscape(r.name)}">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.36 6.36L3 21M3 12a9 9 0 0 1 15.36-6.36L21 3"/></svg>
-          </button>`;
+          </button>
+          ${canDelete ? `<button type="button" class="ch-row-icon-btn danger" data-ch-row-delete="${safeEscape(r.key)}" data-ch-row-delete-kind="${safeEscape(r.kind)}" title="删除" aria-label="删除 ${safeEscape(r.name)}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+          </button>` : ''}`;
     }
 
     const planPill = r.plan ? `<span class="ch-row-plan" data-plan="${safeEscape(String(r.plan).toLowerCase())}">${safeEscape(String(r.plan).toUpperCase())}</span>` : '';
@@ -18719,6 +18725,51 @@ loadTools();
     }
 
     renderConnectionHub();
+  }
+
+  async function deleteApiKeyProvider(key, kind) {
+    if (!key) return;
+    const s = hubState();
+    const rows = buildProviderRows(s?.activeTool || 'codex');
+    const row = rows.find((r) => r.key === key);
+    const nameForPrompt = row?.name || key;
+    const confirmed = window.confirm(`删除 provider「${nameForPrompt}」？\n会同时清掉配置里的 baseUrl / API Key，不可恢复。`);
+    if (!confirmed) return;
+
+    try {
+      if (kind === 'codex-apikey') {
+        const res = await api('/api/config/delete-provider', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            providerKey: key,
+            codexHome: s?.current?.codexHome || '',
+            scope: document.getElementById('scopeSelect')?.value || 'global',
+          }),
+        });
+        if (!res || !res.ok) {
+          flash?.(res?.error || '删除失败', 'error');
+          return;
+        }
+        flash?.('已删除 provider', 'success');
+        if (typeof loadState === 'function') await loadState();
+      } else if (kind === 'claudecode-apikey') {
+        const res = await api('/api/claudecode/provider-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ providerKey: key }),
+        });
+        if (!res || !res.ok) {
+          flash?.(res?.error || '删除失败', 'error');
+          return;
+        }
+        flash?.('已删除 provider', 'success');
+        if (typeof loadClaudeCodeState === 'function') await loadClaudeCodeState();
+      }
+    } catch (err) {
+      console.warn('[ch] delete provider failed', err);
+      flash?.('删除失败', 'error');
+    }
   }
 
   async function reloadCodexStateThenHub() {
@@ -19235,6 +19286,14 @@ loadTools();
       if (editBtn) { e.stopPropagation(); openSlideover('edit', editBtn.getAttribute('data-ch-row-edit')); return; }
       const detectBtn = target.closest('[data-ch-row-detect]');
       if (detectBtn) { e.stopPropagation(); detectRow(detectBtn.getAttribute('data-ch-row-detect')); return; }
+      const delBtn = target.closest('[data-ch-row-delete]');
+      if (delBtn) {
+        e.stopPropagation();
+        const key = delBtn.getAttribute('data-ch-row-delete');
+        const kind = delBtn.getAttribute('data-ch-row-delete-kind') || '';
+        deleteApiKeyProvider(key, kind);
+        return;
+      }
       const row = target.closest('[data-ch-key]');
       if (row) {
         const key = row.getAttribute('data-ch-key');

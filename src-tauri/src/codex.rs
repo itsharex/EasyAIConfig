@@ -4485,6 +4485,61 @@ pub(crate) fn save_claudecode_config(body: &Value) -> Result<Value, String> {
   Ok(json!({ "saved": true, "settingsPath": settings_path.to_string_lossy().to_string() }))
 }
 
+// Delete one of the user-saved Claude Code provider profiles we maintain
+// under ~/.claude/settings.json :: easyaiconfig.providers.<key>. If the
+// deleted provider was the active one, fall back to any other remaining
+// provider or clear the activeProvider pointer.
+pub(crate) fn delete_claudecode_provider(body: &Value) -> Result<Value, String> {
+  let object = parse_json_object(body);
+  let provider_key = get_string(&object, "providerKey");
+  if provider_key.trim().is_empty() {
+    return Err("providerKey is required".to_string());
+  }
+
+  let home = claude_code_home()?;
+  let settings_path = home.join("settings.json");
+  let mut settings = read_json_file(&settings_path)?;
+
+  let mut removed = false;
+  let mut fallback_active: Option<String> = None;
+  if let Some(obj) = settings.as_object_mut() {
+    if let Some(easy) = obj.get_mut("easyaiconfig").and_then(Value::as_object_mut) {
+      // Snapshot the active-provider value before mutably borrowing `providers`.
+      let was_active = easy
+        .get("activeProvider")
+        .and_then(Value::as_str)
+        .map(|s| s == provider_key)
+        .unwrap_or(false);
+
+      if let Some(providers) = easy.get_mut("providers").and_then(Value::as_object_mut) {
+        removed = providers.remove(&provider_key).is_some();
+        if was_active {
+          if let Some((next_key, _)) = providers.iter().find(|(_, v)| v.is_object()) {
+            fallback_active = Some(next_key.clone());
+          }
+        }
+      }
+
+      if let Some(next) = fallback_active {
+        easy.insert("activeProvider".to_string(), json!(next));
+      } else if was_active {
+        easy.remove("activeProvider");
+      }
+    }
+  }
+
+  if !removed {
+    return Err(format!("未找到 provider: {}", provider_key));
+  }
+
+  write_json_file(&settings_path, &settings)?;
+  Ok(json!({
+    "ok": true,
+    "providerKey": provider_key,
+    "settingsPath": settings_path.to_string_lossy().to_string(),
+  }))
+}
+
 pub(crate) fn save_claudecode_raw_config(body: &Value) -> Result<Value, String> {
   let home = claude_code_home()?;
   let settings_path = home.join("settings.json");

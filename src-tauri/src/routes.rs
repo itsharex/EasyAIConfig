@@ -6,6 +6,7 @@ use crate::codex::{
   resume_codex_session, fork_codex_session, export_codex_session,
   get_codex_app_state, install_codex_app, open_codex_app,
   list_tools, load_claudecode_state, save_claudecode_config, save_claudecode_raw_config,
+  delete_claudecode_provider,
   launch_claudecode, login_claudecode, load_opencode_state, save_opencode_config,
   save_opencode_raw_config, install_opencode, reinstall_opencode, update_opencode,
   uninstall_opencode, launch_opencode, login_opencode, remove_opencode_auth,
@@ -20,8 +21,8 @@ use crate::codex::{
   onboard_openclaw, open_url_in_browser, stop_openclaw_gateway, kill_openclaw_port_occupants, uninstall_openclaw,
 };
 use crate::config::{
-  get_provider_secret, list_backups, load_state, pick_directory, restore_backup, save_config,
-  save_raw_config, save_settings, test_saved_provider,
+  delete_codex_provider, get_provider_secret, list_backups, load_state, pick_directory,
+  restore_backup, save_config, save_raw_config, save_settings, test_saved_provider,
 };
 use crate::oauth_profiles::{
   delete_oauth_profile, list_oauth_profiles, rename_oauth_profile, save_current_oauth_profile,
@@ -44,6 +45,7 @@ async fn dispatch(app: tauri::AppHandle, path: &str, method: &str, query: &Value
     ("/api/provider/secret", "POST") => get_provider_secret(body),
     ("/api/provider/test-saved", "POST") => test_saved_provider(body).await,
     ("/api/config/save", "POST") => save_config(body),
+    ("/api/config/delete-provider", "POST") => delete_codex_provider(body),
     ("/api/config/raw-save", "POST") => save_raw_config(body),
     ("/api/config/settings-save", "POST") => save_settings(body),
     ("/api/tools", "GET") => list_tools(),
@@ -71,6 +73,7 @@ async fn dispatch(app: tauri::AppHandle, path: &str, method: &str, query: &Value
     ("/api/claudecode/state", "GET") => load_claudecode_state(query),
     ("/api/claudecode/config-save", "POST") => save_claudecode_config(body),
     ("/api/claudecode/raw-save", "POST") => save_claudecode_raw_config(body),
+    ("/api/claudecode/provider-delete", "POST") => delete_claudecode_provider(body),
     ("/api/claudecode/install", "POST") => codex_npm_action(&["install", "-g", CLAUDE_CODE_PACKAGE]),
     ("/api/claudecode/reinstall", "POST") => codex_npm_action(&["install", "-g", CLAUDE_CODE_PACKAGE, "--force"]),
     ("/api/claudecode/update", "POST") => codex_npm_action(&["install", "-g", &format!("{}@latest", CLAUDE_CODE_PACKAGE)]),

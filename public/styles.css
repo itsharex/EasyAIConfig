@@ -19378,47 +19378,57 @@ body {
   width: 34px;
   height: 34px;
   border-radius: 9px;
-  background: rgba(255, 255, 255, 0.03);
+  background: transparent;
   color: var(--s2-muted);
   border: 0;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 140ms ease, color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+  opacity: 0.78;
+  transition: background 140ms ease, color 140ms ease, opacity 140ms ease, transform 140ms ease;
+  box-shadow: none;
 }
 
 [data-theme="light"] .shell-v2 .ch-row-icon-btn {
-  background: rgba(255, 255, 255, 0.72);
+  background: transparent;
   color: var(--s2-muted);
-  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08);
+  box-shadow: none;
 }
 
 .shell-v2 .ch-row-icon-btn svg {
-  width: 15px !important;
-  height: 15px !important;
-  stroke-width: 1.9;
+  width: 17px !important;
+  height: 17px !important;
+  stroke-width: 2;
 }
 
 .shell-v2 .ch-row-icon-btn:hover {
-  background: rgba(107, 158, 255, 0.12);
+  opacity: 1;
+  background: rgba(107, 158, 255, 0.1);
   color: var(--s2-accent);
-  box-shadow: inset 0 0 0 1px rgba(107, 158, 255, 0.28);
   transform: translateY(-1px);
 }
 
 [data-theme="light"] .shell-v2 .ch-row-icon-btn:hover {
-  background: rgba(59, 130, 246, 0.1);
+  background: rgba(59, 130, 246, 0.08);
   color: #2563eb;
-  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.28);
+}
+
+/* Destructive variant for delete icons — red tint on hover so the action
+   reads as dangerous without screaming in the default state. */
+.shell-v2 .ch-row-icon-btn.danger:hover {
+  background: rgba(239, 82, 82, 0.12);
+  color: #ef5252;
+}
+[data-theme="light"] .shell-v2 .ch-row-icon-btn.danger:hover {
+  background: rgba(220, 38, 38, 0.1);
+  color: #dc2626;
 }
 
 .shell-v2 .ch-row-icon-btn:focus-visible {
   outline: none;
-  box-shadow:
-    inset 0 0 0 1.5px var(--s2-accent),
-    0 0 0 3px var(--s2-accent-glow);
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--s2-accent-glow);
 }
 
 .shell-v2 .ch-row-icon-btn.loading svg {
