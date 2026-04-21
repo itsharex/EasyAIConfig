@@ -119,38 +119,129 @@ fn verdict_for(country_code: &str, has_proxy: bool) -> (&'static str, String) {
   ("safe", format!("出口 IP 位于 {}，可正常使用 Codex / Claude Code 官方登录。", cc))
 }
 
-// Walks IP_PROVIDERS in order, returning the first provider whose response
-// parses cleanly. Normalizes each provider's shape into the same flat
-// object the rest of the module expects:
-//   { query, country, countryCode, regionName, city, isp, org, as, via }
-fn fetch_ip_info_remote() -> Result<Value, String> {
-  let client = reqwest::blocking::Client::builder()
-    .connect_timeout(Duration::from_secs(3))
-    .timeout(Duration::from_secs(6))
-    .user_agent("EasyAIConfig/1.0 (IP geolocation probe)")
-    .build()
-    .map_err(|e| format!("build http client failed: {}", e))?;
-
-  let mut last_error = String::new();
-  for p in IP_PROVIDERS {
-    let resp = match client.get(p.url).send() {
-      Ok(r) => r,
-      Err(e) => { last_error = format!("{}: {}", p.label, e); continue; }
-    };
-    if !resp.status().is_success() {
-      last_error = format!("{}: HTTP {}", p.label, resp.status());
-      continue;
+// Pick up OS / shell proxy config so reqwest goes through the same tunnel
+// the user's browser would. reqwest auto-reads http(s)_proxy env vars but
+// NOT macOS system proxy — we pull that in via `scutil --proxy`.
+fn detect_system_proxy_url() -> Option<String> {
+  for key in &["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy"] {
+    if let Ok(v) = std::env::var(key) {
+      let v = v.trim();
+      if !v.is_empty() { return Some(v.to_string()); }
     }
-    let body: Value = match resp.json() {
-      Ok(v) => v,
-      Err(e) => { last_error = format!("{}: parse {}", p.label, e); continue; }
-    };
-    if let Some(norm) = normalize_provider_response(p, body) {
-      return Ok(norm);
-    }
-    last_error = format!("{}: 返回结构不符", p.label);
   }
-  Err(if last_error.is_empty() { "所有 IP 查询服务均不可达".to_string() } else { format!("IP 查询失败（最后错误: {})", last_error) })
+  #[cfg(target_os = "macos")]
+  {
+    if let Ok(out) = std::process::Command::new("scutil").arg("--proxy").output() {
+      if out.status.success() {
+        let text = String::from_utf8_lossy(&out.stdout);
+        // Prefer SOCKS (works for both HTTP/HTTPS), then HTTPS, then HTTP.
+        // Very simple parse — scutil prints dict-like lines.
+        let parse = |prefix: &str| -> Option<(String, u16)> {
+          let mut host: Option<String> = None;
+          let mut port: Option<u16> = None;
+          let mut enabled = false;
+          for line in text.lines() {
+            let t = line.trim();
+            if t.starts_with(&format!("{}Enable", prefix)) {
+              enabled = t.contains(": 1");
+            } else if t.starts_with(&format!("{}Proxy", prefix)) {
+              host = t.split(':').nth(1).map(|s| s.trim().to_string());
+            } else if t.starts_with(&format!("{}Port", prefix)) {
+              port = t.split(':').nth(1).and_then(|s| s.trim().parse().ok());
+            }
+          }
+          if enabled { host.zip(port) } else { None }
+        };
+        if let Some((h, p)) = parse("SOCKS") { return Some(format!("socks5://{}:{}", h, p)); }
+        if let Some((h, p)) = parse("HTTPS") { return Some(format!("http://{}:{}", h, p)); }
+        if let Some((h, p)) = parse("HTTP") { return Some(format!("http://{}:{}", h, p)); }
+      }
+    }
+  }
+  None
+}
+
+fn build_probe_client() -> Result<reqwest::blocking::Client, String> {
+  let mut b = reqwest::blocking::Client::builder()
+    .connect_timeout(Duration::from_secs(4))
+    .timeout(Duration::from_secs(8))
+    .user_agent("EasyAIConfig/1.0 (IP geolocation probe)");
+  if let Some(url) = detect_system_proxy_url() {
+    if let Ok(proxy) = reqwest::Proxy::all(&url) {
+      b = b.proxy(proxy);
+    }
+  }
+  b.build().map_err(|e| format!("build http client failed: {}", e))
+}
+
+// Parallel-probe every provider and return a Vec of normalized results,
+// tagging failures with an error string so the UI can surface which source
+// is flaky. We never "fall back" silently — every row is a vantage point
+// the user can see.
+fn probe_all_providers() -> Vec<Value> {
+  let handles: Vec<_> = IP_PROVIDERS.iter().map(|p| {
+    let label = p.label.to_string();
+    let url = p.url.to_string();
+    let _kind = p.kind;
+    std::thread::spawn(move || {
+      let start = std::time::Instant::now();
+      // Each thread builds its own client — cheap and avoids Sync concerns.
+      let client = match build_probe_client() {
+        Ok(c) => c,
+        Err(e) => return json!({ "label": label, "ok": false, "error": e, "ms": 0 }),
+      };
+      let resp = match client.get(&url).send() {
+        Ok(r) => r,
+        Err(e) => return json!({ "label": label, "ok": false, "error": format!("{}", e), "ms": start.elapsed().as_millis() as u64 }),
+      };
+      if !resp.status().is_success() {
+        return json!({ "label": label, "ok": false, "error": format!("HTTP {}", resp.status()), "ms": start.elapsed().as_millis() as u64 });
+      }
+      let body: Value = match resp.json() {
+        Ok(v) => v,
+        Err(e) => return json!({ "label": label, "ok": false, "error": format!("parse {}", e), "ms": start.elapsed().as_millis() as u64 }),
+      };
+      // Re-borrow IP_PROVIDERS by label (can't move a static reference into the thread easily).
+      let provider_ref = IP_PROVIDERS.iter().find(|x| x.label == label);
+      match provider_ref.and_then(|p| normalize_provider_response(p, body)) {
+        Some(mut norm) => {
+          if let Some(obj) = norm.as_object_mut() {
+            obj.insert("ok".to_string(), json!(true));
+            obj.insert("label".to_string(), json!(label));
+            obj.insert("ms".to_string(), json!(start.elapsed().as_millis() as u64));
+          }
+          norm
+        }
+        None => json!({ "label": label, "ok": false, "error": "返回结构不符", "ms": start.elapsed().as_millis() as u64 }),
+      }
+    })
+  }).collect();
+
+  handles.into_iter().filter_map(|h| h.join().ok()).collect()
+}
+
+// Pick the "primary" result for the hero: prefer a vantage that returned a
+// country code; tie-break by fastest response.
+fn pick_primary(vantages: &[Value]) -> Option<Value> {
+  let mut best: Option<&Value> = None;
+  let mut best_ms: u64 = u64::MAX;
+  for v in vantages {
+    if v.get("ok").and_then(Value::as_bool) != Some(true) { continue; }
+    let has_geo = !v.get("countryCode").and_then(Value::as_str).unwrap_or("").is_empty();
+    let ms = v.get("ms").and_then(Value::as_u64).unwrap_or(u64::MAX);
+    let score_ok = has_geo;
+    let cur_score_ok = best
+      .map(|b| !b.get("countryCode").and_then(Value::as_str).unwrap_or("").is_empty())
+      .unwrap_or(false);
+    if best.is_none()
+      || (score_ok && !cur_score_ok)
+      || (score_ok == cur_score_ok && ms < best_ms)
+    {
+      best = Some(v);
+      best_ms = ms;
+    }
+  }
+  best.cloned()
 }
 
 fn normalize_provider_response(p: &IpProvider, body: Value) -> Option<Value> {
@@ -310,30 +401,56 @@ fn build_status(force: bool) -> Value {
   let proxy = probe_proxy();
   let has_proxy = proxy.get("hasProxy").and_then(Value::as_bool).unwrap_or(false);
 
-  let remote = match fetch_ip_info_remote() {
-    Ok(v) => v,
-    Err(e) => {
+  let vantages = probe_all_providers();
+  let primary = match pick_primary(&vantages) {
+    Some(v) => v,
+    None => {
+      let errs: Vec<String> = vantages.iter().filter_map(|v| {
+        let label = v.get("label").and_then(Value::as_str).unwrap_or("").to_string();
+        let err = v.get("error").and_then(Value::as_str).unwrap_or("").to_string();
+        if err.is_empty() { None } else { Some(format!("{}: {}", label, err)) }
+      }).collect();
       return json!({
         "ok": false,
-        "error": e,
+        "error": if errs.is_empty() { "所有 IP 查询服务均不可达".to_string() } else { errs.join(" · ") },
+        "vantages": vantages,
         "proxy": proxy,
         "verdict": "warn",
-        "verdictCopy": "无法联网查询 IP（可能是本地无网络或 3rd-party 服务不可达），暂无法判断是否安全。",
+        "verdictCopy": "无法联网查询 IP。所有中立节点都不可达。",
       });
     }
   };
 
-  let ip = remote.get("query").and_then(Value::as_str).unwrap_or("").to_string();
-  let country = remote.get("country").and_then(Value::as_str).unwrap_or("").to_string();
-  let country_code = remote.get("countryCode").and_then(Value::as_str).unwrap_or("").to_string();
-  let city = remote.get("city").and_then(Value::as_str).unwrap_or("").to_string();
-  let region = remote.get("regionName").and_then(Value::as_str).unwrap_or("").to_string();
-  let isp = remote.get("isp").and_then(Value::as_str).unwrap_or("").to_string();
-  let org = remote.get("org").and_then(Value::as_str).unwrap_or("").to_string();
-  let asn = remote.get("as").and_then(Value::as_str).unwrap_or("").to_string();
-  let via = remote.get("via").and_then(Value::as_str).unwrap_or("").to_string();
+  let ip = primary.get("query").and_then(Value::as_str).unwrap_or("").to_string();
+  let country = primary.get("country").and_then(Value::as_str).unwrap_or("").to_string();
+  let country_code = primary.get("countryCode").and_then(Value::as_str).unwrap_or("").to_string();
+  let city = primary.get("city").and_then(Value::as_str).unwrap_or("").to_string();
+  let region = primary.get("regionName").and_then(Value::as_str).unwrap_or("").to_string();
+  let isp = primary.get("isp").and_then(Value::as_str).unwrap_or("").to_string();
+  let org = primary.get("org").and_then(Value::as_str).unwrap_or("").to_string();
+  let asn = primary.get("as").and_then(Value::as_str).unwrap_or("").to_string();
+  let via = primary.get("via").and_then(Value::as_str).unwrap_or("").to_string();
 
-  let (verdict, verdict_copy) = verdict_for(&country_code, has_proxy);
+  // Split-tunnel detection: if any two OK vantages report different IPs,
+  // routing is inconsistent — worth warning about because the IP Google /
+  // OpenAI / Anthropic actually sees may not match the primary one.
+  let mut seen_ips: Vec<String> = Vec::new();
+  for v in &vantages {
+    if v.get("ok").and_then(Value::as_bool) != Some(true) { continue; }
+    let q = v.get("query").and_then(Value::as_str).unwrap_or("").to_string();
+    if q.is_empty() { continue; }
+    if !seen_ips.contains(&q) { seen_ips.push(q); }
+  }
+  let split_tunnel = seen_ips.len() > 1;
+
+  let (mut verdict, mut verdict_copy) = verdict_for(&country_code, has_proxy);
+  if split_tunnel && verdict != "block" {
+    verdict = "warn";
+    verdict_copy = format!(
+      "检测到分流 — 不同视角看到的 IP 不一致（{}）。AI 服务看到的 IP 可能与首选视角不同，启动前请确认。",
+      seen_ips.join(" / ")
+    );
+  }
 
   let ts = Utc::now().to_rfc3339();
   let history_entry = json!({
@@ -360,6 +477,8 @@ fn build_status(force: bool) -> Value {
     "org": org,
     "asn": asn,
     "via": via,
+    "vantages": vantages,
+    "splitTunnel": split_tunnel,
     "proxy": proxy,
     "verdict": verdict,
     "verdictCopy": verdict_copy,

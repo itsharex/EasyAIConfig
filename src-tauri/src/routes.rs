@@ -136,9 +136,29 @@ async fn dispatch(app: tauri::AppHandle, path: &str, method: &str, query: &Value
     ("/api/open-url", "POST") => open_url_in_browser(body),
     ("/api/backups", "GET") => list_backups(),
     ("/api/backups/restore", "POST") => restore_backup(body),
-    ("/api/network/status", "GET") => get_network_status(query),
-    ("/api/network/check", "POST") => refresh_network_status(body),
-    ("/api/network/latency", "GET") => get_network_latency(query),
+    // Network probes do synchronous blocking HTTP via reqwest::blocking. If
+    // we called them directly from this async dispatch they'd risk nesting
+    // tokio runtimes and deadlocking (which would look like a timeout to the
+    // user — exactly the "无法获取 IP" report). spawn_blocking moves them to
+    // a worker thread so the main reactor stays live.
+    ("/api/network/status", "GET") => {
+      let q = query.clone();
+      tokio::task::spawn_blocking(move || get_network_status(&q))
+        .await
+        .map_err(|e| format!("spawn_blocking: {}", e))?
+    },
+    ("/api/network/check", "POST") => {
+      let b = body.clone();
+      tokio::task::spawn_blocking(move || refresh_network_status(&b))
+        .await
+        .map_err(|e| format!("spawn_blocking: {}", e))?
+    },
+    ("/api/network/latency", "GET") => {
+      let q = query.clone();
+      tokio::task::spawn_blocking(move || get_network_latency(&q))
+        .await
+        .map_err(|e| format!("spawn_blocking: {}", e))?
+    },
     ("/api/network/ip-history", "GET") => list_network_ip_history(query),
     ("/api/app-settings", "GET") => load_app_settings(query),
     ("/api/app-settings", "POST") => save_app_settings(body),

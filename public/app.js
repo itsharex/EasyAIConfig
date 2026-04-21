@@ -7582,8 +7582,11 @@ function isIpGateEnabled() {
   return Boolean(window.__appSettings?.data?.ipGateBlock);
 }
 async function setIpGateEnabled(enabled) {
-  await patchAppSettings({ ipGateBlock: Boolean(enabled) });
+  // Optimistic update so the toggle flips immediately; backend patch follows.
+  window.__appSettings = window.__appSettings || { loaded: true, data: {} };
+  window.__appSettings.data = { ...(window.__appSettings.data || {}), ipGateBlock: Boolean(enabled) };
   if (state.activePage === 'console') renderToolConsole();
+  await patchAppSettings({ ipGateBlock: Boolean(enabled) });
 }
 
 // Called by launchCodex / launchClaudeCodeOnly / launchCodexLogin before
@@ -7730,71 +7733,103 @@ function formatModelLabel(raw) {
   return s;
 }
 
-function renderConsoleV3Firewall() {
-  const el = document.getElementById('consoleV2Firewall');
+// Slim one-line IP strip embedded inside the hero card. Shows verdict color,
+// current IP, country flag, proxy hint, firewall gate toggle, and a refresh
+// affordance. Expanded details live in the multi-vantage matrix below the
+// hero — no separate big card anymore.
+function renderHeroIpStripHTML() {
+  const esc = escapeHtml;
+  const n = window.__consoleV3.network;
+  if (!n) {
+    return `<div class="cv3-ipstrip loading"><span class="cv3-ipstrip-icon">🛡</span><span class="cv3-ipstrip-msg">正在检测出口 IP…</span></div>`;
+  }
+  const gateOn = isIpGateEnabled();
+  const gateBtn = `<button type="button" class="cv3-ipstrip-toggle ${gateOn ? 'on' : ''}" data-console-v3-toggle-gate-btn title="${gateOn ? '硬拦截已开启 — 高风险 IP 时阻止启动' : '硬拦截已关闭 — 高风险仅弹窗提醒'}">${gateOn ? '🔒 硬拦截' : '🔓 仅提醒'}</button>`;
+  const refreshBtn = `<button type="button" class="cv3-ipstrip-refresh" data-console-v3-refresh-ip title="重新检测">↻</button>`;
+
+  if (n.ok === false) {
+    return `
+      <div class="cv3-ipstrip bad">
+        <span class="cv3-ipstrip-icon">🛡</span>
+        <span class="cv3-ipstrip-label">无法获取 IP</span>
+        <span class="cv3-ipstrip-err" title="${esc(n.error || '')}">${esc((n.error || '').slice(0, 60))}</span>
+        <span class="cv3-ipstrip-actions">${gateBtn}${refreshBtn}</span>
+      </div>`;
+  }
+
+  const verdict = n.verdict || 'warn';
+  const cc = (n.countryCode || '').toUpperCase();
+  const flagMap = { CN: '🇨🇳', US: '🇺🇸', SG: '🇸🇬', JP: '🇯🇵', HK: '🇭🇰', TW: '🇹🇼', KR: '🇰🇷', DE: '🇩🇪', GB: '🇬🇧', FR: '🇫🇷', CA: '🇨🇦', AU: '🇦🇺' };
+  const flag = flagMap[cc] || '🌐';
+  const verdictIcon = verdict === 'safe' ? '✅' : verdict === 'block' ? '🚫' : '⚠';
+  const splitTag = n.splitTunnel ? `<span class="cv3-ipstrip-split" title="多个视角看到不同 IP（分流）">分流</span>` : '';
+  const hasProxy = Boolean(n.proxy?.hasProxy);
+
+  return `
+    <div class="cv3-ipstrip ${esc(verdict)}">
+      <span class="cv3-ipstrip-icon">🛡 ${verdictIcon}</span>
+      <span class="cv3-ipstrip-ip"><code>${esc(n.ip || '-')}</code></span>
+      <span class="cv3-ipstrip-geo">${flag} ${esc(n.country || '未知')}${n.city ? ' · ' + esc(n.city) : ''}${n.isp ? ' · ' + esc(n.isp) : ''}</span>
+      ${splitTag}
+      ${hasProxy ? `<span class="cv3-ipstrip-proxy" title="${esc((n.proxy.hints || [])[0] || '')}">📡 代理</span>` : ''}
+      <span class="cv3-ipstrip-actions">${gateBtn}${refreshBtn}</span>
+    </div>`;
+}
+
+// Multi-vantage matrix — mimics ip111.cn's "从国内测试 / 从国外测试 / 从谷歌测试"
+// columns. Shows the IP each probe saw. When any row disagrees with the
+// primary IP we highlight the mismatching cells so split-tunneling is
+// obvious at a glance.
+function renderConsoleV3Vantages() {
+  const el = document.getElementById('consoleV2Vantages');
   if (!el) return;
   const esc = escapeHtml;
   const n = window.__consoleV3.network;
   if (!n) {
-    el.innerHTML = `
-      <div class="cv3-fw cv3-fw-loading">
-        <span class="cv3-fw-icon">🛡</span>
-        <div class="cv3-fw-body">
-          <div class="cv3-fw-title">官方线路安全检测</div>
-          <div class="cv3-fw-copy">正在查询当前出口 IP…</div>
-        </div>
-      </div>`;
+    el.innerHTML = `<div class="console-v2-section-head">网络视角</div><div class="cv3-proc-empty">检测中…</div>`;
     return;
   }
-  if (n.ok === false) {
-    el.innerHTML = `
-      <div class="cv3-fw cv3-fw-warn">
-        <span class="cv3-fw-icon">🛡</span>
-        <div class="cv3-fw-body">
-          <div class="cv3-fw-title">官方线路安全检测 · 无法获取 IP</div>
-          <div class="cv3-fw-copy">${esc(n.error || '未知错误')}</div>
-          <div class="cv3-fw-copy cv3-fw-hint">已尝试多个中立节点（ipapi.co / ipwho.is / ip-api.com / ipify.org）。可能的原因：<br>· 本机完全没联网<br>· 代理 / VPN 阻断了出站 HTTPS<br>· 企业网络拦截第三方 IP 查询<br>启动 Codex / Claude 官方登录时会弹窗让你确认是否继续。</div>
-          ${renderLatencyStripHTML()}
-        </div>
-        <div class="cv3-fw-actions">
-          <button type="button" class="cv3-fw-refresh" data-console-v3-refresh-ip>重试</button>
-        </div>
-      </div>`;
+
+  const vantages = Array.isArray(n.vantages) ? n.vantages : [];
+  if (!vantages.length) {
+    el.innerHTML = `<div class="console-v2-section-head">网络视角
+      <button type="button" class="cv3-link-btn" data-console-v3-refresh-ip>重测</button>
+    </div>
+    <div class="cv3-proc-empty">${esc(n.error || '无法获取视角数据')}</div>
+    ${renderLatencyStripHTML()}`;
     return;
   }
-  const verdict = n.verdict || 'warn';
-  const hasProxy = Boolean(n.proxy?.hasProxy);
-  const cc = (n.countryCode || '').toUpperCase();
-  const flagMap = { CN: '🇨🇳', US: '🇺🇸', SG: '🇸🇬', JP: '🇯🇵', HK: '🇭🇰', TW: '🇹🇼', KR: '🇰🇷', DE: '🇩🇪', GB: '🇬🇧', FR: '🇫🇷', CA: '🇨🇦', AU: '🇦🇺' };
-  const flag = flagMap[cc] || '🌐';
-  const verdictLabel = verdict === 'safe' ? '✅ 安全' : verdict === 'block' ? '🚫 高风险' : '⚠ 需确认';
-  const gateOn = isIpGateEnabled();
-  const gateLabel = gateOn ? '已开启 · 高风险时阻止启动' : '已关闭 · 仅弹窗提醒';
+
+  const primaryIp = n.ip || '';
+  const rowsHtml = vantages.map((v) => {
+    const okCell = v.ok === true;
+    const ip = v.query || v.ip || '';
+    const mismatch = okCell && primaryIp && ip && ip !== primaryIp;
+    const statusCls = !okCell ? 'bad' : mismatch ? 'warn' : 'ok';
+    const ipText = okCell ? (ip || '—') : '失败';
+    const geo = okCell
+      ? ((v.country ? esc(v.country) : '') + (v.city ? ' · ' + esc(v.city) : ''))
+      : esc((v.error || '').slice(0, 40));
+    const latency = v.ms ? `${v.ms}ms` : '';
+    return `
+      <div class="cv3-vantage ${statusCls}">
+        <div class="cv3-vantage-head">
+          <span class="cv3-vantage-label">${esc(v.label || '—')}</span>
+          ${latency ? `<span class="cv3-vantage-ms">${esc(latency)}</span>` : ''}
+        </div>
+        <div class="cv3-vantage-ip"><code>${esc(ipText)}</code></div>
+        <div class="cv3-vantage-geo">${geo || '&nbsp;'}</div>
+      </div>`;
+  }).join('');
+
   el.innerHTML = `
-    <div class="cv3-fw cv3-fw-${esc(verdict)}">
-      <span class="cv3-fw-icon">🛡</span>
-      <div class="cv3-fw-body">
-        <div class="cv3-fw-title">
-          官方线路安全检测
-          <span class="cv3-fw-verdict">${esc(verdictLabel)}</span>
-        </div>
-        <div class="cv3-fw-grid">
-          <div class="cv3-fw-row"><span class="cv3-fw-key">出口 IP</span><span class="cv3-fw-val"><code>${esc(n.ip || '-')}</code> <span class="cv3-fw-geo">${flag} ${esc(n.country || '未知')}${n.city ? ' · ' + esc(n.city) : ''}${n.isp ? ' · ' + esc(n.isp) : ''}</span>${n.via ? `<span class="cv3-fw-src" title="IP 信息来源">via ${esc(n.via)}</span>` : ''}</span></div>
-          <div class="cv3-fw-row"><span class="cv3-fw-key">代理</span><span class="cv3-fw-val">${hasProxy ? `已配置 · <code>${esc((n.proxy.hints || [])[0] || '')}</code>` : '未配置'}</span></div>
-          <div class="cv3-fw-row"><span class="cv3-fw-key">判定</span><span class="cv3-fw-val">${esc(n.verdictCopy || '')}</span></div>
-          <div class="cv3-fw-row"><span class="cv3-fw-key">硬拦截</span><span class="cv3-fw-val">
-            <label class="cv3-fw-toggle">
-              <input type="checkbox" ${gateOn ? 'checked' : ''} data-console-v3-toggle-gate>
-              <span>${esc(gateLabel)}</span>
-            </label>
-          </span></div>
-        </div>
-        ${renderLatencyStripHTML()}
-      </div>
-      <div class="cv3-fw-actions">
-        <button type="button" class="cv3-fw-refresh" data-console-v3-refresh-ip>重新检测</button>
-      </div>
-    </div>`;
+    <div class="console-v2-section-head">
+      网络视角 <span class="count">· ${vantages.length} 路</span>
+      ${n.splitTunnel ? '<span class="cv3-vantage-alert" title="多视角看到的 IP 不一致">⚠ 分流</span>' : ''}
+      <button type="button" class="cv3-link-btn" data-console-v3-refresh-ip>重测</button>
+    </div>
+    <div class="cv3-vantage-grid">${rowsHtml}</div>
+    ${renderLatencyStripHTML()}`;
 }
 
 // Small inline latency strip — shown inside the firewall card so users see
@@ -8188,10 +8223,10 @@ function renderConsoleV2(tool) {
   const titleToolEl = document.getElementById('consoleV2TitleTool');
   if (titleToolEl) titleToolEl.textContent = model.toolLabel;
 
-  // v3 sections.
-  renderConsoleV3Firewall();
+  // v3 sections (vantage matrix replaces the old standalone firewall card).
   renderConsoleV3Procs(tool, model.toolLabel);
   renderConsoleV3Usage(tool);
+  renderConsoleV3Vantages();
 
   const heroEl = document.getElementById('consoleV2Hero');
   if (heroEl) {
@@ -8210,6 +8245,7 @@ function renderConsoleV2(tool) {
           ${h.model ? `<span class="ch-hero-model">${esc(h.model)}</span>` : ''}
         </div>
         ${h.baseUrl ? `<div class="console-v2-hero-url">${esc(h.baseUrl)}</div>` : ''}
+        ${renderHeroIpStripHTML()}
       </div>
       <div class="console-v2-hero-actions">
         <button type="button" class="ch-hero-ghost" data-console-v2-refresh>
@@ -18254,15 +18290,25 @@ function bindEvents() {
       // Console v3 refresh buttons
       if (t.closest('[data-console-v3-refresh-ip]')) {
         window.__consoleV3.network = null;
-        renderConsoleV3Firewall();
+        renderToolConsole();
         loadConsoleNetworkStatus({ force: true });
         loadConsoleLatency();
         return;
       }
       if (t.closest('[data-console-v3-refresh-latency]')) {
         window.__consoleV3.latency = null;
-        renderConsoleV3Firewall();
+        renderToolConsole();
         loadConsoleLatency();
+        return;
+      }
+      // Inline hero gate-toggle button (tap = flip).
+      const gateBtn = t.closest('[data-console-v3-toggle-gate-btn]');
+      if (gateBtn) {
+        const next = !isIpGateEnabled();
+        setIpGateEnabled(next);
+        if (typeof flash === 'function') {
+          flash(next ? '✅ 已开启防火墙硬拦截' : '已关闭硬拦截（保留弹窗提醒）', 'success');
+        }
         return;
       }
       if (t.closest('[data-console-v3-refresh-procs]')) {

@@ -20072,7 +20072,169 @@ body {
 }
 
 /* ============================================================
-   Console v3 additions — IP firewall / procs / usage
+   Console v3 — IP strip in hero + multi-vantage matrix
+   ============================================================ */
+
+/* Hero-embedded one-line IP strip */
+.shell-v2 .cv3-ipstrip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.74rem;
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+.shell-v2 .cv3-ipstrip.safe {
+  background: rgba(74, 222, 128, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.22);
+}
+.shell-v2 .cv3-ipstrip.warn,
+.shell-v2 .cv3-ipstrip.loading {
+  background: rgba(234, 167, 51, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(234, 167, 51, 0.24);
+}
+.shell-v2 .cv3-ipstrip.block,
+.shell-v2 .cv3-ipstrip.bad {
+  background: rgba(239, 82, 82, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(239, 82, 82, 0.3);
+}
+[data-theme="light"] .shell-v2 .cv3-ipstrip.safe { background: rgba(34, 197, 94, 0.12); box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.3); }
+[data-theme="light"] .shell-v2 .cv3-ipstrip.warn,
+[data-theme="light"] .shell-v2 .cv3-ipstrip.loading { background: rgba(234, 167, 51, 0.16); box-shadow: inset 0 0 0 1px rgba(234, 167, 51, 0.38); }
+[data-theme="light"] .shell-v2 .cv3-ipstrip.block,
+[data-theme="light"] .shell-v2 .cv3-ipstrip.bad { background: rgba(239, 68, 68, 0.13); box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.38); }
+
+.shell-v2 .cv3-ipstrip-icon { flex-shrink: 0; font-size: 0.8rem; }
+.shell-v2 .cv3-ipstrip-ip code {
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-size: 0.74rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 2px 8px;
+  border-radius: 5px;
+}
+[data-theme="light"] .shell-v2 .cv3-ipstrip-ip code { background: rgba(15, 23, 42, 0.06); }
+.shell-v2 .cv3-ipstrip-geo { color: var(--s2-muted); font-size: 0.72rem; }
+.shell-v2 .cv3-ipstrip-msg,
+.shell-v2 .cv3-ipstrip-err,
+.shell-v2 .cv3-ipstrip-label { color: var(--s2-muted); font-size: 0.72rem; }
+.shell-v2 .cv3-ipstrip-split {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 1px 7px;
+  border-radius: 3px;
+  background: rgba(234, 167, 51, 0.2);
+  color: #fbbf24;
+  text-transform: uppercase;
+}
+.shell-v2 .cv3-ipstrip-proxy { font-size: 0.68rem; color: var(--s2-muted); }
+.shell-v2 .cv3-ipstrip-actions { margin-left: auto; display: inline-flex; gap: 4px; align-items: center; }
+.shell-v2 .cv3-ipstrip-toggle,
+.shell-v2 .cv3-ipstrip-refresh {
+  border: 0;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--s2-muted);
+  font-size: 0.68rem;
+  padding: 3px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.shell-v2 .cv3-ipstrip-toggle.on {
+  background: rgba(74, 222, 128, 0.18);
+  color: #4ade80;
+}
+.shell-v2 .cv3-ipstrip-toggle:hover,
+.shell-v2 .cv3-ipstrip-refresh:hover {
+  background: rgba(107, 158, 255, 0.18);
+  color: var(--s2-accent);
+}
+.shell-v2 .cv3-ipstrip-refresh { padding: 3px 7px; }
+
+/* Multi-vantage grid — inspired by ip111.cn's 3-column layout */
+.shell-v2 .console-v2-vantages { padding: 0 4px; }
+.shell-v2 .cv3-vantage-alert {
+  margin-left: 6px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 1px 7px;
+  border-radius: 3px;
+  background: rgba(234, 167, 51, 0.18);
+  color: #fbbf24;
+}
+.shell-v2 .cv3-vantage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+.shell-v2 .cv3-vantage {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+[data-theme="light"] .shell-v2 .cv3-vantage {
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.05);
+}
+.shell-v2 .cv3-vantage.ok {
+  box-shadow: inset 0 0 0 1px rgba(74, 222, 128, 0.25);
+}
+.shell-v2 .cv3-vantage.warn {
+  background: rgba(234, 167, 51, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(234, 167, 51, 0.28);
+}
+.shell-v2 .cv3-vantage.bad {
+  background: rgba(239, 82, 82, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(239, 82, 82, 0.25);
+  opacity: 0.85;
+}
+.shell-v2 .cv3-vantage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.shell-v2 .cv3-vantage-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--s2-faint);
+}
+.shell-v2 .cv3-vantage-ms {
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-size: 0.62rem;
+  color: var(--s2-faint);
+}
+.shell-v2 .cv3-vantage-ip code {
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  font-size: 0.92rem;
+  font-weight: 650;
+  color: var(--s2-text);
+  letter-spacing: -0.005em;
+  background: transparent;
+  padding: 0;
+}
+.shell-v2 .cv3-vantage.bad .cv3-vantage-ip code { color: #ef5252; }
+.shell-v2 .cv3-vantage-geo {
+  margin-top: 4px;
+  font-size: 0.68rem;
+  color: var(--s2-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ============================================================
+   Console v3 — IP firewall (legacy card, kept for fallback only)
    ============================================================ */
 .shell-v2 .cv3-fw {
   display: grid;
