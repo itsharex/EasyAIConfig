@@ -6149,32 +6149,43 @@ function renderDashboardPage() {
   }, 0);
 
   // ── Codex HTML ──
+  // ── New Hero (Codex) ─────────────────────────────────────────
+  // Four headline metrics on one row + a full-width trend chart inside
+  // the same glass card. The cost cell is the visual anchor (biggest
+  // number, green accent) because that's what the user actually wants
+  // to know when they land on this page.
+  const codexCacheHitPct = codexTotal ? Math.round(codexCached / codexTotal * 100) : 0;
+  const codexHeroStats = [
+    { key: 'cost',   label: '本期消耗 · USD', value: codexTotalCost ? '$' + codexTotalCost.toFixed(2) : '$0.00', emphasis: true },
+    { key: 'total',  label: '总 TOKEN',        value: formatDashboardMetric(codexTotal) },
+    { key: 'output', label: '输出',             value: formatDashboardMetric(codexOutput) },
+    { key: 'cache',  label: '缓存命中率',       value: codexTotal ? codexCacheHitPct + '%' : '—' },
+  ];
+  const heroStatsHtml = (stats) => `
+    <div class="db3-hero-stats">
+      ${stats.map((s) => `
+        <div class="db3-hero-stat ${s.emphasis ? 'db3-hero-stat-emph' : ''}">
+          <div class="db3-hero-value">${escapeHtml(String(s.value))}</div>
+          <div class="db3-hero-label">${escapeHtml(s.label)}</div>
+        </div>`).join('')}
+    </div>`;
+
   const codexHtml = (!hasCodexMetrics && isLoading) ? renderDashboardLoadingCard() : `
     <div class="db2-layout">
 
-      <!-- Stat Cards -->
-      ${statStrip([
-        { label: '总 Token', value: formatDashboardMetric(codexTotal), sub: codexTotal ? '近' + daysWindow + '天累计' : '暂无数据', accent: true },
-        { label: '输入', value: formatDashboardMetric(codexInput), sub: codexTotal ? Math.round(codexInput / codexTotal * 100) + '%' : '–' },
-        { label: '输出', value: formatDashboardMetric(codexOutput), sub: codexTotal ? Math.round(codexOutput / codexTotal * 100) + '%' : '–' },
-        { label: '缓存命中', value: formatDashboardMetric(codexCached), sub: codexTotal ? Math.round(codexCached / codexTotal * 100) + '%' : '–' },
-        { label: '推理', value: formatDashboardMetric(codexReasoning), sub: codexTotal ? Math.round(codexReasoning / codexTotal * 100) + '%' : '–' },
-        { label: '估算消耗', value: codexTotalCost ? '$' + codexTotalCost.toFixed(2) : '$0.00', sub: '基于官方预估', isCost: true },
-      ])}
-
-      <!-- Full-width Token Trend Chart -->
-      <div class="db2-section db2-section--full">
-        <div class="db2-card-head">
-          <div class="db2-card-title">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12.5l3.5-4 3 2.5 5.5-7"/></svg>
-            Token 用量趋势
+      <!-- HERO · 4 指标 + 占主体的折线图 -->
+      <section class="db3-hero">
+        ${heroStatsHtml(codexHeroStats)}
+        <div class="db3-hero-chart-wrap">
+          <div class="db3-hero-chart-head">
+            <span class="db3-hero-chart-title">Token 用量趋势</span>
+            <span class="db3-hero-chart-meta">近 ${daysWindow} 天 · 悬停看当日详情</span>
           </div>
-          <div class="db2-card-meta">近 ${daysWindow} 天 · 悬停查看详情与费用估算</div>
+          ${renderDashboardInteractiveChart(codexDaily.map((item) => ({ label: item.date.slice(5), value: item.total || 0, input: item.input || 0, output: item.output || 0, cached: item.cachedInput || 0 })), { stroke: '#5b8cff', showCost: true, models: codexModels })}
         </div>
-        ${renderDashboardInteractiveChart(codexDaily.map((item) => ({ label: item.date.slice(5), value: item.total || 0, input: item.input || 0, output: item.output || 0, cached: item.cachedInput || 0 })), { stroke: '#5b8cff', showCost: true, models: codexModels })}
-      </div>
+      </section>
 
-      <!-- Two-column: Cost Trend + Token Distribution -->
+      <!-- 下方 2 列 · flat 无卡 -->
       <div class="db2-main-grid">
         <div class="db2-col">
           <div class="db2-section">
@@ -6191,28 +6202,12 @@ function renderDashboardPage() {
           <div class="db2-section">
             <div class="db2-card-head">
               <div class="db2-card-title">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 1.5v6.5l4.5 2.5"/></svg>
-                Token 分布
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M6 6h4M6 8h4M6 10h2"/></svg>
+                模型消耗明细
               </div>
-              <div class="db2-card-meta">输入 · 输出 · 缓存 · 推理</div>
+              <div class="db2-card-meta">按 OpenAI 官方定价估算</div>
             </div>
-            ${renderDashboardStackChart([
-              { label: '输入', value: codexInput },
-              { label: '缓存', value: codexCached },
-              { label: '输出', value: codexOutput },
-              { label: '推理', value: codexReasoning },
-            ])}
-            <div class="db2-dist-cards">
-              ${[['输入', codexInput, '#5b8cff'], ['缓存', codexCached, '#7c3aed'], ['输出', codexOutput, '#22c55e'], ['推理', codexReasoning, '#f59e0b']].map(([lbl, val, clr]) => {
-                const pct = codexTotal ? Math.round(val / codexTotal * 100) : 0;
-                return `
-                <div class="db2-dist-card">
-                  <div class="db2-dist-card-lbl"><span class="db2-dist-dot" style="background:${clr}"></span>${escapeHtml(lbl)}</div>
-                  <div class="db2-dist-card-val">${formatDashboardMetric(val)}</div>
-                  <div class="db2-dist-card-pct" style="color:${clr}">${pct}% 占比</div>
-                </div>`;
-              }).join('')}
-            </div>
+            ${renderModelCostRows(codexModels, codexTotal)}
           </div>
         </div>
 
@@ -6226,17 +6221,6 @@ function renderDashboardPage() {
               <div class="db2-card-meta">${codexModels.length} 个模型</div>
             </div>
             ${renderDashboardModelDistChart(codexModels, codexTotal)}
-          </div>
-
-          <div class="db2-section">
-            <div class="db2-card-head">
-              <div class="db2-card-title">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="12" rx="2"/><path d="M6 6h4M6 8h4M6 10h2"/></svg>
-                模型消耗明细
-              </div>
-              <div class="db2-card-meta">按 OpenAI 官方定价估算</div>
-            </div>
-            ${renderModelCostRows(codexModels, codexTotal)}
           </div>
 
           <div class="db2-section">
@@ -6259,9 +6243,7 @@ function renderDashboardPage() {
               }).join('')}
             </div>
           </div>
-
         </div>
-
       </div>
     </div>`;
 
@@ -6311,74 +6293,47 @@ function renderDashboardPage() {
   }
   const claudeModelTotal = claudeModels.reduce((s, m) => s + (m.totals?.total || 0), 0);
 
+  // ── New Hero (Claude Code) ───────────────────────────────────
+  const claudeCacheHitPct = ct.total ? Math.round(ct.cacheRead / ct.total * 100) : 0;
+  const claudeHeroStats = [
+    { key: 'cost',   label: '本期消耗 · USD', value: ct.cost ? '$' + ct.cost.toFixed(2) : '$0.00', emphasis: true },
+    { key: 'total',  label: '总 TOKEN',        value: formatDashboardMetric(ct.total) },
+    { key: 'output', label: '输出',             value: formatDashboardMetric(ct.output) },
+    { key: 'cache',  label: '缓存读取率',       value: ct.total ? claudeCacheHitPct + '%' : '—' },
+  ];
+
+  // Build filled series once so the hero chart + subsequent renders share it.
+  const claudeFilledSeries = (() => {
+    const dailyMap = {};
+    claudeDailySliced.forEach((d) => { if (d.date) dailyMap[d.date] = d; });
+    const out = [];
+    for (let i = daysWindow - 1; i >= 0; i--) {
+      const dt = new Date(Date.now() - i * 86400000);
+      const key = dt.toISOString().slice(0, 10);
+      const d = dailyMap[key] || {};
+      out.push({ label: key.slice(5), value: d.total || 0, input: d.input || 0, output: d.output || 0, cached: d.cacheRead || 0 });
+    }
+    return out;
+  })();
+
   const claudeHtml = `
     <div class="db2-layout">
 
-      ${statStrip([
-        { label: '总 Token', value: formatDashboardMetric(ct.total), sub: ct.total ? '近' + daysWindow + '天累计' : '该时段无用量', accent: true },
-        { label: '输入', value: formatDashboardMetric(ct.input), sub: ct.total ? Math.round(ct.input / ct.total * 100) + '%' : '–' },
-        { label: '输出', value: formatDashboardMetric(ct.output), sub: ct.total ? Math.round(ct.output / ct.total * 100) + '%' : '–' },
-        { label: '缓存读', value: formatDashboardMetric(ct.cacheRead), sub: ct.total ? Math.round(ct.cacheRead / ct.total * 100) + '%' : '–' },
-        { label: '缓存写', value: formatDashboardMetric(ct.cacheCreate), sub: ct.total ? Math.round(ct.cacheCreate / ct.total * 100) + '%' : '上下文填充' },
-        { label: '费用估算', value: ct.cost ? '$' + ct.cost.toFixed(2) : '$0.00', sub: ct.cost ? '近' + daysWindow + '天 · 按 Anthropic 官方定价' : '该时段无费用', isCost: true },
-      ])}
+      <!-- HERO · 4 指标 + 主体折线图 -->
+      <section class="db3-hero">
+        ${heroStatsHtml(claudeHeroStats)}
+        <div class="db3-hero-chart-wrap">
+          <div class="db3-hero-chart-head">
+            <span class="db3-hero-chart-title">Token 用量趋势</span>
+            <span class="db3-hero-chart-meta">近 ${daysWindow} 天 · 悬停看当日详情</span>
+          </div>
+          ${renderDashboardInteractiveChart(claudeFilledSeries, { stroke: '#7c3aed', showCost: true, models: claudeModels })}
+        </div>
+      </section>
 
-
-      <!-- Main 2-column layout -->
+      <!-- 下方 2 列 · flat -->
       <div class="db2-main-grid">
-
-        <!-- LEFT column: Token Trend + Token Distribution + Cost Trend -->
         <div class="db2-col">
-          <div class="db2-section">
-            <div class="db2-card-head">
-              <div class="db2-card-title">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12.5l3.5-4 3 2.5 5.5-7"/></svg>
-                Token 用量趋势
-              </div>
-              <div class="db2-card-meta">近 ${daysWindow} 天 · 悬停查看详情与费用估算</div>
-            </div>
-            ${(() => {
-              // Fill all calendar dates in window so chart has continuous timeline
-              const dailyMap = {};
-              claudeDailySliced.forEach(d => { if (d.date) dailyMap[d.date] = d; });
-              const filledSeries = [];
-              for (let i = daysWindow - 1; i >= 0; i--) {
-                const dt = new Date(Date.now() - i * 86400000);
-                const key = dt.toISOString().slice(0, 10);
-                const d = dailyMap[key] || {};
-                filledSeries.push({ label: key.slice(5), value: d.total || 0, input: d.input || 0, output: d.output || 0, cached: d.cacheRead || 0 });
-              }
-              return renderDashboardInteractiveChart(filledSeries, { stroke: '#7c3aed', showCost: true, models: claudeModels });
-            })()}
-          </div>
-
-          <div class="db2-section">
-            <div class="db2-card-head">
-              <div class="db2-card-title">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 1.5v6.5l4.5 2.5"/></svg>
-                Token 分布
-              </div>
-              <div class="db2-card-meta">输入 · 输出 · 缓存读 · 缓存写</div>
-            </div>
-            ${renderDashboardStackChart([
-              { label: '输入', value: ct.input },
-              { label: '缓存读', value: ct.cacheRead },
-              { label: '输出', value: ct.output },
-              { label: '缓存写', value: ct.cacheCreate },
-            ])}
-            <div class="db2-dist-cards">
-              ${[['输入', ct.input, '#5b8cff'], ['缓存读', ct.cacheRead, '#7c3aed'], ['输出', ct.output, '#22c55e'], ['缓存写', ct.cacheCreate, '#f59e0b']].map(([lbl, val, clr]) => {
-                const pct = ct.total ? Math.round(val / ct.total * 100) : 0;
-                return `
-                <div class="db2-dist-card">
-                  <div class="db2-dist-card-lbl"><span class="db2-dist-dot" style="background:${clr}"></span>${escapeHtml(lbl)}</div>
-                  <div class="db2-dist-card-val">${formatDashboardMetric(val)}</div>
-                  <div class="db2-dist-card-pct" style="color:${clr}">${pct}% 占比</div>
-                </div>`;
-              }).join('')}
-            </div>
-          </div>
-
           <div class="db2-section">
             <div class="db2-card-head">
               <div class="db2-card-title">
@@ -6388,20 +6343,6 @@ function renderDashboardPage() {
               <div class="db2-card-meta">按 Anthropic 官方定价估算</div>
             </div>
             ${renderClaudeCostTrendChart(claudeDailySliced, daysWindow)}
-          </div>
-        </div>
-
-        <!-- RIGHT column: Model Distribution + Model Cost Table -->
-        <div class="db2-col">
-          <div class="db2-section">
-            <div class="db2-card-head">
-              <div class="db2-card-title">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5l6-3 6 3v6l-6 3-6-3z"/><path d="M2 5l6 3m0 6V8m6-3l-6 3"/></svg>
-                模型分布
-              </div>
-              <div class="db2-card-meta">近 ${daysWindow} 天 · ${claudeModels.length} 个模型</div>
-            </div>
-            ${renderDashboardModelDistChart(claudeModels, claudeModelTotal)}
           </div>
 
           <div class="db2-section">
@@ -6416,6 +6357,18 @@ function renderDashboardPage() {
           </div>
         </div>
 
+        <div class="db2-col">
+          <div class="db2-section">
+            <div class="db2-card-head">
+              <div class="db2-card-title">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 5l6-3 6 3v6l-6 3-6-3z"/><path d="M2 5l6 3m0 6V8m6-3l-6 3"/></svg>
+                模型分布
+              </div>
+              <div class="db2-card-meta">近 ${daysWindow} 天 · ${claudeModels.length} 个模型</div>
+            </div>
+            ${renderDashboardModelDistChart(claudeModels, claudeModelTotal)}
+          </div>
+        </div>
       </div>
     </div>`;
 

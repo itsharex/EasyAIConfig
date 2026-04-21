@@ -20330,6 +20330,135 @@ body {
 }
 .shell-v2 .dashboard-page .db2-sc-value { font-size: 1.35rem; }
 
+/* ============================================================
+   Dashboard Hero v3 — the one commanding glass card
+   Layout: [4 stat cells row] → divider → [big trend chart]
+   ============================================================ */
+.shell-v2 .dashboard-page .db3-hero {
+  padding: 20px 22px 22px;
+  border-radius: 20px;
+  background:
+    radial-gradient(130% 150% at 0% 0%, rgba(107, 158, 255, 0.12) 0%, transparent 55%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.008));
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.07),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    0 12px 28px rgba(0, 0, 0, 0.18);
+  margin-bottom: 20px;
+}
+[data-theme="light"] .shell-v2 .dashboard-page .db3-hero {
+  background:
+    radial-gradient(130% 150% at 0% 0%, rgba(59, 130, 246, 0.1) 0%, transparent 55%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.65));
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 23, 42, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 6px 18px rgba(15, 23, 42, 0.07);
+}
+
+/* Row of 4 stat cells — first cell (cost) is visually dominant.
+   Cells share vertical dividers instead of individual backgrounds. */
+.shell-v2 .dashboard-page .db3-hero-stats {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr 1fr;
+  gap: 0;
+  padding-bottom: 20px;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+}
+[data-theme="light"] .shell-v2 .dashboard-page .db3-hero-stats {
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+.shell-v2 .dashboard-page .db3-hero-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 20px;
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+}
+[data-theme="light"] .shell-v2 .dashboard-page .db3-hero-stat {
+  border-left-color: rgba(15, 23, 42, 0.06);
+}
+.shell-v2 .dashboard-page .db3-hero-stat:first-child {
+  border-left: 0;
+  padding-left: 4px;
+}
+.shell-v2 .dashboard-page .db3-hero-value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--s2-text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.shell-v2 .dashboard-page .db3-hero-stat-emph .db3-hero-value {
+  font-size: 2.4rem;
+  color: #4ade80;
+}
+[data-theme="light"] .shell-v2 .dashboard-page .db3-hero-stat-emph .db3-hero-value {
+  color: #16a34a;
+}
+.shell-v2 .dashboard-page .db3-hero-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--s2-faint);
+}
+
+/* Chart area inside the hero — big enough to be the page's main draw. */
+.shell-v2 .dashboard-page .db3-hero-chart-wrap {
+  padding-top: 14px;
+}
+.shell-v2 .dashboard-page .db3-hero-chart-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px 6px;
+}
+.shell-v2 .dashboard-page .db3-hero-chart-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--s2-faint);
+}
+.shell-v2 .dashboard-page .db3-hero-chart-meta {
+  font-size: 0.66rem;
+  color: var(--s2-faint);
+  opacity: 0.7;
+}
+/* The interactive chart canvas lives inside .db2-ichart-wrap; give it a
+   comfortable height inside the hero — big enough to read trends, not so
+   tall it eats the entire fold. */
+.shell-v2 .dashboard-page .db3-hero .db2-ichart-wrap {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  border: 0;
+  min-height: 220px;
+}
+.shell-v2 .dashboard-page .db3-hero .db2-ichart-canvas {
+  height: 220px !important;
+}
+
+@media (max-width: 720px) {
+  .shell-v2 .dashboard-page .db3-hero-stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px 0;
+    padding-bottom: 14px;
+  }
+  .shell-v2 .dashboard-page .db3-hero-stat:nth-child(3) {
+    border-left: 0;
+    padding-left: 4px;
+  }
+  .shell-v2 .dashboard-page .db3-hero-stat-emph .db3-hero-value {
+    font-size: 2rem;
+  }
+}
+
 .shell-v2 .cv3-ipstrip-ip code {
   font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
   font-size: 0.74rem;
