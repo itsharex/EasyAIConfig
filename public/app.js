@@ -18221,7 +18221,9 @@ loadTools();
       if (typeof isClaudeCodeInstalled === 'function' && !isClaudeCodeInstalled(cc)) return [];
       const profiles = typeof getClaudeProviderProfiles === 'function' ? (getClaudeProviderProfiles(cc) || []) : [];
       const selectedKey = s.claudeSelectedProviderKey;
-      return profiles.map((p) => {
+      // Render all Claude providers as API-KEY rows; the OAuth group is driven
+      // by our own multi-account profile store (see below).
+      const rows = profiles.map((p) => {
         const isOfficial = typeof isClaudeOfficialProvider === 'function' ? isClaudeOfficialProvider(p) : false;
         const oauthReady = isOfficial && typeof isClaudeOauthLoggedIn === 'function' && isClaudeOauthLoggedIn(cc);
         const hasCredential = Boolean(p.hasApiKey) || oauthReady;
@@ -18230,7 +18232,8 @@ loadTools();
           name: p.name || p.key,
           baseUrl: p.baseUrl || 'https://api.anthropic.com',
           model: (p.key === selectedKey) ? (cc.model || '') : '',
-          mode: isOfficial ? 'oauth' : 'apikey',
+          mode: 'apikey',
+          kind: 'claudecode-apikey',
           isActive: p.key === selectedKey,
           hasCredential,
           health: hasCredential ? { ok: true, checked: true } : null,
@@ -18238,6 +18241,65 @@ loadTools();
           tool,
         };
       });
+
+      // Our OAuth profile store → one row per saved profile + one "default"
+      // row representing the un-managed ~/.claude/ login.
+      const ccCache = window.__chClaudeOauthProfiles || { loaded: false, data: null };
+      const ccData = ccCache.data || { active: '', profiles: [], lastSwitchAt: 0 };
+      const savedProfiles = Array.isArray(ccData.profiles) ? ccData.profiles : [];
+      const hasLogin = typeof isClaudeOauthLoggedIn === 'function' && isClaudeOauthLoggedIn(cc);
+      const activeId = ccData.active || '';
+      const ccLogin = cc.login || {};
+
+      // "默认" row — represents ~/.claude/ (Claude Code's default CONFIG_DIR).
+      // Only rendered when the user has logged in at least once there; otherwise
+      // there's nothing to show and we want to avoid implying that launching
+      // without a profile is a viable path for an un-logged-in user.
+      if (hasLogin) {
+        rows.push({
+          key: '__claudecode_oauth_default__',
+          name: ccLogin.email || ccLogin.orgName || '默认账号',
+          baseUrl: '~/.claude/ · Claude Code 默认',
+          model: activeId === '' ? (ccLogin.plan || '') : '',
+          mode: 'oauth',
+          kind: 'claudecode-oauth-default',
+          isActive: activeId === '',
+          hasCredential: true,
+          health: { ok: true, checked: true },
+          ref: null,
+          plan: ccLogin.plan || '',
+          email: ccLogin.email || '',
+          tool,
+        });
+      }
+
+      // One row per saved profile.
+      for (const prof of savedProfiles) {
+        const id = prof.id || '';
+        const profHasTokens = Boolean(prof.hasTokens);
+        const isActiveProfile = activeId === id;
+        rows.push({
+          key: `__claudecode_oauth_profile:${id}`,
+          name: prof.name || prof.email || 'Claude 账号',
+          baseUrl: profHasTokens
+            ? `${prof.organizationName || 'Claude 官方'}${prof.email ? ' · ' + prof.email : ''}`
+            : '未完成登录 · 点击重新登录',
+          model: isActiveProfile ? (prof.plan || '') : '',
+          mode: 'oauth',
+          kind: 'claudecode-oauth-profile',
+          isActive: isActiveProfile,
+          hasCredential: profHasTokens,
+          health: profHasTokens ? { ok: true, checked: true } : null,
+          ref: prof,
+          plan: prof.plan || '',
+          email: prof.email || '',
+          profileId: id,
+          profileConfigDir: prof.configDir || '',
+          tool,
+        });
+      }
+
+      return rows;
     }
 
     if (tool === 'opencode') {
@@ -18353,6 +18415,19 @@ loadTools();
           <button type="button" class="ch-row-icon-btn primary" data-ch-oauth-save-current="1" title="保存为 OAuth profile" aria-label="保存为 OAuth profile">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
           </button>`;
+    } else if (r.kind === 'claudecode-oauth-profile') {
+      actions = `
+          <button type="button" class="ch-row-icon-btn" data-ch-cc-oauth-rename="${safeEscape(r.profileId || '')}" title="重命名" aria-label="重命名 ${safeEscape(r.name)}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 3.5l6 6-11 11H3.5v-6l11-11z"/></svg>
+          </button>
+          <button type="button" class="ch-row-icon-btn" data-ch-cc-oauth-relogin="${safeEscape(r.profileId || '')}" title="重新登录 (替换 token)" aria-label="重新登录">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.36 6.36L3 21M3 12a9 9 0 0 1 15.36-6.36L21 3"/></svg>
+          </button>
+          <button type="button" class="ch-row-icon-btn" data-ch-cc-oauth-delete="${safeEscape(r.profileId || '')}" title="删除" aria-label="删除 ${safeEscape(r.name)}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+          </button>`;
+    } else if (r.kind === 'claudecode-oauth-default') {
+      actions = '';
     } else {
       actions = `
           <button type="button" class="ch-row-icon-btn" data-ch-row-edit="${safeEscape(r.key)}" title="编辑" aria-label="编辑 ${safeEscape(r.name)}">
@@ -18392,15 +18467,22 @@ loadTools();
     const apikey = rows.filter((r) => r.mode === 'apikey');
     const pieces = [];
 
-    // For Codex we always render the OAuth group header (even when empty) so the
-    // "+ 新增 OAuth 账号" button on the right side is discoverable.
-    if (tool === 'codex' || oauth.length) {
-      const addBtn = tool === 'codex'
-        ? `<button type="button" class="ch-group-head-add" data-ch-oauth-add title="新增 OAuth 账号 (codex login)">
-             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
-             <span>新增</span>
-           </button>`
-        : '';
+    // For Codex / ClaudeCode we always render the OAuth group header (even
+    // when empty) so the "+ 新增 OAuth 账号" button is discoverable.
+    const showOauthGroup = oauth.length || tool === 'codex' || tool === 'claudecode';
+    if (showOauthGroup) {
+      let addBtn = '';
+      if (tool === 'codex') {
+        addBtn = `<button type="button" class="ch-group-head-add" data-ch-oauth-add title="新增 OAuth 账号 (codex login)" aria-label="新增 OAuth 账号">
+             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+             <span class="ch-group-head-add-label">新增</span>
+           </button>`;
+      } else if (tool === 'claudecode') {
+        addBtn = `<button type="button" class="ch-group-head-add" data-ch-cc-oauth-add title="新增 Claude 账号 (claude auth login)" aria-label="新增 Claude 账号">
+             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>
+             <span class="ch-group-head-add-label">新增</span>
+           </button>`;
+      }
       pieces.push(`<div class="ch-group-head"><span class="ch-group-head-text">OAUTH<span class="count">· ${oauth.length}</span></span>${addBtn}</div>`);
       if (oauth.length) pieces.push(oauth.map(rowHTML).join(''));
     }
@@ -18481,6 +18563,7 @@ loadTools();
       return p || null;
     }
     if (tool === 'claudecode') {
+      if (key === '__claudecode_oauth_default__' || key.startsWith('__claudecode_oauth_profile:')) return null;
       const profiles = typeof getClaudeProviderProfiles === 'function' ? getClaudeProviderProfiles(s.claudeCodeState) : [];
       return (profiles || []).find((x) => x.key === key) || null;
     }
@@ -18696,6 +18779,145 @@ loadTools();
     }, 2500);
   }
 
+  // ── Claude Code OAuth profile store (remote) ────────────────────
+  // Cache: { loaded, data: {active, lastSwitchAt, profiles: [...]} }
+  window.__chClaudeOauthProfiles = window.__chClaudeOauthProfiles || { loaded: false, data: null };
+
+  async function loadClaudeCodeOauthProfiles() {
+    try {
+      const res = await api('/api/claudecode/oauth/profiles', { method: 'GET' });
+      if (!res || !res.ok) {
+        window.__chClaudeOauthProfiles = { loaded: true, data: { active: '', profiles: [], lastSwitchAt: 0 } };
+      } else {
+        window.__chClaudeOauthProfiles = { loaded: true, data: res.data || {} };
+      }
+    } catch (err) {
+      console.warn('[ch] load claudecode oauth profiles failed', err);
+      window.__chClaudeOauthProfiles = { loaded: true, data: { active: '', profiles: [], lastSwitchAt: 0 } };
+    }
+    renderConnectionHub();
+  }
+
+  // Switch active Claude Code OAuth identity. Empty id = back to default
+  // (~/.claude/). Backend enforces a 60s throttle.
+  async function switchClaudeCodeOauthProfile(id) {
+    const res = await api('/api/claudecode/oauth/profiles/switch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id || '' }),
+    });
+    if (!res || !res.ok) {
+      if (typeof flash === 'function') flash(res?.error || '切换 Claude 账号失败', 'error');
+      return;
+    }
+    if (typeof flash === 'function') {
+      flash(id ? '已切换 Claude 账号（下次启动 Claude Code 会使用该账号）' : '已切回默认 Claude 账号 (~/.claude/)', 'success');
+    }
+    await loadClaudeCodeOauthProfiles();
+  }
+
+  async function renameClaudeCodeOauthProfile(id) {
+    if (!id) return;
+    const current = (window.__chClaudeOauthProfiles?.data?.profiles || []).find((p) => p.id === id);
+    const name = window.prompt('新的名字', current?.name || '');
+    if (name == null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const res = await api('/api/claudecode/oauth/profiles/rename', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, name: trimmed }),
+    });
+    if (!res || !res.ok) {
+      if (typeof flash === 'function') flash(res?.error || '重命名失败', 'error');
+      return;
+    }
+    await loadClaudeCodeOauthProfiles();
+  }
+
+  async function deleteClaudeCodeOauthProfile(id) {
+    if (!id) return;
+    const confirmed = window.confirm('删除这个 Claude 账号 profile？\n只会删除我们保存的副本（目录 + Keychain 会留作残留，手动用 Keychain Access 清理）。\n你在 anthropic 的账号本身不受影响。');
+    if (!confirmed) return;
+    const res = await api('/api/claudecode/oauth/profiles/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    if (!res || !res.ok) {
+      if (typeof flash === 'function') flash(res?.error || '删除失败', 'error');
+      return;
+    }
+    if (typeof flash === 'function') flash('已删除该 profile', 'success');
+    await loadClaudeCodeOauthProfiles();
+  }
+
+  async function addNewClaudeCodeOauthProfile() {
+    const ok = window.confirm('接下来会：\n1) 创建一个独立的 Claude 配置目录（profile）\n2) 在终端里用该目录跑 claude auth login\n3) 你在浏览器完成授权后，token 会存到该 profile 独立的 Keychain 条目里\n\n整个过程不影响你现有的 ~/.claude/ 登录。继续？');
+    if (!ok) return;
+
+    const createRes = await api('/api/claudecode/oauth/profiles/create', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '' }),
+    });
+    if (!createRes || !createRes.ok) {
+      if (typeof flash === 'function') flash(createRes?.error || '创建 profile 失败', 'error');
+      return;
+    }
+    const newId = createRes.data?.id;
+    if (!newId) return;
+
+    // Launch `CLAUDE_CONFIG_DIR=<dir> claude auth login` in a terminal.
+    const loginRes = await api('/api/claudecode/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profileId: newId }),
+    });
+    if (!loginRes || !loginRes.ok) {
+      if (typeof flash === 'function') flash(loginRes?.error || '启动 claude login 失败', 'error');
+      return;
+    }
+    if (typeof flash === 'function') flash('已在终端打开登录窗口。完成浏览器授权后回到这里。', 'info');
+
+    // Poll the profiles list — once the target profile picks up an accountUuid
+    // from its .claude.json, auto-activate it.
+    let tries = 0;
+    const pollId = setInterval(async () => {
+      tries += 1;
+      await loadClaudeCodeOauthProfiles();
+      const prof = (window.__chClaudeOauthProfiles?.data?.profiles || []).find((p) => p.id === newId);
+      if (prof && prof.hasTokens) {
+        clearInterval(pollId);
+        await switchClaudeCodeOauthProfile(newId);
+      } else if (tries >= 72) {
+        clearInterval(pollId);
+      }
+    }, 2500);
+  }
+
+  async function reloginClaudeCodeOauthProfile(id) {
+    if (!id) return;
+    const ok = window.confirm('重新登录会覆盖这个 profile 的 token。原账号状态保留在服务端，只是本机这份凭证换成新的。继续？');
+    if (!ok) return;
+    const res = await api('/api/claudecode/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profileId: id }),
+    });
+    if (!res || !res.ok) {
+      if (typeof flash === 'function') flash(res?.error || '启动 claude login 失败', 'error');
+      return;
+    }
+    if (typeof flash === 'function') flash('已打开登录窗口。完成授权后账号元数据会自动刷新。', 'info');
+    let tries = 0;
+    const pollId = setInterval(async () => {
+      tries += 1;
+      await loadClaudeCodeOauthProfiles();
+      if (tries >= 48) clearInterval(pollId);
+    }, 2500);
+  }
+
   // Row-body click: activate this provider (modifies Codex's model_provider
   // pointer). Editing that same provider's URL / Key / model is done via the
   // ✏ icon which opens the drawer.
@@ -18720,6 +18942,15 @@ loadTools();
         const p = (s.current?.providers || []).find((x) => x.key === key);
         if (p && typeof quickSwitchCodexProvider === 'function') await quickSwitchCodexProvider(p);
       } else if (tool === 'claudecode') {
+        if (key === '__claudecode_oauth_default__') {
+          await switchClaudeCodeOauthProfile('');
+          return;
+        }
+        if (key.startsWith('__claudecode_oauth_profile:')) {
+          const id = key.slice('__claudecode_oauth_profile:'.length);
+          await switchClaudeCodeOauthProfile(id);
+          return;
+        }
         const profiles = typeof getClaudeProviderProfiles === 'function' ? getClaudeProviderProfiles(s.claudeCodeState) : [];
         const p = (profiles || []).find((x) => x.key === key);
         if (p && typeof quickSwitchClaudeProvider === 'function') await quickSwitchClaudeProvider(p);
@@ -18928,6 +19159,16 @@ loadTools();
       const deleteOauth = target.closest('[data-ch-oauth-delete]');
       if (deleteOauth) { e.stopPropagation(); deleteOauthProfile(deleteOauth.getAttribute('data-ch-oauth-delete')); return; }
 
+      // Claude Code OAuth profile actions
+      const ccAddOauth = target.closest('[data-ch-cc-oauth-add]');
+      if (ccAddOauth) { e.stopPropagation(); addNewClaudeCodeOauthProfile(); return; }
+      const ccRename = target.closest('[data-ch-cc-oauth-rename]');
+      if (ccRename) { e.stopPropagation(); renameClaudeCodeOauthProfile(ccRename.getAttribute('data-ch-cc-oauth-rename')); return; }
+      const ccRelogin = target.closest('[data-ch-cc-oauth-relogin]');
+      if (ccRelogin) { e.stopPropagation(); reloginClaudeCodeOauthProfile(ccRelogin.getAttribute('data-ch-cc-oauth-relogin')); return; }
+      const ccDelete = target.closest('[data-ch-cc-oauth-delete]');
+      if (ccDelete) { e.stopPropagation(); deleteClaudeCodeOauthProfile(ccDelete.getAttribute('data-ch-cc-oauth-delete')); return; }
+
       const editBtn = target.closest('[data-ch-row-edit]');
       if (editBtn) { e.stopPropagation(); openSlideover('edit', editBtn.getAttribute('data-ch-row-edit')); return; }
       const detectBtn = target.closest('[data-ch-row-detect]');
@@ -19066,16 +19307,18 @@ loadTools();
   // Expose hub render so renderCurrentConfig() can call it
   window.renderConnectionHub = renderConnectionHub;
   window.__chLoadOauthProfiles = loadCodexOauthProfiles;
+  window.__chLoadClaudeCodeOauthProfiles = loadClaudeCodeOauthProfiles;
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      wire();
-      renderConnectionHub();
-      loadCodexOauthProfiles();
-    });
-  } else {
+  function initialLoad() {
     wire();
     renderConnectionHub();
     loadCodexOauthProfiles();
+    loadClaudeCodeOauthProfiles();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initialLoad);
+  } else {
+    initialLoad();
   }
 })();

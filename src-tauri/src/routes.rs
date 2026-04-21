@@ -27,6 +27,10 @@ use crate::oauth_profiles::{
   delete_oauth_profile, list_oauth_profiles, rename_oauth_profile, save_current_oauth_profile,
   switch_oauth_profile,
 };
+use crate::claudecode_oauth_profiles::{
+  create_claudecode_oauth_profile, delete_claudecode_oauth_profile, list_claudecode_oauth_profiles,
+  rename_claudecode_oauth_profile, switch_claudecode_oauth_profile,
+};
 use crate::provider::detect_provider;
 use crate::updater::{get_app_update_info, get_app_update_progress, install_app_update};
 use crate::{fail, ok, OPENAI_CODEX_PACKAGE, CLAUDE_CODE_PACKAGE, OPENCLAW_PACKAGE};
@@ -73,6 +77,11 @@ async fn dispatch(app: tauri::AppHandle, path: &str, method: &str, query: &Value
     ("/api/claudecode/uninstall", "POST") => codex_npm_action(&["uninstall", "-g", CLAUDE_CODE_PACKAGE]),
     ("/api/claudecode/launch", "POST") => launch_claudecode(body),
     ("/api/claudecode/login", "POST") => login_claudecode(body),
+    ("/api/claudecode/oauth/profiles", "GET") => list_claudecode_oauth_profiles(query),
+    ("/api/claudecode/oauth/profiles/create", "POST") => create_claudecode_oauth_profile(body),
+    ("/api/claudecode/oauth/profiles/switch", "POST") => switch_claudecode_oauth_profile(body),
+    ("/api/claudecode/oauth/profiles/rename", "POST") => rename_claudecode_oauth_profile(body),
+    ("/api/claudecode/oauth/profiles/delete", "POST") => delete_claudecode_oauth_profile(body),
     ("/api/opencode/state", "GET") => load_opencode_state(query),
     ("/api/opencode/config-save", "POST") => save_opencode_config(body),
     ("/api/opencode/raw-save", "POST") => save_opencode_raw_config(body),

@@ -19186,35 +19186,32 @@ body {
 .shell-v2 .ch-group-head-add {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 4px 10px;
-  border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(255, 255, 255, 0.02);
-  color: var(--s2-muted);
-  font-size: 0.64rem;
+  gap: 4px;
+  height: 18px;
+  padding: 0 6px 0 4px;
+  margin-left: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--s2-faint);
+  font-size: 0.6rem;
   font-weight: 600;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   text-transform: none;
   cursor: pointer;
-  transition: background 140ms ease, color 140ms ease, border-color 140ms ease, transform 140ms ease;
+  opacity: 0.65;
+  border-radius: 4px;
+  transition: opacity 140ms ease, color 140ms ease, background 140ms ease;
 }
 .shell-v2 .ch-group-head-add:hover {
-  background: rgba(107, 158, 255, 0.1);
+  opacity: 1;
   color: var(--s2-accent);
-  border-color: rgba(107, 158, 255, 0.35);
-  transform: translateY(-1px);
+  background: rgba(107, 158, 255, 0.1);
 }
-.shell-v2 .ch-group-head-add svg { opacity: 0.9; }
-[data-theme="light"] .shell-v2 .ch-group-head-add {
-  border-color: rgba(15, 23, 42, 0.1);
-  background: rgba(255, 255, 255, 0.7);
-  color: #64748b;
-}
+.shell-v2 .ch-group-head-add svg { display: block; }
+.shell-v2 .ch-group-head-add-label { line-height: 1; }
 [data-theme="light"] .shell-v2 .ch-group-head-add:hover {
-  background: rgba(59, 130, 246, 0.08);
   color: #2563eb;
-  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.08);
 }
 
 .shell-v2 .ch-row {

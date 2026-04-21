@@ -4777,6 +4777,57 @@ fn normalize_openclaw_dashboard_bootstrap_url(raw_url: &str, gateway_token: &str
   url.to_string()
 }
 
+// Build a platform-correct shell command prefix that exports CLAUDE_CONFIG_DIR
+// just for the following command (so it doesn't bleed into the user's shell).
+//   - Unix (bash/zsh): CLAUDE_CONFIG_DIR="path" <cmd>
+//   - Windows cmd.exe: set "CLAUDE_CONFIG_DIR=path" && <cmd>
+fn with_claude_config_dir(command_text: &str, dir: Option<&Path>) -> String {
+  let Some(dir) = dir else { return command_text.to_string(); };
+  let text = dir.to_string_lossy();
+  if cfg!(target_os = "windows") {
+    // cmd.exe tolerates trailing spaces in `set` values so we quote aggressively.
+    format!("set \"CLAUDE_CONFIG_DIR={}\" && {}", text.replace('"', "\"\""), command_text)
+  } else {
+    // Single-word export inline — standard POSIX shell syntax.
+    format!("CLAUDE_CONFIG_DIR={} {}", shell_single_quote(&text), command_text)
+  }
+}
+
+fn shell_single_quote(value: &str) -> String {
+  // POSIX-safe single-quote escape: 'a'\''b' for a value containing '
+  let mut out = String::with_capacity(value.len() + 2);
+  out.push('\'');
+  for ch in value.chars() {
+    if ch == '\'' {
+      out.push_str("'\\''");
+    } else {
+      out.push(ch);
+    }
+  }
+  out.push('\'');
+  out
+}
+
+// Resolve the CLAUDE_CONFIG_DIR to use, in priority order:
+//   1. explicit `profileId` in the request body (add-profile flow needs this
+//      before the profile is actually activated);
+//   2. explicit `configDir` in the request body (escape hatch for power users);
+//   3. whichever profile is currently active in profiles.json;
+//   4. None → default ~/.claude/ (no env var injected).
+fn resolve_claude_config_dir(object: &serde_json::Map<String, Value>) -> Option<PathBuf> {
+  use crate::app_home;
+  let profile_id = get_string(object, "profileId");
+  if !profile_id.is_empty() {
+    let dir = app_home().ok()?.join("claudecode-oauth-profiles").join(&profile_id);
+    if dir.exists() { return Some(dir); }
+  }
+  let explicit = get_string(object, "configDir");
+  if !explicit.is_empty() {
+    return Some(PathBuf::from(explicit));
+  }
+  crate::claudecode_oauth_profiles::active_profile_config_dir()
+}
+
 pub(crate) fn launch_claudecode(body: &Value) -> Result<Value, String> {
   let object = parse_json_object(body);
   let cwd = {
@@ -4788,7 +4839,30 @@ pub(crate) fn launch_claudecode(body: &Value) -> Result<Value, String> {
     return Err("Claude Code 尚未安装，请先点击安装".to_string());
   }
   let bin_path = binary.get("path").and_then(Value::as_str).unwrap_or("claude");
-  let message = launch_terminal_for_tool(&cwd, bin_path, "Claude Code", "claude")?;
+
+  let config_dir = resolve_claude_config_dir(&object);
+  if let Some(ref dir) = config_dir {
+    // Ensure the profile dir exists so Claude has a place to write state on
+    // first launch (empty dir is fine — Claude bootstraps it).
+    let _ = std::fs::create_dir_all(dir);
+  }
+
+  // If no config dir needs injecting, use the existing tool-launcher path so
+  // Windows tool resolution (PATH lookup, .cmd/.bat dispatch) still works.
+  if config_dir.is_none() {
+    let message = launch_terminal_for_tool(&cwd, bin_path, "Claude Code", "claude")?;
+    return Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }));
+  }
+
+  // With a CONFIG_DIR we need to run Claude inside a shell so the env var
+  // export survives across the new terminal hop.
+  let base_cmd = if cfg!(target_os = "windows") {
+    build_windows_binary_command(bin_path, &[], "claude")
+  } else {
+    format!("\"{}\"", bin_path.replace('"', "\\\""))
+  };
+  let command = with_claude_config_dir(&base_cmd, config_dir.as_deref());
+  let message = launch_terminal_command(&cwd, &command, "Claude Code")?;
   Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
 }
 
@@ -4807,13 +4881,30 @@ pub(crate) fn login_claudecode(body: &Value) -> Result<Value, String> {
     .and_then(Value::as_str)
     .filter(|text| !text.trim().is_empty())
     .unwrap_or("claude");
-  let command = if cfg!(target_os = "windows") {
+
+  let config_dir = resolve_claude_config_dir(&object);
+  if let Some(ref dir) = config_dir {
+    let _ = std::fs::create_dir_all(dir);
+  }
+
+  let base_command = if cfg!(target_os = "windows") {
     build_windows_binary_command(binary_path, &["auth".to_string(), "login".to_string()], "claude")
   } else {
     format!("\"{}\" auth login", binary_path.replace('"', "\\\""))
   };
-  let message = launch_terminal_command(&cwd, &command, "Claude Code OAuth 登录")?;
-  Ok(json!({ "ok": true, "cwd": cwd.to_string_lossy().to_string(), "message": message }))
+  let command = with_claude_config_dir(&base_command, config_dir.as_deref());
+  let label = if config_dir.is_some() {
+    "Claude Code 多账号登录"
+  } else {
+    "Claude Code OAuth 登录"
+  };
+  let message = launch_terminal_command(&cwd, &command, label)?;
+  Ok(json!({
+    "ok": true,
+    "cwd": cwd.to_string_lossy().to_string(),
+    "configDir": config_dir.map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
+    "message": message,
+  }))
 }
 
 fn strip_json_comments(content: &str) -> String {
