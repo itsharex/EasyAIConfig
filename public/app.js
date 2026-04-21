@@ -7748,10 +7748,14 @@ function renderHeroIpStripHTML() {
   const refreshBtn = `<button type="button" class="cv3-ipstrip-refresh" data-console-v3-refresh-ip title="重新检测">↻</button>`;
 
   if (n.ok === false) {
+    const proxyHint = n.proxy?.hasProxy
+      ? `<span class="cv3-ipstrip-proxy" title="${esc((n.proxy.hints || []).join(' | '))}">📡 ${esc((n.proxy.hints || [])[0] || 'proxy')}</span>`
+      : `<span class="cv3-ipstrip-proxy" title="没有识别到任何代理配置">📡 未检测到代理</span>`;
     return `
       <div class="cv3-ipstrip bad">
         <span class="cv3-ipstrip-icon">🛡</span>
         <span class="cv3-ipstrip-label">无法获取 IP</span>
+        ${proxyHint}
         <span class="cv3-ipstrip-err" title="${esc(n.error || '')}">${esc((n.error || '').slice(0, 60))}</span>
         <span class="cv3-ipstrip-actions">${gateBtn}${refreshBtn}</span>
       </div>`;
@@ -7811,6 +7815,7 @@ function renderConsoleV3Vantages() {
       ? ((v.country ? esc(v.country) : '') + (v.city ? ' · ' + esc(v.city) : ''))
       : esc((v.error || '').slice(0, 40));
     const latency = v.ms ? `${v.ms}ms` : '';
+    const transport = v.transport && v.transport !== 'none' ? v.transport : '';
     return `
       <div class="cv3-vantage ${statusCls}">
         <div class="cv3-vantage-head">
@@ -7819,6 +7824,7 @@ function renderConsoleV3Vantages() {
         </div>
         <div class="cv3-vantage-ip"><code>${esc(ipText)}</code></div>
         <div class="cv3-vantage-geo">${geo || '&nbsp;'}</div>
+        ${transport ? `<div class="cv3-vantage-via">via ${esc(transport)}</div>` : ''}
       </div>`;
   }).join('');
 

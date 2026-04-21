@@ -20232,6 +20232,13 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.shell-v2 .cv3-vantage-via {
+  margin-top: 2px;
+  font-size: 0.6rem;
+  color: var(--s2-faint);
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  opacity: 0.7;
+}
 
 /* ============================================================
    Console v3 — IP firewall (legacy card, kept for fallback only)

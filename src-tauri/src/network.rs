@@ -174,6 +174,36 @@ fn build_probe_client() -> Result<reqwest::blocking::Client, String> {
   b.build().map_err(|e| format!("build http client failed: {}", e))
 }
 
+// Fallback HTTP fetch via the system `curl` binary. Used when reqwest fails
+// — curl transparently obeys:
+//   - shell http_proxy / https_proxy / all_proxy env vars
+//   - ~/.curlrc
+//   - macOS system proxy (indirectly, since most Clash-style tools set the
+//     env vars when system-proxy mode is on)
+// so in practice this catches every proxy configuration reqwest misses.
+// Returns parsed JSON on success; err string on failure.
+fn curl_fetch_json(url: &str) -> Result<Value, String> {
+  let proxy_arg = detect_system_proxy_url();
+  let mut cmd = std::process::Command::new("curl");
+  cmd.args([
+    "-sS",                  // silent, but show errors
+    "--max-time", "8",
+    "--connect-timeout", "4",
+    "-A", "EasyAIConfig/1.0 (IP geolocation probe)",
+  ]);
+  if let Some(p) = &proxy_arg {
+    cmd.args(["-x", p]);
+  }
+  cmd.arg(url);
+  let out = cmd.output().map_err(|e| format!("curl 调用失败: {}", e))?;
+  if !out.status.success() {
+    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    return Err(if err.is_empty() { format!("curl 退出码 {}", out.status) } else { err });
+  }
+  let text = String::from_utf8_lossy(&out.stdout);
+  serde_json::from_str::<Value>(&text).map_err(|e| format!("curl 响应解析失败: {}", e))
+}
+
 // Parallel-probe every provider and return a Vec of normalized results,
 // tagging failures with an error string so the UI can surface which source
 // is flaky. We never "fall back" silently — every row is a vantage point
@@ -185,23 +215,48 @@ fn probe_all_providers() -> Vec<Value> {
     let _kind = p.kind;
     std::thread::spawn(move || {
       let start = std::time::Instant::now();
-      // Each thread builds its own client — cheap and avoids Sync concerns.
-      let client = match build_probe_client() {
-        Ok(c) => c,
-        Err(e) => return json!({ "label": label, "ok": false, "error": e, "ms": 0 }),
+      let mut via_transport = "reqwest";
+      let mut reqwest_err = String::new();
+
+      // Attempt 1: reqwest (fast, single binary, obeys detect_system_proxy_url).
+      let parsed_body: Option<Value> = (|| -> Option<Value> {
+        let client = match build_probe_client() { Ok(c) => c, Err(e) => { reqwest_err = e; return None; } };
+        let resp = match client.get(&url).send() {
+          Ok(r) => r,
+          Err(e) => { reqwest_err = format!("{}", e); return None; }
+        };
+        if !resp.status().is_success() {
+          reqwest_err = format!("HTTP {}", resp.status());
+          return None;
+        }
+        match resp.json::<Value>() {
+          Ok(v) => Some(v),
+          Err(e) => { reqwest_err = format!("parse {}", e); None }
+        }
+      })();
+
+      // Attempt 2: curl fallback — catches every macOS proxy setup reqwest
+      // misses (SOCKS without the right feature, TUN, corporate MITM certs
+      // that rustls won't trust, etc).
+      let body = match parsed_body {
+        Some(v) => v,
+        None => {
+          via_transport = "curl";
+          match curl_fetch_json(&url) {
+            Ok(v) => v,
+            Err(curl_err) => {
+              let err = if reqwest_err.is_empty() { curl_err }
+                else { format!("{} (curl: {})", reqwest_err, curl_err) };
+              return json!({
+                "label": label, "ok": false, "error": err,
+                "ms": start.elapsed().as_millis() as u64,
+                "transport": "none",
+              });
+            }
+          }
+        }
       };
-      let resp = match client.get(&url).send() {
-        Ok(r) => r,
-        Err(e) => return json!({ "label": label, "ok": false, "error": format!("{}", e), "ms": start.elapsed().as_millis() as u64 }),
-      };
-      if !resp.status().is_success() {
-        return json!({ "label": label, "ok": false, "error": format!("HTTP {}", resp.status()), "ms": start.elapsed().as_millis() as u64 });
-      }
-      let body: Value = match resp.json() {
-        Ok(v) => v,
-        Err(e) => return json!({ "label": label, "ok": false, "error": format!("parse {}", e), "ms": start.elapsed().as_millis() as u64 }),
-      };
-      // Re-borrow IP_PROVIDERS by label (can't move a static reference into the thread easily).
+
       let provider_ref = IP_PROVIDERS.iter().find(|x| x.label == label);
       match provider_ref.and_then(|p| normalize_provider_response(p, body)) {
         Some(mut norm) => {
@@ -209,10 +264,15 @@ fn probe_all_providers() -> Vec<Value> {
             obj.insert("ok".to_string(), json!(true));
             obj.insert("label".to_string(), json!(label));
             obj.insert("ms".to_string(), json!(start.elapsed().as_millis() as u64));
+            obj.insert("transport".to_string(), json!(via_transport));
           }
           norm
         }
-        None => json!({ "label": label, "ok": false, "error": "返回结构不符", "ms": start.elapsed().as_millis() as u64 }),
+        None => json!({
+          "label": label, "ok": false, "error": "返回结构不符",
+          "ms": start.elapsed().as_millis() as u64,
+          "transport": via_transport,
+        }),
       }
     })
   }).collect();
