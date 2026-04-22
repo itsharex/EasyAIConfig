@@ -118,6 +118,23 @@ pub(crate) fn write_text(path: &Path, content: &str) -> Result<(), String> {
   fs::write(path, content).map_err(|error| error.to_string())
 }
 
+// Write a file containing credentials / refresh tokens. Same as write_text but
+// also tightens the file to 0600 on Unix so other local users on a shared mac
+// can't `cat` the OAuth tokens out of ~/.codex-config-ui/.
+pub(crate) fn write_secret(path: &Path, content: &str) -> Result<(), String> {
+  if let Some(parent) = path.parent() {
+    ensure_dir(parent)?;
+  }
+  fs::write(path, content).map_err(|error| error.to_string())?;
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+      .map_err(|error| error.to_string())?;
+  }
+  Ok(())
+}
+
 pub(crate) fn parse_env(content: &str) -> BTreeMap<String, String> {
   let mut entries = BTreeMap::new();
   for line in content.lines() {

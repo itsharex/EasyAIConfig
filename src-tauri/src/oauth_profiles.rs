@@ -21,8 +21,8 @@ use uuid::Uuid;
 
 use crate::provider::get_string;
 use crate::{
-  app_home, default_codex_home, ensure_dir, parse_env, parse_json_object, read_text,
-  stringify_env, write_text,
+  app_home, default_codex_home, ensure_dir, parse_env, parse_json_object, parse_toml_config,
+  read_text, stringify_env, stringify_toml_config, write_secret, write_text,
 };
 
 const PROFILES_DIRNAME: &str = "codex-oauth-profiles";
@@ -249,7 +249,7 @@ fn sync_live_to_active_archive(live_auth_raw: &str, active_id: &str) -> Result<(
   if existing == live_auth_raw {
     return Ok(());
   }
-  write_text(&archive, live_auth_raw)
+  write_secret(&archive, live_auth_raw)
 }
 
 fn is_env_style_key(key: &str) -> bool {
@@ -325,7 +325,7 @@ pub(crate) fn write_switch_backup(live_auth_raw: &str) -> Result<PathBuf, String
   ensure_dir(&dir)?;
   let ts = Utc::now().format("%Y%m%dT%H%M%S").to_string();
   let path = dir.join(format!("auth-{}.json", ts));
-  write_text(&path, live_auth_raw)?;
+  write_secret(&path, live_auth_raw)?;
   prune_old_backups(&dir)?;
   Ok(path)
 }
@@ -430,7 +430,7 @@ pub(crate) fn save_current_oauth_profile(body: &Value) -> Result<Value, String> 
 
   // Write archive.
   let archive = profile_auth_path(&id)?;
-  write_text(&archive, &live_raw)?;
+  write_secret(&archive, &live_raw)?;
 
   // Upsert into index.
   let default_name = if !email.is_empty() {
@@ -529,7 +529,26 @@ pub(crate) fn switch_oauth_profile(body: &Value) -> Result<Value, String> {
   }
 
   migrate_auth_json_env_to_codex_env(&codex_home, &archive_raw)?;
-  write_text(&live_path, &archive_raw)?;
+  write_secret(&live_path, &archive_raw)?;
+
+  // Drop the config.toml `model_provider` override so the hub correctly
+  // resolves this OAuth profile as the active session. Without this, the
+  // previously-chosen API-key provider still appears active (isActive is
+  // derived from config.toml), leaving the CURRENT SESSION card stuck on the
+  // old API-key row even though auth.json now points at OAuth tokens.
+  let config_path = codex_home.join("config.toml");
+  let config_raw = read_text(&config_path).unwrap_or_default();
+  if !config_raw.trim().is_empty() {
+    if let Ok(mut config) = parse_toml_config(&config_raw) {
+      if let Some(obj) = config.as_object_mut() {
+        if obj.remove("model_provider").is_some() {
+          if let Ok(serialized) = stringify_toml_config(&config) {
+            let _ = write_text(&config_path, &serialized);
+          }
+        }
+      }
+    }
+  }
 
   // Update active pointer.
   let mut index = read_profiles_index()?;
