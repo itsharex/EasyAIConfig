@@ -354,13 +354,12 @@ function applyTheme(theme) {
   document.querySelectorAll('.config-range').forEach(updateRangeFill);
   syncRawCodeEditorTheme();
   syncSystemThemeButtons();
-  // Update theme toggle button
-  const btn = el('themeToggleBtn');
-  if (btn) {
+  const titles = { dark: '暗黑模式 · 点击切换浅色', light: '浅色模式 · 点击切换自动', auto: '自动模式 · 点击切换暗黑' };
+  document.querySelectorAll('[data-role="theme-toggle"]').forEach((btn) => {
     btn.dataset.themePref = state.themePreference;
-    const titles = { dark: '暗黑模式 · 点击切换浅色', light: '浅色模式 · 点击切换自动', auto: '自动模式 · 点击切换暗黑' };
     btn.title = titles[state.themePreference] || '切换主题';
-  }
+    btn.setAttribute('aria-label', btn.title);
+  });
 }
 
 function toggleTheme() {
@@ -10301,6 +10300,8 @@ function setPage(page = 'quick') {
   const configActions = el('configEditorActions');
   if (defaultActions) defaultActions.classList.toggle('hide', page === 'configEditor');
   if (configActions) configActions.classList.toggle('hide', page !== 'configEditor');
+  el('secondaryThemeToggleBtn')?.classList.toggle('hide', page !== 'dashboard');
+  el('themeToggleBtn')?.classList.toggle('hide', page === 'dashboard');
 
   // Render tasks page on navigate
   if (page !== 'dashboard') stopDashboardAutoRefresh();
@@ -18320,7 +18321,9 @@ function bindEvents() {
     setPage('about');
   });
   el('openSystemSettingsBtn')?.addEventListener('click', () => setPage('systemSettings'));
-  el('themeToggleBtn').addEventListener('click', toggleTheme);
+  document.querySelectorAll('[data-role="theme-toggle"]').forEach((node) => {
+    node.addEventListener('click', toggleTheme);
+  });
   el('configEditorBtn').addEventListener('click', () => setConfigEditorOpen(true));
   el('closeConfigEditorBtn').addEventListener('click', () => setConfigEditorOpen(false));
   el('resetConfigEditorBtn')?.addEventListener('click', resetConfigEditorPreservingProviders);

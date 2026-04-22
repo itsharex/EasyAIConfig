@@ -88,7 +88,32 @@
         <div class="sec-drag" data-tauri-drag-region></div>
         <div class="sec-head">
           <div class="sec-eyebrow" id="secondaryEyebrow">QUICK SETUP</div>
-          <div class="sec-title" id="secondaryTitle">一键配置</div>
+          <div class="sec-title-row">
+            <div class="sec-title" id="secondaryTitle">一键配置</div>
+            <button id="secondaryThemeToggleBtn" class="topbar-icon-btn sec-theme-btn hide" title="切换主题" data-theme-pref="auto" data-role="theme-toggle" aria-label="切换主题">
+              <svg class="theme-ico-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="5" />
+                <line x1="12" y1="1" x2="12" y2="3" />
+                <line x1="12" y1="21" x2="12" y2="23" />
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                <line x1="1" y1="12" x2="3" y2="12" />
+                <line x1="21" y1="12" x2="23" y2="12" />
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+              </svg>
+              <svg class="theme-ico-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+              </svg>
+              <svg class="theme-ico-auto" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" opacity="0.4" stroke="none"/>
+              </svg>
+            </button>
+          </div>
           <div class="sec-sub" id="secondarySub">选择要配置的工具，或为同一工具保存多份预设。</div>
         </div>
         <div class="sec-body" id="secondaryBody">
@@ -380,7 +405,7 @@
             <p id="pageSubtitle">输入 URL 和 API Key，剩下交给 EasyAIConfig。</p>
           </div>
           <div class="workspace-actions" id="defaultActions">
-            <button id="themeToggleBtn" class="topbar-icon-btn" title="切换主题" data-theme-pref="auto">
+            <button id="themeToggleBtn" class="topbar-icon-btn" title="切换主题" data-theme-pref="auto" data-role="theme-toggle">
               <svg class="theme-ico-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="12" cy="12" r="5" />
