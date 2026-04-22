@@ -6197,10 +6197,10 @@ function renderModelCostRows(models = [], totalTokens = 0) {
     }
 
     const rateChips = pricingEntry
-      ? `<div class="db3-price-rates">
-          <span>IN ${escapeHtml(formatDashboardUsd(pricingEntry.pricing.input, { min: pricingEntry.pricing.input < 1 ? 3 : 2, max: 3 }))}</span>
-          <span>OUT ${escapeHtml(formatDashboardUsd(pricingEntry.pricing.output, { min: pricingEntry.pricing.output < 1 ? 3 : 2, max: 3 }))}</span>
-          <span>CACHE ${escapeHtml(formatDashboardUsd(pricingEntry.pricing.cached, { min: pricingEntry.pricing.cached < 1 ? 3 : 2, max: 3 }))}</span>
+      ? `<div class="db3-price-rates db3-price-rates--matrix">
+          <span class="db3-price-rate"><em>IN</em><strong>${escapeHtml(formatDashboardUsd(pricingEntry.pricing.input, { min: pricingEntry.pricing.input < 1 ? 3 : 2, max: 3 }))}</strong></span>
+          <span class="db3-price-rate"><em>OUT</em><strong>${escapeHtml(formatDashboardUsd(pricingEntry.pricing.output, { min: pricingEntry.pricing.output < 1 ? 3 : 2, max: 3 }))}</strong></span>
+          <span class="db3-price-rate"><em>CACHE</em><strong>${escapeHtml(formatDashboardUsd(pricingEntry.pricing.cached, { min: pricingEntry.pricing.cached < 1 ? 3 : 2, max: 3 }))}</strong></span>
         </div>`
       : '<div class="db3-price-rates db3-price-rates--na"><span>未匹配官方定价</span></div>';
 
@@ -6335,7 +6335,8 @@ function renderDashboardPage() {
   const miniBars = (items = []) => `
     <div class="dashboard-mini-bars">
       ${items.map((item) => {
-        const width = Math.max(4, Math.min(100, Number(item.value || 0)));
+        const rawWidth = Math.min(100, Number(item.value || 0));
+        const width = rawWidth > 0 ? Math.max(4, rawWidth) : 0;
         const meta = formatDashboardMeta(item.meta ?? item.value ?? 0);
         const fullMeta = typeof (item.meta ?? item.value) === 'number' ? formatDashboardMetricFull(item.meta ?? item.value) : meta;
         return `<div class="dashboard-mini-bar"><span>${escapeHtml(item.label)}</span><div class="dashboard-mini-bar-track"><div class="dashboard-mini-bar-fill" style="width:${width}%"></div></div><strong title="${escapeHtml(fullMeta)}">${escapeHtml(meta)}</strong></div>`;
@@ -6379,37 +6380,41 @@ function renderDashboardPage() {
   const codexInputPct = codexTotal ? Math.round(codexInput / codexTotal * 100) : 0;
   const codexTopModel = codexModels[0] ? (lookupModelPricingEntry(codexModels[0].model)?.pricing?.label || codexModels[0].model) : '—';
   const codexHeroStats = [
-    { label: '本期预估', value: codexTotalCost ? formatDashboardUsd(codexTotalCost, { min: 2, max: 2 }) : '$0.00', sub: `OpenAI / ${daysWindow} 天`, isCost: true },
-    { label: '输入 Token', value: formatDashboardMetric(codexInput), sub: `${codexInputPct}% 占比` },
-    { label: '输出 Token', value: formatDashboardMetric(codexOutput), sub: codexReasoning ? `推理 ${formatDashboardMetric(codexReasoning)}` : '无推理分摊' },
-    { label: '缓存读取', value: formatDashboardMetric(codexCached), sub: codexTotal ? `${codexCacheHitPct}% 命中` : '无缓存命中' },
-    { label: '活跃模型', value: String(codexModels.length), sub: codexTopModel, accent: true },
+    { label: '本期消耗 · USD', value: codexTotalCost ? formatDashboardUsd(codexTotalCost, { min: 2, max: 2 }) : '$0.00', emphasis: true },
+    { label: '总 Token', value: formatDashboardMetric(codexTotal) },
+    { label: codexReasoning ? '输出 / 推理' : '输出 Token', value: formatDashboardMetric(codexOutput + codexReasoning) },
+    { label: '缓存读取率', value: codexTotal ? `${codexCacheHitPct}%` : '—' },
+  ];
+  const codexBreakdownItems = [
+    { label: '输入', value: codexInputPct, meta: codexInput },
+    { label: '输出', value: codexTotal ? Math.round(codexOutput / codexTotal * 100) : 0, meta: codexOutput },
+    { label: '缓存', value: codexCacheHitPct, meta: codexCached },
+    { label: '推理', value: codexTotal ? Math.round(codexReasoning / codexTotal * 100) : 0, meta: codexReasoning },
   ];
 
   const codexHtml = (!hasCodexMetrics && isLoading) ? renderDashboardLoadingCard() : `
-    <div class="db2-layout db2-layout--dashboard">
-      ${statStrip(codexHeroStats)}
-      <div class="db3-dashboard-grid">
-        <section class="db2-section db3-panel db3-panel--chart">
-          <div class="db2-card-head">
-            <div class="db2-card-title">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12.5h12M3.5 11l3-3 2.5 2 4-5"/></svg>
-              Token 用量趋势
-            </div>
-            <div class="db2-card-meta">近 ${daysWindow} 天 · 悬停查看日明细</div>
+    <div class="db2-layout">
+      <section class="db3-hero db3-hero--codex">
+        ${heroStatsHtml(codexHeroStats)}
+        <div class="db3-hero-chart-wrap">
+          <div class="db3-hero-chart-head">
+            <span class="db3-hero-chart-title">Token 用量趋势</span>
+            <span class="db3-hero-chart-meta">近 ${daysWindow} 天 · ${codexModels.length} 个模型 · ${escapeHtml(codexTopModel)}</span>
           </div>
           ${renderDashboardInteractiveChart(codexDaily.map((item) => ({ label: item.date.slice(5), value: item.total || 0, input: item.input || 0, output: item.output || 0, cached: item.cachedInput || 0 })), { stroke: '#5b8cff', showCost: true, models: codexModels })}
-        </section>
+        </div>
+      </section>
 
+      <div class="db3-dashboard-grid">
         <section class="db2-section db3-panel">
           <div class="db2-card-head">
-            <div class="db2-card-title">
+          <div class="db2-card-title">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 1.5v13M11.5 4.5H6.25a2.25 2.25 0 1 0 0 4.5H9.75a2.25 2.25 0 0 1 0 4.5H4"/></svg>
               GPT 计费标准
             </div>
             <div class="db2-card-meta">GPT-5.4 / GPT-5.3 Codex 检测结果</div>
           </div>
-          ${renderPricingStandardsCards(codexModels, ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex', 'o3'])}
+          ${renderPricingStandardsCards(codexModels, ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex'])}
         </section>
 
         <section class="db2-section db3-panel db3-panel--wide">
@@ -6421,6 +6426,17 @@ function renderDashboardPage() {
             <div class="db2-card-meta">按 OpenAI 官方定价估算 · 单位 USD / 1M tokens</div>
           </div>
           ${renderModelCostRows(codexModels, codexModelTotal)}
+        </section>
+
+        <section class="db2-section db3-panel">
+          <div class="db2-card-head">
+            <div class="db2-card-title">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10.5h12M3.5 8.5l2-2 2.5 2 4.5-4"/></svg>
+              Token 构成
+            </div>
+            <div class="db2-card-meta">输入 / 输出 / 缓存 / 推理</div>
+          </div>
+          ${miniBars(codexBreakdownItems)}
         </section>
 
         <section class="db2-section db3-panel">
@@ -6681,7 +6697,7 @@ function renderDashboardInteractiveChart(series = [], { stroke = '#5b8cff', show
 
   return `
     <div class="db2-ichart-wrap" id="${chartId}_wrap" ${dataAttr}>
-      <canvas id="${chartId}" class="db2-ichart-canvas" height="220"></canvas>
+      <canvas id="${chartId}" class="db2-ichart-canvas" height="196"></canvas>
       <div id="${tooltipId}" class="db2-ichart-tooltip" style="display:none"></div>
     </div>`;
 }
@@ -6701,7 +6717,7 @@ function _initDbInteractiveChart(chartId) {
     const dpr = window.devicePixelRatio || 1;
     const rect = wrap.getBoundingClientRect();
     const W = Math.round(rect.width) || 600;
-    const H = 220;
+    const H = 196;
     canvas.width = W * dpr;
     canvas.height = H * dpr;
     canvas.style.width = W + 'px';
@@ -6709,7 +6725,7 @@ function _initDbInteractiveChart(chartId) {
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
 
-    const padL = 48, padR = 16, padT = 20, padB = 32;
+    const padL = 42, padR = 12, padT = 16, padB = 28;
     const cW = W - padL - padR;
     const cH = H - padT - padB;
     const values = series.map(s => Number(s.value || 0));
@@ -6721,17 +6737,17 @@ function _initDbInteractiveChart(chartId) {
     }));
 
     const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-    const gridColor = isLight ? 'rgba(15,23,42,0.06)' : 'rgba(255,255,255,0.06)';
-    const textColor = isLight ? 'rgba(15,23,42,0.35)' : 'rgba(255,255,255,0.3)';
-    const bgGradStart = stroke + '40';
-    const bgGradEnd = stroke + '05';
+    const gridColor = isLight ? 'rgba(15,23,42,0.055)' : 'rgba(255,255,255,0.055)';
+    const textColor = isLight ? 'rgba(15,23,42,0.32)' : 'rgba(255,255,255,0.28)';
+    const bgGradStart = stroke + '26';
+    const bgGradEnd = stroke + '03';
 
     // Draw
     function draw(hoverIdx) {
       ctx.clearRect(0, 0, W, H);
 
       // Grid lines + labels
-      ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.font = '9.5px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
       ctx.textAlign = 'right';
       for (let frac of [0, 0.25, 0.5, 0.75, 1.0]) {
         const y = padT + cH - frac * cH;
@@ -6780,7 +6796,7 @@ function _initDbInteractiveChart(chartId) {
         ctx.bezierCurveTo(cp1x, pts[i-1].y, cp1x, pts[i].y, pts[i].x, pts[i].y);
       }
       ctx.strokeStyle = stroke;
-      ctx.lineWidth = 2.5;
+      ctx.lineWidth = 2.15;
       ctx.lineJoin = 'round';
       ctx.lineCap = 'round';
       ctx.stroke();
@@ -6789,12 +6805,12 @@ function _initDbInteractiveChart(chartId) {
       pts.forEach((p, i) => {
         const isHover = i === hoverIdx;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, isHover ? 5 : 2.5, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, isHover ? 4.5 : 2.2, 0, Math.PI * 2);
         ctx.fillStyle = isHover ? '#fff' : stroke;
         ctx.fill();
         if (isHover) {
           ctx.strokeStyle = stroke;
-          ctx.lineWidth = 2.5;
+          ctx.lineWidth = 2.15;
           ctx.stroke();
         }
       });
@@ -6862,6 +6878,7 @@ function _initDbInteractiveChart(chartId) {
               const cacheWriteShare = (m.totals?.cacheCreation || 0) / ((m.totals?.total || 1));
               dayCost += (dayTokens * inpShare / 1e6 * pricing.input) + (dayTokens * outShare / 1e6 * pricing.output) + (dayTokens * cachedShare / 1e6 * pricing.cached) + (dayTokens * cacheWriteShare / 1e6 * (pricing.input * 1.25));
             });
+            costLine = `<div class="db2-tip-row db2-tip-cost"><span>预估费用</span><strong>${escapeHtml(formatDashboardUsd(dayCost, { min: 4, max: 4 }))}</strong></div>`;
           }
         }
 
@@ -6936,78 +6953,84 @@ function renderDashboardModelDistChart(models = [], totalTokens = 0) {
   return `<div class="db2-mdist-chart" id="${chartId}">${bars}</div>`;
 }
 
-// Cost trend mini chart
-// Claude cost trend uses actual cost from telemetry (not estimated)
-function renderClaudeCostTrendChart(dailySlice = [], windowDays = 30) {
-  if (!dailySlice.length) return '<div class="dashboard-empty-note">暂无费用趋势数据。</div>';
-
-  const costSeries = dailySlice.map(item => ({
-    label: (item.date || '').slice(5),
-    value: item.cost || 0,
-  }));
-
-  const maxCost = Math.max(...costSeries.map(s => s.value), 0.001);
-  const totalCost = costSeries.reduce((s, c) => s + c.value, 0);
-
-  const bars = costSeries.map((s) => {
-    const pct = Math.max(2, (s.value / maxCost) * 100);
-    const tip = s.label + '  $' + s.value.toFixed(2);
+function renderCostTrendPanel(costSeries = [], summaryLabel = '', fillStyle = '') {
+  if (!costSeries.length) return '<div class="dashboard-empty-note">暂无费用趋势数据。</div>';
+  const maxCost = Math.max(...costSeries.map((s) => s.value || 0), 0.001);
+  const totalCost = costSeries.reduce((sum, item) => sum + (item.value || 0), 0);
+  const labelStep = Math.max(1, Math.floor((costSeries.length - 1) / 5));
+  const usdFmt = (value) => formatDashboardUsd(value, { min: value < 1 ? 3 : 2, max: value < 1 ? 3 : 2 });
+  const axis = [maxCost, maxCost / 2, 0].map((value) => `<span>${escapeHtml(usdFmt(value))}</span>`).join('');
+  const bars = costSeries.map((item, index) => {
+    const value = Number(item.value || 0);
+    const pct = value > 0 ? Math.max(4, (value / maxCost) * 100) : 0;
+    const tip = `${item.label}  ${usdFmt(value)}`;
+    const showLabel = index === costSeries.length - 1 || index % labelStep === 0;
     return `<div class="db2-costbar" data-tip="${escapeHtml(tip)}">
-      <div class="db2-costbar-fill" style="height:${pct}%;background:linear-gradient(180deg,#7c3aed,#a78bfa)"></div>
+      <div class="db2-costbar-fill" style="height:${pct}%;${fillStyle}"></div>
+      <span class="db2-costbar-label ${showLabel ? 'is-visible' : ''}">${escapeHtml(item.label)}</span>
     </div>`;
   }).join('');
 
   return `
     <div class="db2-cost-trend">
-      <div class="db2-cost-trend-bars">${bars}</div>
+      <div class="db2-cost-trend-plot">
+        <div class="db2-cost-axis">${axis}</div>
+        <div class="db2-cost-chart">
+          <div class="db2-cost-grid"><span></span><span></span><span></span></div>
+          <div class="db2-cost-trend-bars">${bars}</div>
+        </div>
+      </div>
       <div class="db2-cost-trend-summary">
-        <span>近 ${windowDays} 天合计</span>
-        <strong>$${totalCost.toFixed(2)}</strong>
+        <span>${escapeHtml(summaryLabel)}</span>
+        <div class="db2-cost-trend-totals">
+          <em>峰值 ${escapeHtml(usdFmt(maxCost))}</em>
+          <strong>${escapeHtml(usdFmt(totalCost))}</strong>
+        </div>
       </div>
     </div>`;
+}
+
+// Claude cost trend uses actual cost from telemetry (not estimated)
+function renderClaudeCostTrendChart(dailySlice = [], windowDays = 30) {
+  if (!dailySlice.length) return '<div class="dashboard-empty-note">暂无费用趋势数据。</div>';
+  const costSeries = dailySlice.map((item) => ({
+    label: (item.date || '').slice(5),
+    value: item.cost || 0,
+  }));
+  return renderCostTrendPanel(
+    costSeries,
+    `近 ${windowDays} 天合计`,
+    'background:linear-gradient(180deg,#b794ff 0%,#7c3aed 58%,#5b21b6 100%)'
+  );
 }
 
 function renderDashboardCostTrendChart(daily = [], models = []) {
   if (!daily.length || !models.length) return '<div class="dashboard-empty-note">暂无费用趋势数据。</div>';
 
   const totalAllModels = models.reduce((sum, m) => sum + (m.totals?.total || 0), 0) || 1;
-  const costSeries = daily.map(item => {
+  const costSeries = daily.map((item) => {
     const dayTotal = item.total || 0;
     let dayCost = 0;
     if (dayTotal > 0) {
-      models.forEach(m => {
+      models.forEach((m) => {
         const pricing = lookupModelPricing(m.model);
         if (!pricing) return;
         const share = (m.totals?.total || 0) / totalAllModels;
         const dayTokens = dayTotal * share;
-        const inpShare = (m.totals?.input || 0) / ((m.totals?.total || 1));
-        const outShare = (m.totals?.output || 0) / ((m.totals?.total || 1));
-        const cachedShare = (m.totals?.cachedInput || m.totals?.cacheRead || 0) / ((m.totals?.total || 1));
+        const inpShare = (m.totals?.input || 0) / (m.totals?.total || 1);
+        const outShare = (m.totals?.output || 0) / (m.totals?.total || 1);
+        const cachedShare = (m.totals?.cachedInput || m.totals?.cacheRead || 0) / (m.totals?.total || 1);
         dayCost += (dayTokens * inpShare / 1e6 * pricing.input) + (dayTokens * outShare / 1e6 * pricing.output) + (dayTokens * cachedShare / 1e6 * pricing.cached);
       });
     }
     return { label: (item.date || '').slice(5), value: dayCost };
   });
 
-  const maxCost = Math.max(...costSeries.map(s => s.value), 0.001);
-  const totalCost = costSeries.reduce((s, c) => s + c.value, 0);
-
-  const bars = costSeries.map((s, i) => {
-    const pct = Math.max(2, (s.value / maxCost) * 100);
-    const tip = s.label + '  $' + s.value.toFixed(2);
-    return `<div class="db2-costbar" data-tip="${escapeHtml(tip)}">
-      <div class="db2-costbar-fill" style="height:${pct}%"></div>
-    </div>`;
-  }).join('');
-
-  return `
-    <div class="db2-cost-trend">
-      <div class="db2-cost-trend-bars">${bars}</div>
-      <div class="db2-cost-trend-summary">
-        <span>近 ${costSeries.length} 天合计</span>
-        <strong>$${totalCost.toFixed(2)}</strong>
-      </div>
-    </div>`;
+  return renderCostTrendPanel(
+    costSeries,
+    `近 ${costSeries.length} 天合计`,
+    'background:linear-gradient(180deg,#bcd0ff 0%,#5b8cff 56%,#3358ff 100%)'
+  );
 }
 
 // Keep legacy function as wrapper
@@ -9167,9 +9190,9 @@ const CODEX_MODEL_PRESETS = [
   },
 ];
 
-// Codex model context-window caps from the built-in model catalog (v0.116.0).
+// Codex model context-window caps used by the config editor UI.
 const CODEX_MODEL_CONTEXT_WINDOWS = {
-  'gpt-5.4': 272000,
+  'gpt-5.4': 1048576,
   'gpt-5.3-codex': 272000,
   'gpt-5.2': 272000,
   'gpt-5.1-codex': 272000,
@@ -10808,7 +10831,7 @@ const CONFIG_NUMBER_FIELDS = {
     resetId: 'cfgContextWindowResetBtn',
     hintId: 'cfgContextWindowHint',
     min: 32000,
-    max: 512000,
+    max: 1048576,
     step: 1000,
     defaultValue: () => getCodexSelectedModelContextCap() || 272000,
     defaultPlaceholder: () => {
@@ -10839,7 +10862,7 @@ const CONFIG_NUMBER_FIELDS = {
     resetId: 'cfgCompactLimitResetBtn',
     hintId: 'cfgCompactLimitHint',
     min: 16000,
-    max: 512000,
+    max: 1048576,
     step: 1000,
     defaultValue: () => calcCodexAutoCompactCap(getCodexContextWindowForUi()),
     defaultPlaceholder: () => {
@@ -10944,14 +10967,9 @@ function updateRangeFill(range) {
   const min = Number(range.min) || 0;
   const max = Number(range.max) || 100;
   const val = Number(range.value) || 0;
-  const pct = ((val - min) / (max - min)) * 100;
-  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
-  const fillColor = isDark
-    ? 'linear-gradient(90deg, rgba(141,192,255,0.35), rgba(141,192,255,0.65))'
-    : 'linear-gradient(90deg, rgba(59,130,246,0.35), rgba(59,130,246,0.65))';
-  const trackColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
-  range.style.background = `${fillColor} 0% / ${pct}% 100% no-repeat, ${trackColor}`;
-  range.style.borderRadius = '999px';
+  const pct = max === min ? 0 : ((val - min) / (max - min)) * 100;
+  const safePct = Math.max(0, Math.min(100, pct));
+  range.style.setProperty('--range-progress', `${safePct}%`);
 }
 
 function refreshConfigNumberFields() {

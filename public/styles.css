@@ -22556,3 +22556,1310 @@ body {
     padding: 12px 0 6px;
   }
 }
+
+/* Dashboard finish v5 — softer glass sections, compact rows, clearer axes */
+.shell-v2 .dashboard-shell { gap: 16px; padding: 0 0 18px; }
+.shell-v2 .dashboard-shell .db3-toolbar--page { align-items: center; gap: 12px 16px; padding: 2px 0 10px; border-bottom: 1px solid var(--s2-line-soft); }
+.shell-v2 .dashboard-shell .db3-toolbar-status { flex: 1 1 220px; min-height: 0; }
+.shell-v2 .dashboard-shell .db3-toolbar-actions { gap: 8px; margin-left: auto; }
+.shell-v2 .dashboard-shell .dashboard-fetch-state { min-height: 0; padding: 0; border: 0; background: transparent; font-size: 0.66rem; font-weight: 560; color: var(--s2-muted); opacity: 0.86; }
+.shell-v2 .dashboard-shell .db2-period-trigger,
+.shell-v2 .dashboard-shell .dashboard-refresh-btn { min-height: 30px; height: 30px; padding: 0 11px !important; border-radius: 999px !important; font-size: 0.67rem !important; font-weight: 620; background: linear-gradient(140deg, rgba(255,255,255,0.055), rgba(255,255,255,0.018)) !important; border: 1px solid rgba(255,255,255,0.075) !important; box-shadow: inset 0 1px 0 rgba(255,255,255,0.06); backdrop-filter: blur(16px) saturate(132%); -webkit-backdrop-filter: blur(16px) saturate(132%); }
+.shell-v2 .dashboard-shell .db2-period-menu { padding: 6px; border-radius: 14px; background: linear-gradient(165deg, rgba(17,24,39,0.92), rgba(17,24,39,0.84)); border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 14px 34px rgba(0,0,0,0.22); }
+
+.shell-v2 .dashboard-page .db3-hero { padding: 15px 18px 18px; border-radius: 22px; margin-bottom: 12px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 10px 24px rgba(0,0,0,0.12); }
+.shell-v2 .dashboard-page .db3-hero--codex { background: radial-gradient(120% 150% at 0% 0%, rgba(91,140,255,0.14) 0%, transparent 54%), radial-gradient(90% 110% at 100% 0%, rgba(255,159,103,0.08) 0%, transparent 58%), linear-gradient(160deg, rgba(255,255,255,0.04), rgba(255,255,255,0.012)); }
+.shell-v2 .dashboard-page .db3-hero-stats { padding-bottom: 14px; }
+.shell-v2 .dashboard-page .db3-hero-stat { gap: 4px; padding: 2px 16px; }
+.shell-v2 .dashboard-page .db3-hero-value { font-size: 1.24rem; }
+.shell-v2 .dashboard-page .db3-hero-stat-emph .db3-hero-value { font-size: 1.86rem; }
+.shell-v2 .dashboard-page .db3-hero-label,
+.shell-v2 .dashboard-page .db3-hero-chart-title,
+.shell-v2 .dashboard-page .db3-panel .db2-card-title,
+.shell-v2 .dashboard-page .db3-price-row--head { font-size: 0.6rem; }
+.shell-v2 .dashboard-page .db3-hero-chart-meta,
+.shell-v2 .dashboard-page .db3-panel .db2-card-meta,
+.shell-v2 .dashboard-page .db3-standards-note { font-size: 0.62rem; }
+.shell-v2 .dashboard-page .db3-hero-chart-wrap { padding-top: 10px; }
+.shell-v2 .dashboard-page .db3-hero .db2-ichart-wrap,
+.shell-v2 .dashboard-page .db3-hero .db2-ichart-canvas { min-height: 196px; height: 196px !important; }
+
+.shell-v2 .dashboard-page .db3-dashboard-grid { display: grid; grid-template-columns: minmax(0, 1.56fr) minmax(300px, 1fr); gap: 16px 24px; align-items: start; }
+.shell-v2 .dashboard-page .db3-panel--wide { grid-column: 1 / -1; }
+.shell-v2 .dashboard-page .db2-section.db3-panel { padding: 14px 18px 10px !important; border-radius: 22px; border: 1px solid rgba(255,255,255,0.05); background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.05); backdrop-filter: blur(18px) saturate(134%); -webkit-backdrop-filter: blur(18px) saturate(134%); gap: 10px; }
+.shell-v2 .dashboard-page .db3-panel .db2-card-head { margin-bottom: 2px; padding: 0 2px 10px; align-items: baseline; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.shell-v2 .dashboard-page .db3-panel .db2-card-title { color: var(--s2-text); }
+.shell-v2 .dashboard-page .db3-panel .db2-card-title svg { opacity: 0.62; }
+.shell-v2 .dashboard-page .db3-panel .db2-card-meta { color: var(--s2-faint); opacity: 0.78; }
+
+.shell-v2 .dashboard-page .db3-standards-note { margin-top: -2px; line-height: 1.5; }
+.shell-v2 .dashboard-page .db3-standards-list,
+.shell-v2 .dashboard-page .db3-price-grid,
+.shell-v2 .dashboard-page .dashboard-mini-bars,
+.shell-v2 .dashboard-page .db2-kv-list,
+.shell-v2 .dashboard-page .db2-mdist-chart { gap: 0; margin: 0; }
+
+.shell-v2 .dashboard-page .db3-standard-card,
+.shell-v2 .dashboard-page .db3-price-row:not(.db3-price-row--head),
+.shell-v2 .dashboard-page .db3-panel .db2-mdist-item,
+.shell-v2 .dashboard-page .dashboard-mini-bar,
+.shell-v2 .dashboard-page .db2-kv-row { padding: 11px 2px; border: 0 !important; border-bottom: 1px solid rgba(255,255,255,0.055) !important; border-radius: 0 !important; background: linear-gradient(90deg, rgba(255,255,255,0.032), transparent 84%) !important; box-shadow: none !important; backdrop-filter: none !important; }
+.shell-v2 .dashboard-page .db3-standard-card:last-child,
+.shell-v2 .dashboard-page .db3-price-grid > .db3-price-row:last-child,
+.shell-v2 .dashboard-page .db2-mdist-chart > .db2-mdist-item:last-child,
+.shell-v2 .dashboard-page .dashboard-mini-bars > .dashboard-mini-bar:last-child,
+.shell-v2 .dashboard-page .db2-kv-list > .db2-kv-row:last-child { border-bottom: 0 !important; }
+.shell-v2 .dashboard-page .db3-standard-card.is-detected,
+.shell-v2 .dashboard-page .db3-price-row--total { background: linear-gradient(90deg, rgba(91,140,255,0.12), transparent 76%) !important; }
+
+.shell-v2 .dashboard-page .db3-standard-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.shell-v2 .dashboard-page .db3-standard-copy { min-width: 0; display: grid; gap: 3px; }
+.shell-v2 .dashboard-page .db3-standard-name,
+.shell-v2 .dashboard-page .db3-price-model-main { font-size: 0.76rem; font-weight: 670; color: var(--s2-text); }
+.shell-v2 .dashboard-page .db3-standard-key,
+.shell-v2 .dashboard-page .db3-price-model-meta,
+.shell-v2 .dashboard-page .db3-price-model-raw,
+.shell-v2 .dashboard-page .db3-price-metric span,
+.shell-v2 .dashboard-page .db3-price-total span { font-size: 0.6rem; }
+.shell-v2 .dashboard-page .db3-standard-chip,
+.shell-v2 .dashboard-page .db3-standard-rates span,
+.shell-v2 .dashboard-page .db3-price-rates span { display: inline-flex; align-items: center; min-height: 21px; padding: 0 8px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.075); background: rgba(255,255,255,0.04); box-shadow: none !important; font-size: 0.58rem; font-weight: 660; }
+.shell-v2 .dashboard-page .db3-standard-rates,
+.shell-v2 .dashboard-page .db3-price-rates { display: flex; flex-wrap: wrap; gap: 5px 6px; }
+
+.shell-v2 .dashboard-page .db3-price-table { overflow-x: auto; padding-bottom: 2px; }
+.shell-v2 .dashboard-page .db3-price-grid { min-width: 940px; }
+.shell-v2 .dashboard-page .db3-price-row { display: grid; grid-template-columns: minmax(210px, 1.32fr) repeat(3, minmax(90px, 0.58fr)) minmax(220px, 1.02fr) minmax(120px, 0.72fr); gap: 12px; align-items: center; padding: 11px 4px; }
+.shell-v2 .dashboard-page .db3-price-row--head { padding: 0 4px 8px; border: 0 !important; background: transparent !important; box-shadow: none !important; color: var(--s2-faint); letter-spacing: 0.12em; text-transform: uppercase; }
+.shell-v2 .dashboard-page .db3-price-row--total { padding-top: 13px; border-top: 1px solid rgba(91,140,255,0.18) !important; }
+.shell-v2 .dashboard-page .db3-price-model-cell { min-width: 0; display: grid; gap: 3px; }
+.shell-v2 .dashboard-page .db3-price-model-meta { display: flex; flex-wrap: wrap; gap: 5px 8px; color: var(--s2-muted); }
+.shell-v2 .dashboard-page .db3-price-model-raw { font-family: var(--font-mono-ui); color: var(--s2-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.shell-v2 .dashboard-page .db3-price-metric,
+.shell-v2 .dashboard-page .db3-price-total { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 3px; min-height: 38px; }
+.shell-v2 .dashboard-page .db3-price-metric strong,
+.shell-v2 .dashboard-page .db3-price-total strong { font-size: 0.76rem; font-weight: 700; line-height: 1.08; color: var(--s2-text); font-variant-numeric: tabular-nums; }
+.shell-v2 .dashboard-page .db3-price-total strong { color: #8dbdff; }
+.shell-v2 .dashboard-page .db3-price-total--na strong { color: var(--s2-muted); }
+.shell-v2 .dashboard-page .db3-price-rate-cell { min-width: 0; display: flex; align-items: center; justify-content: flex-end; }
+
+.shell-v2 .dashboard-page .dashboard-mini-bar { grid-template-columns: 50px minmax(0, 1fr) auto; gap: 10px; font-size: 0.68rem; }
+.shell-v2 .dashboard-page .dashboard-mini-bar span,
+.shell-v2 .dashboard-page .db2-kv-label,
+.shell-v2 .dashboard-page .db2-mdist-hdr { font-size: 0.68rem; color: var(--s2-muted); font-weight: 600; }
+.shell-v2 .dashboard-page .dashboard-mini-bar strong,
+.shell-v2 .dashboard-page .db2-kv-value,
+.shell-v2 .dashboard-page .db2-mdist-tokens,
+.shell-v2 .dashboard-page .db2-mdist-cost { font-size: 0.68rem; color: var(--s2-text); font-variant-numeric: tabular-nums; }
+.shell-v2 .dashboard-page .db2-kv-row { gap: 14px; }
+.shell-v2 .dashboard-page .db2-kv-value { max-width: 62%; line-height: 1.4; }
+.shell-v2 .dashboard-page .dashboard-mini-bar-track,
+.shell-v2 .dashboard-page .db2-mdist-bar-track { height: 7px; border-radius: 999px; background: linear-gradient(90deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03)); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.035); }
+.shell-v2 .dashboard-page .dashboard-mini-bar-fill { background: linear-gradient(90deg, #a8b9ff 0%, #5b8cff 58%, rgba(56,189,248,0.56) 100%); box-shadow: 0 5px 14px rgba(91,140,255,0.16); }
+.shell-v2 .dashboard-page .db3-panel .db2-mdist-item { padding-right: 0; padding-left: 0; transform: none !important; }
+.shell-v2 .dashboard-page .db3-panel .db2-mdist-item:hover { background: linear-gradient(90deg, rgba(255,255,255,0.04), transparent 82%) !important; }
+.shell-v2 .dashboard-page .db2-mdist-hdr { gap: 9px; }
+.shell-v2 .dashboard-page .db2-mdist-cost { color: #8dbdff; }
+.shell-v2 .dashboard-page .db2-mdist-bar-track { margin-top: 2px; }
+.shell-v2 .dashboard-page .db2-mdist-bar-fill { border-radius: 999px; box-shadow: 0 5px 14px rgba(91,140,255,0.14); }
+.shell-v2 .dashboard-page .db2-mdist-bar-label { font-size: 0.52rem; }
+
+.shell-v2 .dashboard-page .db2-cost-trend { gap: 10px; padding: 2px 0 0; background: transparent !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+.shell-v2 .dashboard-page .db2-cost-trend-plot { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 12px; align-items: stretch; }
+.shell-v2 .dashboard-page .db2-cost-axis { display: grid; grid-template-rows: repeat(3, 1fr); padding: 6px 0 18px; }
+.shell-v2 .dashboard-page .db2-cost-axis span { display: flex; justify-content: flex-end; font-size: 0.57rem; color: var(--s2-faint); font-variant-numeric: tabular-nums; }
+.shell-v2 .dashboard-page .db2-cost-axis span:nth-child(2) { align-items: center; }
+.shell-v2 .dashboard-page .db2-cost-axis span:last-child { align-items: flex-end; }
+.shell-v2 .dashboard-page .db2-cost-chart { position: relative; min-height: 146px; padding: 6px 0 18px; }
+.shell-v2 .dashboard-page .db2-cost-grid { position: absolute; inset: 6px 0 18px; }
+.shell-v2 .dashboard-page .db2-cost-grid span { position: absolute; left: 0; right: 0; border-top: 1px dashed rgba(255,255,255,0.08); }
+.shell-v2 .dashboard-page .db2-cost-grid span:nth-child(1) { top: 0; }
+.shell-v2 .dashboard-page .db2-cost-grid span:nth-child(2) { top: 50%; }
+.shell-v2 .dashboard-page .db2-cost-grid span:nth-child(3) { bottom: 0; }
+.shell-v2 .dashboard-page .db2-cost-trend-bars { position: relative; z-index: 1; display: flex; align-items: flex-end; gap: 4px; height: 122px; padding: 0 4px; }
+.shell-v2 .dashboard-page .db2-costbar { flex: 1 1 0; max-width: none; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; }
+.shell-v2 .dashboard-page .db2-costbar-fill { width: 8px; max-width: 8px; min-height: 0; border-radius: 999px; box-shadow: 0 8px 18px rgba(91,140,255,0.18); transition: height 0.5s cubic-bezier(0.4,0,0.2,1), transform 0.15s, filter 0.15s; }
+.shell-v2 .dashboard-page .db2-costbar:hover .db2-costbar-fill { transform: translateY(-1px); filter: brightness(1.05) saturate(1.08); box-shadow: 0 10px 20px rgba(91,140,255,0.22); }
+.shell-v2 .dashboard-page .db2-costbar-label { margin-top: 0; font-size: 0.52rem; color: var(--s2-faint); opacity: 0; transition: opacity 0.16s; }
+.shell-v2 .dashboard-page .db2-costbar-label.is-visible,
+.shell-v2 .dashboard-page .db2-costbar:hover .db2-costbar-label { opacity: 0.78; }
+.shell-v2 .dashboard-page .db2-costbar[data-tip]::after { font-size: 0.57rem; padding: 3px 7px; border-radius: 7px; }
+.shell-v2 .dashboard-page .db2-cost-trend-summary { display: flex; align-items: center; justify-content: space-between; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.06); font-size: 0.65rem; }
+.shell-v2 .dashboard-page .db2-cost-trend-totals { display: inline-flex; align-items: baseline; gap: 10px; }
+.shell-v2 .dashboard-page .db2-cost-trend-totals em { font-style: normal; font-size: 0.6rem; color: var(--s2-faint); }
+.shell-v2 .dashboard-page .db2-cost-trend-summary strong { font-size: 0.8rem; color: #5b8cff; }
+
+.shell-v2 .dashboard-page .db2-ichart-wrap { border-radius: 16px; background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.012) 70%, rgba(255,255,255,0)); }
+.shell-v2 .dashboard-page .db2-ichart-tooltip { min-width: 128px; padding: 10px 12px; border-radius: 14px; }
+.shell-v2 .dashboard-page .db2-tip-date { font-size: 0.58rem; margin-bottom: 3px; }
+.shell-v2 .dashboard-page .db2-tip-total { font-size: 0.9rem; margin-bottom: 6px; }
+.shell-v2 .dashboard-page .db2-tip-row { font-size: 0.66rem; }
+.shell-v2 .dashboard-page .db2-tip-row span { font-size: 0.62rem; }
+
+[data-theme="light"] .shell-v2 .dashboard-shell .db2-period-trigger,
+[data-theme="light"] .shell-v2 .dashboard-shell .dashboard-refresh-btn,
+[data-theme="light"] .shell-v2 .dashboard-shell .db2-period-menu { background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(248,250,255,0.78)) !important; border-color: rgba(15,23,42,0.08) !important; box-shadow: inset 0 1px 0 rgba(255,255,255,0.88), 0 4px 12px rgba(15,23,42,0.05); }
+[data-theme="light"] .shell-v2 .dashboard-page .db3-hero { background: radial-gradient(130% 150% at 0% 0%, rgba(59,130,246,0.11) 0%, transparent 55%), linear-gradient(160deg, rgba(255,255,255,0.92), rgba(255,255,255,0.72)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.84), 0 8px 20px rgba(15,23,42,0.05); }
+[data-theme="light"] .shell-v2 .dashboard-page .db3-hero--codex { background: radial-gradient(120% 150% at 0% 0%, rgba(59,130,246,0.12) 0%, transparent 54%), radial-gradient(90% 110% at 100% 0%, rgba(249,115,22,0.08) 0%, transparent 58%), linear-gradient(160deg, rgba(255,255,255,0.94), rgba(255,255,255,0.74)); }
+[data-theme="light"] .shell-v2 .dashboard-page .db2-section.db3-panel { border-color: rgba(15,23,42,0.06); background: linear-gradient(180deg, rgba(255,255,255,0.9), rgba(248,250,255,0.76)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.86), 0 6px 16px rgba(15,23,42,0.04); }
+[data-theme="light"] .shell-v2 .dashboard-page .db3-panel .db2-card-head,
+[data-theme="light"] .shell-v2 .dashboard-page .db2-cost-trend-summary { border-color: rgba(15,23,42,0.07); }
+[data-theme="light"] .shell-v2 .dashboard-page .db3-standard-card,
+[data-theme="light"] .shell-v2 .dashboard-page .db3-price-row:not(.db3-price-row--head),
+[data-theme="light"] .shell-v2 .dashboard-page .db3-panel .db2-mdist-item,
+[data-theme="light"] .shell-v2 .dashboard-page .dashboard-mini-bar,
+[data-theme="light"] .shell-v2 .dashboard-page .db2-kv-row { border-bottom-color: rgba(15,23,42,0.07) !important; background: linear-gradient(90deg, rgba(59,130,246,0.05), transparent 84%) !important; }
+[data-theme="light"] .shell-v2 .dashboard-page .db3-standard-card.is-detected,
+[data-theme="light"] .shell-v2 .dashboard-page .db3-price-row--total { background: linear-gradient(90deg, rgba(59,130,246,0.12), rgba(59,130,246,0.03) 74%, transparent 100%) !important; border-top-color: rgba(59,130,246,0.14) !important; }
+[data-theme="light"] .shell-v2 .dashboard-page .db3-standard-chip,
+[data-theme="light"] .shell-v2 .dashboard-page .db3-standard-rates span,
+[data-theme="light"] .shell-v2 .dashboard-page .db3-price-rates span { background: rgba(59,130,246,0.06) !important; border-color: rgba(59,130,246,0.08) !important; }
+[data-theme="light"] .shell-v2 .dashboard-page .dashboard-mini-bar-track,
+[data-theme="light"] .shell-v2 .dashboard-page .db2-mdist-bar-track { background: linear-gradient(90deg, rgba(59,130,246,0.08), rgba(15,23,42,0.03)); box-shadow: inset 0 0 0 1px rgba(59,130,246,0.05); }
+[data-theme="light"] .shell-v2 .dashboard-page .db2-cost-grid span { border-top-color: rgba(15,23,42,0.08); }
+[data-theme="light"] .shell-v2 .dashboard-page .db2-ichart-wrap { background: linear-gradient(180deg, rgba(59,130,246,0.05), rgba(255,255,255,0.2) 66%, rgba(255,255,255,0)); }
+
+@media (max-width: 1180px) {
+  .shell-v2 .dashboard-shell .db3-toolbar--page { align-items: flex-start; }
+  .shell-v2 .dashboard-page .db3-dashboard-grid { grid-template-columns: 1fr; gap: 14px; }
+}
+
+@media (max-width: 860px) {
+  .shell-v2 .dashboard-shell .db3-toolbar-actions { width: 100%; margin-left: 0; justify-content: flex-start; }
+  .shell-v2 .dashboard-page .db2-section.db3-panel { padding: 13px 14px 8px !important; }
+  .shell-v2 .dashboard-page .db3-price-row { padding: 11px 2px; }
+}
+
+@media (max-width: 720px) {
+  .shell-v2 .dashboard-page .db3-hero-stat-emph .db3-hero-value { font-size: 1.64rem; }
+}
+
+/* Dashboard de-card v6 — strip the remaining panel chrome */
+.shell-v2 .dashboard-page .db2-section.db3-panel {
+  padding: 8px 0 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.shell-v2 .dashboard-page .db3-panel .db2-card-head {
+  padding: 0 0 10px;
+}
+
+.shell-v2 .dashboard-page .db3-standard-card,
+.shell-v2 .dashboard-page .db3-price-row:not(.db3-price-row--head),
+.shell-v2 .dashboard-page .db3-panel .db2-mdist-item,
+.shell-v2 .dashboard-page .dashboard-mini-bar,
+.shell-v2 .dashboard-page .db2-kv-row {
+  padding-left: 0;
+  padding-right: 0;
+  background: transparent !important;
+}
+
+.shell-v2 .dashboard-page .db3-standard-card.is-detected,
+.shell-v2 .dashboard-page .db3-price-row--total {
+  background: transparent !important;
+  box-shadow: inset 2px 0 0 rgba(141, 189, 255, 0.72) !important;
+}
+
+.shell-v2 .dashboard-page .db3-panel .db2-mdist-item:hover,
+.shell-v2 .dashboard-page .dashboard-mini-bar:hover,
+.shell-v2 .dashboard-page .db2-kv-row:hover,
+.shell-v2 .dashboard-page .db3-standard-card:hover,
+.shell-v2 .dashboard-page .db3-price-row:not(.db3-price-row--head):hover {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.038), transparent 68%) !important;
+}
+
+[data-theme="light"] .shell-v2 .dashboard-page .db3-standard-card.is-detected,
+[data-theme="light"] .shell-v2 .dashboard-page .db3-price-row--total {
+  box-shadow: inset 2px 0 0 rgba(59, 130, 246, 0.62) !important;
+}
+
+[data-theme="light"] .shell-v2 .dashboard-page .db3-panel .db2-mdist-item:hover,
+[data-theme="light"] .shell-v2 .dashboard-page .dashboard-mini-bar:hover,
+[data-theme="light"] .shell-v2 .dashboard-page .db2-kv-row:hover,
+[data-theme="light"] .shell-v2 .dashboard-page .db3-standard-card:hover,
+[data-theme="light"] .shell-v2 .dashboard-page .db3-price-row:not(.db3-price-row--head):hover {
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.05), transparent 68%) !important;
+}
+
+/* Dashboard flat hero + fixed leading accents */
+.shell-v2 .dashboard-page .db3-hero {
+  padding: 0 0 6px !important;
+  margin-bottom: 12px;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.shell-v2 .dashboard-page .db3-hero-stats {
+  padding: 0 0 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.shell-v2 .dashboard-page .db3-hero-stat {
+  padding: 0 16px;
+}
+
+.shell-v2 .dashboard-page .db3-hero-stat:first-child {
+  padding-left: 0;
+}
+
+.shell-v2 .dashboard-page .db3-hero-chart-wrap {
+  padding-top: 14px;
+}
+
+.shell-v2 .dashboard-page .db3-hero .db2-ichart-wrap,
+.shell-v2 .dashboard-page .db3-hero .db2-ichart-canvas {
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+.shell-v2 .dashboard-page .db3-standard-card,
+.shell-v2 .dashboard-page .db3-price-row--total {
+  position: relative;
+}
+
+.shell-v2 .dashboard-page .db3-standard-card {
+  padding: 13px 0 !important;
+}
+
+.shell-v2 .dashboard-page .db3-standard-card.is-detected,
+.shell-v2 .dashboard-page .db3-price-row--total {
+  box-shadow: none !important;
+}
+
+.shell-v2 .dashboard-page .db3-standard-head {
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.shell-v2 .dashboard-page .db3-standard-copy {
+  gap: 5px;
+}
+
+.shell-v2 .dashboard-page .db3-standard-rates {
+  gap: 8px;
+  padding-left: 2px;
+}
+
+[data-theme="light"] .shell-v2 .dashboard-page .db3-hero-stats {
+  border-bottom-color: rgba(15, 23, 42, 0.07);
+}
+
+.shell-v2 .dashboard-page .db3-price-grid {
+  min-width: 0;
+}
+
+.shell-v2 .dashboard-page .db3-price-row {
+  grid-template-columns: minmax(0, 1.48fr) repeat(3, minmax(108px, 0.58fr)) minmax(210px, 0.92fr) minmax(104px, 0.54fr);
+}
+
+.shell-v2 .dashboard-page .db3-price-row--head > :nth-child(2),
+.shell-v2 .dashboard-page .db3-price-row--head > :nth-child(3),
+.shell-v2 .dashboard-page .db3-price-row--head > :nth-child(4) {
+  text-align: center;
+}
+
+.shell-v2 .dashboard-page .db3-price-metric {
+  align-items: center;
+  text-align: center;
+  justify-self: stretch;
+}
+
+.shell-v2 .dashboard-page .db3-price-rate-cell {
+  justify-self: stretch;
+}
+
+.shell-v2 .dashboard-page .db3-price-total {
+  justify-self: end;
+}
+
+.shell-v2 .dashboard-page .db3-price-rates--matrix {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+}
+
+.shell-v2 .dashboard-page .db3-price-rate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 0.57rem;
+}
+
+.shell-v2 .dashboard-page .db3-price-rate em {
+  font-style: normal;
+  color: var(--s2-faint);
+  font-weight: 700;
+}
+
+.shell-v2 .dashboard-page .db3-price-rate strong {
+  min-width: 0;
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: var(--s2-text);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-theme="light"] .shell-v2 .dashboard-page .db3-price-rate {
+  border-color: rgba(59, 130, 246, 0.08);
+  background: rgba(59, 130, 246, 0.06);
+}
+
+/* Config editor flat finish v4 */
+.shell-v2 .config-editor-page {
+  --cfg-flat-line: rgba(255, 255, 255, 0.08);
+  --cfg-flat-fill: rgba(255, 255, 255, 0.04);
+  --cfg-flat-fill-strong: rgba(255, 255, 255, 0.055);
+  --cfg-flat-hover: rgba(107, 158, 255, 0.11);
+}
+[data-theme="light"] .shell-v2 .config-editor-page {
+  --cfg-flat-line: rgba(15, 23, 42, 0.08);
+  --cfg-flat-fill: rgba(255, 255, 255, 0.82);
+  --cfg-flat-fill-strong: rgba(59, 130, 246, 0.06);
+  --cfg-flat-hover: rgba(59, 130, 246, 0.08);
+}
+.shell-v2 .config-editor-page .config-editor-shell-head,
+.shell-v2 .config-editor-page .config-main-section-head,
+.shell-v2 .config-editor-page .cfg-section,
+.shell-v2 .config-editor-page .provider-card,
+.shell-v2 .config-editor-page .cc-provider-detail,
+.shell-v2 .config-editor-page .oc-panel,
+.shell-v2 .config-editor-page .oc-subpanel {
+  background: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.shell-v2 .config-editor-page .config-editor-shell-head {
+  margin-bottom: 10px;
+  padding: 4px 0 14px;
+  border: 0 !important;
+  border-bottom: 1px solid var(--cfg-flat-line) !important;
+}
+.shell-v2 .config-editor-page .config-editor-shell-main,
+.shell-v2 .config-editor-page .config-editor-layout,
+.shell-v2 .config-editor-page .config-editor-main[data-tool-editor] { gap: 10px; }
+.shell-v2 .config-editor-page .config-editor-shell-title { font-size: 1.14rem; font-weight: 650; }
+.shell-v2 .config-editor-page .config-editor-shell-subtitle,
+.shell-v2 .config-editor-page .provider-meta,
+.shell-v2 .config-editor-page .provider-option-model,
+.shell-v2 .config-editor-page .config-field-hint { font-size: 0.68rem; }
+.shell-v2 .config-editor-page .config-editor-shell-tool,
+.shell-v2 .config-editor-page .config-editor-shell-meta-item,
+.shell-v2 .config-editor-page .cfg3-secondary-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg3-icon-btn,
+.shell-v2 .config-editor-page .config-store-btn,
+.shell-v2 .config-editor-page .cfg-view-icons {
+  min-height: 30px;
+  background: var(--cfg-flat-fill) !important;
+  border: 1px solid var(--cfg-flat-line) !important;
+  box-shadow: none !important;
+}
+.shell-v2 .config-editor-page .cfg-view-icons { padding: 1px; border-radius: 10px; }
+.shell-v2 .config-editor-page .cfg3-secondary-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg3-icon-btn,
+.shell-v2 .config-editor-page .config-store-btn,
+.shell-v2 .config-editor-page .cfg-view-icon { height: 30px; border-radius: 9px !important; }
+.shell-v2 .config-editor-page .config-main-section-head {
+  padding: 2px 0 10px;
+  margin-bottom: 0;
+  border: 0 !important;
+  border-bottom: 1px solid var(--cfg-flat-line) !important;
+}
+.shell-v2 .config-editor-page .config-main-title { font-size: 0.94rem; }
+.shell-v2 .config-editor-page .config-main-desc { font-size: 0.68rem; }
+.shell-v2 .config-editor-page .cfg-section,
+.shell-v2 .config-editor-page .provider-card,
+.shell-v2 .config-editor-page .cc-provider-detail,
+.shell-v2 .config-editor-page .oc-panel,
+.shell-v2 .config-editor-page .oc-subpanel { border: 0 !important; border-top: 1px solid var(--cfg-flat-line) !important; }
+.shell-v2 .config-editor-page .cfg-section-header,
+.shell-v2 .config-editor-page .oc-panel-head,
+.shell-v2 .config-editor-page .oc-subpanel-head { padding: 11px 0 !important; font-size: 0.79rem; }
+.shell-v2 .config-editor-page .cfg-section-header:hover,
+.shell-v2 .config-editor-page .oc-panel-head:hover,
+.shell-v2 .config-editor-page .oc-subpanel-head:hover,
+.shell-v2 .config-editor-page .provider-card:hover { background: transparent !important; }
+.shell-v2 .config-editor-page .cfg-section-body,
+.shell-v2 .config-editor-page .oc-panel-body,
+.shell-v2 .config-editor-page .oc-subpanel-body,
+.shell-v2 .config-editor-page .cc-provider-detail { padding: 10px 0 12px !important; border-top: 1px solid var(--cfg-flat-line); }
+.shell-v2 .config-editor-page .dense-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px 12px; }
+.shell-v2 .config-editor-page .field > span,
+.shell-v2 .config-editor-page label.field > span { margin-bottom: 4px; font-size: 0.66rem; }
+.shell-v2 .config-editor-page .field input[type="text"],
+.shell-v2 .config-editor-page .field input[type="search"],
+.shell-v2 .config-editor-page .field input[type="number"],
+.shell-v2 .config-editor-page .field input:not([type]),
+.shell-v2 .config-editor-page .field textarea,
+.shell-v2 .config-editor-page .config-number-row input,
+.shell-v2 .config-editor-page .select-wrap select {
+  height: 30px;
+  padding: 0 9px;
+  font-size: 0.72rem;
+  border-radius: 9px;
+  background: var(--cfg-flat-fill);
+  border: 1px solid var(--cfg-flat-line);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+.shell-v2 .config-editor-page .field textarea { min-height: 76px; padding: 8px 10px; }
+.shell-v2 .config-editor-page .select-wrap,
+.shell-v2 .config-editor-page .model-combobox > input,
+.shell-v2 .config-editor-page .config-number-row .tiny-btn,
+.shell-v2 .config-editor-page .path-actions-row .tiny-btn { min-height: 30px; height: 30px; border-radius: 9px !important; }
+.shell-v2 .config-editor-page .toggle-item {
+  background: var(--cfg-flat-fill) !important;
+  border: 1px solid var(--cfg-flat-line) !important;
+  border-radius: 10px;
+}
+.shell-v2 .config-editor-page .toggle-item:hover,
+.shell-v2 .config-editor-page .cfg3-secondary-btn:hover,
+.shell-v2 .config-editor-page #configEditorActions .cfg3-icon-btn:hover,
+.shell-v2 .config-editor-page .config-store-btn:hover { background: var(--cfg-flat-hover) !important; border-color: rgba(107, 158, 255, 0.18) !important; }
+.shell-v2 .config-editor-page .provider-pill { min-width: 0; height: 20px; padding: 0 7px; font-size: 0.64rem; }
+.shell-v2 .config-editor-page .cc-provider-inline-actions { gap: 6px; }
+.shell-v2 .config-editor-page .provider-card { padding: 12px 0 !important; }
+.shell-v2 .config-editor-page .provider-card.active { background: transparent !important; box-shadow: inset 2px 0 0 rgba(107, 158, 255, 0.44) !important; }
+.shell-v2 .config-editor-page .cfg3-drawer { box-shadow: -10px 0 28px rgba(0, 0, 0, 0.22); }
+.shell-v2 .config-editor-page .raw-code-editor { border-radius: 10px; box-shadow: none !important; }
+.shell-v2 .config-editor-page .resume-toolbar {
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 4px;
+  padding-bottom: 8px;
+}
+.shell-v2 .config-editor-page .resume-toolbar .section-title { font-size: 0.98rem !important; font-weight: 660 !important; letter-spacing: 0 !important; }
+.shell-v2 .config-editor-page .resume-toolbar .section-copy { margin-top: 4px !important; font-size: 0.69rem !important; line-height: 1.5 !important; }
+.shell-v2 .config-editor-page .resume-toolbar-actions,
+.shell-v2 .config-editor-page .resume-session-actions { gap: 5px; }
+.shell-v2 .config-editor-page .resume-toolbar-actions .tiny-btn,
+.shell-v2 .config-editor-page .resume-session-actions .tiny-btn {
+  min-height: 26px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 0.64rem;
+  font-weight: 600;
+  background: var(--cfg-flat-fill) !important;
+  border: 1px solid var(--cfg-flat-line) !important;
+  box-shadow: none !important;
+}
+.shell-v2 .config-editor-page .resume-session-actions [data-codex-resume-id] {
+  background: rgba(107, 158, 255, 0.12) !important;
+  border-color: rgba(107, 158, 255, 0.2) !important;
+  color: var(--s2-accent) !important;
+}
+.shell-v2 .config-editor-page .resume-session-list { gap: 0; }
+.shell-v2 .config-editor-page .resume-session-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 12px 0;
+  border-radius: 0;
+  border-top: 1px solid var(--cfg-flat-line);
+  background: transparent !important;
+}
+.shell-v2 .config-editor-page .resume-session-card:first-child { border-top: 0; }
+.shell-v2 .config-editor-page .resume-session-card:hover { background: linear-gradient(90deg, rgba(107, 158, 255, 0.05), transparent 72%) !important; }
+.shell-v2 .config-editor-page .resume-session-main { gap: 3px; }
+.shell-v2 .config-editor-page .resume-session-title { font-size: 0.76rem; font-weight: 630; line-height: 1.38; }
+.shell-v2 .config-editor-page .resume-session-meta,
+.shell-v2 .config-editor-page .resume-session-cwd { font-size: 0.64rem; gap: 5px; }
+.shell-v2 .config-editor-page .resume-session-command { font-size: 0.63rem; color: rgba(107, 158, 255, 0.9); }
+.shell-v2 .config-editor-page .resume-session-dot { opacity: 0.28; }
+@media (max-width: 980px) {
+  .shell-v2 .config-editor-page .resume-session-card { grid-template-columns: 1fr; }
+  .shell-v2 .config-editor-page .resume-session-actions { width: 100%; justify-content: flex-start; }
+}
+
+/* Config editor toolbar cleanup v5 */
+.shell-v2 .config-editor-page .config-main-section-head { display: none !important; }
+.shell-v2 .config-editor-page .config-editor-shell-head {
+  padding: 0 0 10px;
+  margin-bottom: 6px;
+}
+.shell-v2 .config-editor-page .cfg-editor-header {
+  padding-top: 0;
+}
+.shell-v2 .config-editor-page .cfg-editor-header-right {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+}
+.shell-v2 .config-editor-page .cfg-view-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+}
+.shell-v2 .config-editor-page .cfg-view-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: auto;
+  min-width: 0;
+  padding: 0 11px;
+  font-size: 0.66rem;
+  font-weight: 620;
+  color: var(--s2-muted);
+}
+.shell-v2 .config-editor-page .cfg-view-icon span {
+  display: inline-block;
+  line-height: 1;
+  white-space: nowrap;
+}
+.shell-v2 .config-editor-page .cfg-view-icon svg,
+.shell-v2 .config-editor-page .cfg3-secondary-btn svg,
+.shell-v2 .config-editor-page .config-store-btn svg {
+  flex-shrink: 0;
+}
+.shell-v2 .config-editor-page .cfg-view-icon.active {
+  color: var(--s2-text);
+  background: rgba(107, 158, 255, 0.14) !important;
+}
+.shell-v2 .config-editor-page .cfg3-secondary-btn,
+.shell-v2 .config-editor-page .config-store-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg3-primary-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg3-icon-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg-editor-search-toggle {
+  height: 30px !important;
+  min-height: 30px !important;
+  border-radius: 999px !important;
+}
+.shell-v2 .config-editor-page .cfg3-secondary-btn,
+.shell-v2 .config-editor-page .config-store-btn {
+  padding: 0 11px;
+  gap: 6px;
+  font-size: 0.67rem;
+}
+.shell-v2 .config-editor-page .config-store-btn {
+  padding-right: 10px;
+}
+.shell-v2 .config-editor-page .config-store-arrow {
+  opacity: 0.56;
+}
+.shell-v2 .config-editor-page #configEditorActions {
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.shell-v2 .config-editor-page #configEditorActions .cfg3-icon-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg-editor-search-toggle {
+  width: 30px;
+  min-width: 30px;
+}
+.shell-v2 .config-editor-page #configEditorActions .cfg3-primary-btn {
+  padding: 0 13px;
+  font-size: 0.7rem;
+  font-weight: 620;
+  box-shadow: none;
+}
+.shell-v2 .config-editor-page .config-editor-main[data-tool-editor] {
+  gap: 0;
+}
+.shell-v2 .config-editor-page .config-editor-main[data-tool-editor] > :first-child {
+  border-top: 0 !important;
+}
+@media (max-width: 1180px) {
+  .shell-v2 .config-editor-page #configEditorActions {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 840px) {
+  .shell-v2 .config-editor-page #configEditorActions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
+}
+
+/* Config editor custom select + tighter control scale v6 */
+.shell-v2 .config-editor-page .cfg-section,
+.shell-v2 .config-editor-page .oc-panel,
+.shell-v2 .config-editor-page .oc-subpanel,
+.shell-v2 .config-editor-page .cfg-section-body,
+.shell-v2 .config-editor-page .oc-panel-body,
+.shell-v2 .config-editor-page .oc-subpanel-body {
+  overflow: visible !important;
+}
+.shell-v2 .config-editor-page .cfg-section,
+.shell-v2 .config-editor-page .oc-panel,
+.shell-v2 .config-editor-page .oc-subpanel {
+  position: relative;
+}
+.shell-v2 .config-editor-page .field > span,
+.shell-v2 .config-editor-page label.field > span {
+  margin-bottom: 5px;
+  font-size: 0.63rem;
+}
+.shell-v2 .config-editor-page .dense-grid {
+  gap: 7px 10px;
+}
+.shell-v2 .config-editor-page .field input[type="text"],
+.shell-v2 .config-editor-page .field input[type="search"],
+.shell-v2 .config-editor-page .field input[type="number"],
+.shell-v2 .config-editor-page .field input:not([type]),
+.shell-v2 .config-editor-page .field textarea,
+.shell-v2 .config-editor-page .config-number-row input,
+.shell-v2 .config-editor-page .model-combobox > input,
+.shell-v2 .config-editor-page .custom-select-trigger {
+  height: 29px;
+  min-height: 29px;
+  padding: 0 10px;
+  font-size: 0.71rem;
+  border-radius: 10px;
+}
+.shell-v2 .config-editor-page .field textarea {
+  min-height: 72px;
+  padding: 8px 10px;
+}
+.shell-v2 .config-editor-page .model-combobox-toggle {
+  right: 4px;
+  width: 20px;
+  height: 20px !important;
+}
+.shell-v2 .config-editor-page .custom-select {
+  position: relative;
+  width: 100%;
+}
+.shell-v2 .config-editor-page .custom-select.open {
+  z-index: 6200;
+}
+.shell-v2 .config-editor-page .custom-select-trigger {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.058), rgba(255, 255, 255, 0.022)),
+    radial-gradient(120% 140% at 0% 0%, rgba(107, 158, 255, 0.08), transparent 58%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 0 0 1px rgba(255, 255, 255, 0.015);
+  color: var(--s2-text);
+}
+.shell-v2 .config-editor-page .custom-select-trigger:hover {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.072), rgba(255, 255, 255, 0.03)),
+    radial-gradient(120% 140% at 0% 0%, rgba(107, 158, 255, 0.1), transparent 58%);
+  border-color: rgba(107, 158, 255, 0.2);
+}
+.shell-v2 .config-editor-page .custom-select.open .custom-select-trigger {
+  border-color: rgba(107, 158, 255, 0.34);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.032)),
+    radial-gradient(120% 140% at 0% 0%, rgba(107, 158, 255, 0.12), transparent 58%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 0 3px rgba(107, 158, 255, 0.12);
+}
+.shell-v2 .config-editor-page .custom-select-trigger .cs-arrow {
+  margin-left: 10px;
+  font-size: 0.64rem;
+  color: var(--s2-faint);
+}
+.shell-v2 .config-editor-page .custom-select-dropdown {
+  top: calc(100% + 6px);
+  z-index: 6201;
+  padding: 6px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(20, 26, 38, 0.94), rgba(16, 21, 32, 0.98)),
+    radial-gradient(120% 160% at 0% 0%, rgba(107, 158, 255, 0.12), transparent 60%);
+  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
+  box-shadow:
+    0 18px 42px rgba(4, 10, 20, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.shell-v2 .config-editor-page .custom-select-option {
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 10px;
+  font-size: 0.71rem;
+  color: rgba(232, 238, 248, 0.78);
+}
+.shell-v2 .config-editor-page .custom-select-option:hover {
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--s2-text);
+}
+.shell-v2 .config-editor-page .custom-select-option.selected {
+  background: rgba(107, 158, 255, 0.14);
+  color: var(--s2-text);
+}
+.shell-v2 .config-editor-page .custom-select-option.selected::before {
+  margin-right: 7px;
+  font-size: 0.66rem;
+  color: rgba(141, 189, 255, 0.92);
+}
+[data-theme="light"] .shell-v2 .config-editor-page .custom-select-trigger {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.8)),
+    radial-gradient(120% 140% at 0% 0%, rgba(59, 130, 246, 0.08), transparent 58%);
+  border-color: rgba(15, 23, 42, 0.09);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.76),
+    0 0 0 1px rgba(255, 255, 255, 0.42);
+}
+[data-theme="light"] .shell-v2 .config-editor-page .custom-select-trigger:hover {
+  border-color: rgba(59, 130, 246, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.84)),
+    radial-gradient(120% 140% at 0% 0%, rgba(59, 130, 246, 0.1), transparent 58%);
+}
+[data-theme="light"] .shell-v2 .config-editor-page .custom-select.open .custom-select-trigger {
+  border-color: rgba(59, 130, 246, 0.32);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.88)),
+    radial-gradient(120% 140% at 0% 0%, rgba(59, 130, 246, 0.12), transparent 58%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.84),
+    0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+[data-theme="light"] .shell-v2 .config-editor-page .custom-select-dropdown {
+  border-color: rgba(15, 23, 42, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 255, 0.94)),
+    radial-gradient(120% 160% at 0% 0%, rgba(59, 130, 246, 0.09), transparent 60%);
+  box-shadow:
+    0 18px 42px rgba(15, 23, 42, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+[data-theme="light"] .shell-v2 .config-editor-page .custom-select-option {
+  color: rgba(15, 23, 42, 0.8);
+}
+[data-theme="light"] .shell-v2 .config-editor-page .custom-select-option:hover {
+  background: rgba(59, 130, 246, 0.07);
+}
+[data-theme="light"] .shell-v2 .config-editor-page .custom-select-option.selected {
+  background: rgba(59, 130, 246, 0.12);
+}
+[data-theme="light"] .shell-v2 .config-editor-page .custom-select-option.selected::before {
+  color: rgba(59, 130, 246, 0.9);
+}
+
+/* Config editor dropdown polish + overlap fix v7 */
+.shell-v2 .config-editor-page .editor-grid,
+.shell-v2 .config-editor-page .dense-grid,
+.shell-v2 .config-editor-page .field,
+.shell-v2 .config-editor-page label.field,
+.shell-v2 .config-editor-page .field-wide,
+.shell-v2 .config-editor-page .config-number-control,
+.shell-v2 .config-editor-page .path-input-group,
+.shell-v2 .config-editor-page .model-combobox,
+.shell-v2 .config-editor-page .custom-select {
+  position: relative;
+  overflow: visible !important;
+}
+.shell-v2 .config-editor-page .cfg-section,
+.shell-v2 .config-editor-page .oc-panel,
+.shell-v2 .config-editor-page .oc-subpanel {
+  z-index: 0;
+}
+.shell-v2 .config-editor-page .cfg-section:has(.custom-select.open),
+.shell-v2 .config-editor-page .oc-panel:has(.custom-select.open),
+.shell-v2 .config-editor-page .oc-subpanel:has(.custom-select.open) {
+  z-index: 34;
+}
+.shell-v2 .config-editor-page .field:has(.custom-select.open),
+.shell-v2 .config-editor-page label.field:has(.custom-select.open),
+.shell-v2 .config-editor-page .field-wide:has(.custom-select.open) {
+  z-index: 35;
+}
+.shell-v2 .config-editor-page .field > span,
+.shell-v2 .config-editor-page label.field > span {
+  margin-bottom: 4px;
+  font-size: 0.61rem;
+}
+.shell-v2 .config-editor-page .field > input,
+.shell-v2 .config-editor-page .field > .select-wrap,
+.shell-v2 .config-editor-page .field > .custom-select,
+.shell-v2 .config-editor-page .field > .model-combobox,
+.shell-v2 .config-editor-page .field > .config-number-control {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.shell-v2 .config-editor-page .dense-grid {
+  gap: 6px 10px;
+}
+.shell-v2 .config-editor-page .field input[type="text"],
+.shell-v2 .config-editor-page .field input[type="search"],
+.shell-v2 .config-editor-page .field input[type="number"],
+.shell-v2 .config-editor-page .field input:not([type]),
+.shell-v2 .config-editor-page .field textarea,
+.shell-v2 .config-editor-page .config-number-row input,
+.shell-v2 .config-editor-page .model-combobox > input,
+.shell-v2 .config-editor-page .custom-select-trigger {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 0.69rem;
+  line-height: 1.15;
+  border-radius: 9px;
+}
+.shell-v2 .config-editor-page .field textarea {
+  min-height: 68px;
+  padding: 8px 9px;
+}
+.shell-v2 .config-editor-page .select-wrap,
+.shell-v2 .config-editor-page .custom-select,
+.shell-v2 .config-editor-page .model-combobox {
+  width: 100%;
+  min-width: 0;
+}
+.shell-v2 .config-editor-page .model-combobox-toggle {
+  right: 3px;
+  width: 18px;
+  height: 18px !important;
+}
+.shell-v2 .config-editor-page .custom-select.open {
+  z-index: 6800;
+}
+.shell-v2 .config-editor-page .custom-select-trigger {
+  gap: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.026)),
+    radial-gradient(120% 140% at 0% 0%, rgba(107, 158, 255, 0.1), transparent 56%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.018),
+    0 8px 22px rgba(4, 10, 20, 0.12);
+}
+.shell-v2 .config-editor-page .custom-select-trigger .cs-value {
+  line-height: 1.15;
+}
+.shell-v2 .config-editor-page .custom-select-trigger:hover {
+  border-color: rgba(107, 158, 255, 0.24);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.02),
+    0 10px 24px rgba(4, 10, 20, 0.14);
+}
+.shell-v2 .config-editor-page .custom-select.open .custom-select-trigger {
+  border-color: rgba(107, 158, 255, 0.36);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.065),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.024),
+    0 0 0 3px rgba(107, 158, 255, 0.11),
+    0 14px 30px rgba(4, 10, 20, 0.18);
+}
+.shell-v2 .config-editor-page .custom-select-trigger .cs-arrow {
+  margin-left: 8px;
+  font-size: 0.6rem;
+  opacity: 0.74;
+}
+.shell-v2 .config-editor-page .custom-select-dropdown {
+  top: calc(100% + 5px);
+  z-index: 6801;
+  padding: 5px;
+  border-radius: 12px;
+  border-color: rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(18, 24, 36, 0.84), rgba(13, 18, 29, 0.92)),
+    radial-gradient(120% 160% at 0% 0%, rgba(107, 158, 255, 0.13), transparent 58%);
+  backdrop-filter: blur(28px) saturate(155%);
+  -webkit-backdrop-filter: blur(28px) saturate(155%);
+  box-shadow:
+    0 22px 48px rgba(4, 10, 20, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.shell-v2 .config-editor-page .custom-select-option {
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-size: 0.69rem;
+}
+.shell-v2 .config-editor-page .custom-select-option.selected::before {
+  margin-right: 6px;
+}
+[data-theme="light"] .shell-v2 .config-editor-page .custom-select-trigger {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.82)),
+    radial-gradient(120% 140% at 0% 0%, rgba(59, 130, 246, 0.08), transparent 56%);
+  border-color: rgba(15, 23, 42, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.35),
+    0 10px 22px rgba(15, 23, 42, 0.06);
+}
+[data-theme="light"] .shell-v2 .config-editor-page .custom-select-trigger:hover {
+  border-color: rgba(59, 130, 246, 0.18);
+}
+[data-theme="light"] .shell-v2 .config-editor-page .custom-select.open .custom-select-trigger {
+  border-color: rgba(59, 130, 246, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.84),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.42),
+    0 0 0 3px rgba(59, 130, 246, 0.09),
+    0 14px 28px rgba(15, 23, 42, 0.08);
+}
+[data-theme="light"] .shell-v2 .config-editor-page .custom-select-dropdown {
+  border-color: rgba(15, 23, 42, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(246, 249, 255, 0.92)),
+    radial-gradient(120% 160% at 0% 0%, rgba(59, 130, 246, 0.08), transparent 58%);
+  box-shadow:
+    0 22px 48px rgba(15, 23, 42, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+/* Config editor controls polish + consistency v8 */
+.shell-v2 .config-editor-page .cfg-editor-header-right {
+  gap: 7px;
+}
+.shell-v2 .config-editor-page .cfg-view-icons,
+.shell-v2 .config-editor-page .cfg3-secondary-btn,
+.shell-v2 .config-editor-page .config-store-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg3-primary-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg3-icon-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg-editor-search-toggle {
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.shell-v2 .config-editor-page .cfg-view-icons {
+  height: 32px;
+  padding: 2px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.024));
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.shell-v2 .config-editor-page .cfg-view-icon {
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 12px !important;
+  border-radius: 999px !important;
+  font-size: 0.66rem !important;
+  line-height: 1 !important;
+}
+.shell-v2 .config-editor-page .cfg3-secondary-btn,
+.shell-v2 .config-editor-page .config-store-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg3-primary-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg3-icon-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg-editor-search-toggle {
+  height: 32px !important;
+  min-height: 32px !important;
+  font-size: 0.67rem !important;
+  line-height: 1 !important;
+  font-weight: 620 !important;
+}
+.shell-v2 .config-editor-page .cfg3-secondary-btn,
+.shell-v2 .config-editor-page .config-store-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg3-primary-btn {
+  padding: 0 12px !important;
+}
+.shell-v2 .config-editor-page #configEditorActions .cfg3-primary-btn {
+  padding: 0 14px !important;
+}
+.shell-v2 .config-editor-page #configEditorActions .cfg3-icon-btn,
+.shell-v2 .config-editor-page #configEditorActions .cfg-editor-search-toggle {
+  width: 32px;
+  min-width: 32px;
+  padding: 0 !important;
+}
+.shell-v2 .config-editor-page .config-number-row .tiny-btn,
+.shell-v2 .config-editor-page .path-actions-row .tiny-btn,
+.shell-v2 .config-editor-page .resume-toolbar-actions .tiny-btn,
+.shell-v2 .config-editor-page .resume-session-actions .tiny-btn,
+.shell-v2 .config-editor-page .cc-provider-toolbar .tiny-btn,
+.shell-v2 .config-editor-page .cc-provider-actions .tiny-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 28px !important;
+  min-height: 28px !important;
+  padding: 0 10px !important;
+  border-radius: 999px !important;
+  font-size: 0.66rem !important;
+  line-height: 1 !important;
+}
+.shell-v2 .config-editor-page .config-number-row {
+  align-items: center;
+  gap: 8px;
+}
+.shell-v2 .config-editor-page .config-number-control {
+  gap: 7px;
+}
+.shell-v2 .config-editor-page .field input[type="text"],
+.shell-v2 .config-editor-page .field input[type="search"],
+.shell-v2 .config-editor-page .field input[type="number"],
+.shell-v2 .config-editor-page .field input:not([type]),
+.shell-v2 .config-editor-page .config-number-row input,
+.shell-v2 .config-editor-page .model-combobox > input,
+.shell-v2 .config-editor-page .custom-select-trigger {
+  height: 30px !important;
+  min-height: 30px !important;
+  padding: 0 10px !important;
+  font-size: 0.7rem !important;
+  border-radius: 10px !important;
+  box-sizing: border-box;
+}
+.shell-v2 .config-editor-page .custom-select-trigger,
+.shell-v2 .config-editor-page .model-combobox > input {
+  width: 100%;
+}
+.shell-v2 .config-editor-page .model-combobox-toggle {
+  right: 4px;
+  width: 20px;
+  height: 20px !important;
+}
+.shell-v2 .config-editor-page input[type="range"].config-range {
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  width: 100% !important;
+  height: 6px !important;
+  min-height: 6px !important;
+  padding: 0 !important;
+  margin: 6px 0 0 !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background:
+    linear-gradient(90deg, rgba(84, 149, 255, 0.76), rgba(90, 196, 255, 0.92)) 0 / var(--range-progress, 0%) 100% no-repeat,
+    rgba(255, 255, 255, 0.12) !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1) !important;
+  cursor: pointer;
+}
+.shell-v2 .config-editor-page input[type="range"].config-range::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: transparent;
+}
+.shell-v2 .config-editor-page input[type="range"].config-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;
+  border: 2px solid rgba(255, 255, 255, 0.96);
+  border-radius: 50%;
+  background: linear-gradient(135deg, #5b92ff, #59c0ff);
+  box-shadow:
+    0 0 0 4px rgba(91, 146, 255, 0.14),
+    0 5px 14px rgba(48, 95, 196, 0.22);
+  cursor: pointer;
+}
+.shell-v2 .config-editor-page input[type="range"].config-range::-moz-range-track {
+  height: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.shell-v2 .config-editor-page input[type="range"].config-range::-moz-range-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(84, 149, 255, 0.76), rgba(90, 196, 255, 0.92));
+}
+.shell-v2 .config-editor-page input[type="range"].config-range::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.96);
+  border-radius: 50%;
+  background: linear-gradient(135deg, #5b92ff, #59c0ff);
+  box-shadow:
+    0 0 0 4px rgba(91, 146, 255, 0.14),
+    0 5px 14px rgba(48, 95, 196, 0.22);
+  cursor: pointer;
+}
+[data-theme="light"] .shell-v2 .config-editor-page .cfg-view-icons {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.82));
+  border-color: rgba(15, 23, 42, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82),
+    0 6px 16px rgba(15, 23, 42, 0.06);
+}
+[data-theme="light"] .shell-v2 .config-editor-page input[type="range"].config-range {
+  background:
+    linear-gradient(90deg, rgba(84, 149, 255, 0.78), rgba(90, 196, 255, 0.94)) 0 / var(--range-progress, 0%) 100% no-repeat,
+    rgba(148, 163, 184, 0.2) !important;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.06) !important;
+}
+[data-theme="light"] .shell-v2 .config-editor-page input[type="range"].config-range::-moz-range-track {
+  background: rgba(148, 163, 184, 0.2);
+}
+.shell-v2 .config-editor-page .toggle-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px 10px;
+}
+.shell-v2 .config-editor-page .toggle-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.018)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  box-shadow: none !important;
+}
+.shell-v2 .config-editor-page .toggle-item:hover {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.024)) !important;
+  border-color: rgba(107, 158, 255, 0.18) !important;
+}
+.shell-v2 .config-editor-page .toggle-item:has(input:checked) {
+  background: linear-gradient(90deg, rgba(107, 158, 255, 0.09), rgba(107, 158, 255, 0.028)) !important;
+  border-color: rgba(107, 158, 255, 0.24) !important;
+}
+.shell-v2 .config-editor-page .toggle-item span {
+  font-size: 0.71rem;
+  font-weight: 560;
+  line-height: 1.2;
+  color: var(--s2-muted);
+}
+.shell-v2 .config-editor-page .toggle-item:has(input:checked) span {
+  color: var(--s2-text);
+}
+.shell-v2 .config-editor-page .toggle-item input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  width: 32px;
+  height: 18px;
+  min-width: 32px;
+  margin: 0;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.18);
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+.shell-v2 .config-editor-page .toggle-item input[type="checkbox"]::before {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transition: transform 160ms ease, background 160ms ease;
+}
+.shell-v2 .config-editor-page .toggle-item input[type="checkbox"]::after {
+  content: none !important;
+}
+.shell-v2 .config-editor-page .toggle-item input[type="checkbox"]:hover {
+  border-color: rgba(107, 158, 255, 0.22);
+  background: rgba(107, 158, 255, 0.14);
+}
+.shell-v2 .config-editor-page .toggle-item input[type="checkbox"]:checked {
+  border-color: rgba(107, 158, 255, 0.34);
+  background: linear-gradient(90deg, #4f86ff, #5fc7ff);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 0 0 4px rgba(107, 158, 255, 0.12);
+}
+.shell-v2 .config-editor-page .toggle-item input[type="checkbox"]:checked::before {
+  transform: translateX(14px);
+}
+[data-theme="light"] .shell-v2 .config-editor-page .toggle-item {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 255, 255, 0.82)) !important;
+  border-color: rgba(15, 23, 42, 0.08) !important;
+}
+[data-theme="light"] .shell-v2 .config-editor-page .toggle-item:hover {
+  border-color: rgba(59, 130, 246, 0.16) !important;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 255, 0.88)) !important;
+}
+[data-theme="light"] .shell-v2 .config-editor-page .toggle-item:has(input:checked) {
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.09), rgba(59, 130, 246, 0.028)) !important;
+  border-color: rgba(59, 130, 246, 0.2) !important;
+}
+[data-theme="light"] .shell-v2 .config-editor-page .toggle-item input[type="checkbox"] {
+  border-color: rgba(148, 163, 184, 0.4);
+  background: rgba(148, 163, 184, 0.24);
+  box-shadow: inset 0 1px 2px rgba(148, 163, 184, 0.18);
+}
+[data-theme="light"] .shell-v2 .config-editor-page .toggle-item input[type="checkbox"]::before {
+  background: #fff;
+}
+[data-theme="light"] .shell-v2 .config-editor-page .toggle-item input[type="checkbox"]:checked {
+  border-color: rgba(59, 130, 246, 0.3);
+  background: linear-gradient(90deg, #4f86ff, #5fc7ff);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.18),
+    0 0 0 4px rgba(59, 130, 246, 0.1);
+}
+
+/* Config editor control text alignment v9 */
+.shell-v2 .config-editor-page {
+  --cfg-control-height: 30px;
+}
+.shell-v2 .config-editor-page .field input[type="text"],
+.shell-v2 .config-editor-page .field input[type="search"],
+.shell-v2 .config-editor-page .field input[type="number"],
+.shell-v2 .config-editor-page .field input:not([type]),
+.shell-v2 .config-editor-page .config-number-row input,
+.shell-v2 .config-editor-page .model-combobox > input {
+  height: var(--cfg-control-height) !important;
+  min-height: var(--cfg-control-height) !important;
+  line-height: calc(var(--cfg-control-height) - 2px) !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+.shell-v2 .config-editor-page .custom-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--cfg-control-height) !important;
+  min-height: var(--cfg-control-height) !important;
+  line-height: calc(var(--cfg-control-height) - 2px) !important;
+}
+.shell-v2 .config-editor-page .custom-select-trigger .cs-value {
+  display: flex;
+  align-items: center;
+  min-height: 100%;
+  line-height: calc(var(--cfg-control-height) - 2px) !important;
+}
+.shell-v2 .config-editor-page .custom-select-trigger .cs-arrow {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  height: 100%;
+  line-height: 1 !important;
+}
+
+/* Config editor control optical alignment v10 */
+.shell-v2 .config-editor-page .field input[type="text"],
+.shell-v2 .config-editor-page .field input[type="search"],
+.shell-v2 .config-editor-page .field input[type="number"],
+.shell-v2 .config-editor-page .field input:not([type]),
+.shell-v2 .config-editor-page .config-number-row input,
+.shell-v2 .config-editor-page .model-combobox > input {
+  padding-top: 1px !important;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+}
+.shell-v2 .config-editor-page .custom-select-trigger {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif !important;
+  font-weight: 500 !important;
+  letter-spacing: 0 !important;
+}
+.shell-v2 .config-editor-page .custom-select-trigger .cs-value {
+  padding-top: 1px !important;
+  position: relative;
+  top: 1px;
+}
