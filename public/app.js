@@ -6305,11 +6305,11 @@ function renderDashboardPage() {
     { key: 'openclaw', label: 'OpenClaw', dot: '#fbbf24', icon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></svg>' },
   ];
   const toolLabel = (tabs.find((t) => t.key === dashboardTool) || tabs[0]).label;
-  if (el('pageTitle')) el('pageTitle').textContent = `${toolLabel} · 数据看板`;
+  if (el('pageTitle')) el('pageTitle').textContent = '数据看板';
   if (el('pageSubtitle')) {
     el('pageSubtitle').textContent = dashboardTool === 'openclaw'
-      ? '集中查看 OpenClaw Gateway、渠道与 Provider 状态。'
-      : `${dashboardStatusText} · 最近 ${daysWindow} 天窗口`;
+      ? `${toolLabel} · Gateway、渠道与 Provider 状态`
+      : `${toolLabel} · ${dashboardStatusText} · 最近 ${daysWindow} 天`;
   }
 
   // ── Stat strip ──
